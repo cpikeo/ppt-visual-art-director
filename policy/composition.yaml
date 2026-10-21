@@ -1,0 +1,578 @@
+version: 1
+id: pvad-composition-v2
+default_gutter_px: 24
+recipes:
+  statement:
+    why: 主张页只有一个第一落点：大字主张占据视觉重量，证据退后，留白保护主张。
+    fails: 主张需要多组数字互相印证时改 metric_row；需要时间推进时改 series_chart。
+    when: 证据形状为 proposition/number，且页面承担建立、说服或收束。
+    slots:
+    - role: eyebrow
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.72
+      - 0.05
+      size: micro
+      color: muted
+      align: left
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.14
+      - 0.84
+      - 0.32
+      size: h1
+      color: ink
+      bold: true
+      anchor: top
+    - role: hero_value
+      type: text
+      zone:
+      - 0.6
+      - 0.46
+      - 0.4
+      - 0.22
+      size: display
+      color: primary
+      bold: true
+      anchor: bottom
+      optional: true
+    - role: hero_unit
+      type: text
+      zone:
+      - 0.6
+      - 0.7
+      - 0.4
+      - 0.07
+      size: label
+      color: muted
+      optional: true
+    - role: lede
+      type: text
+      zone:
+      - 0.0
+      - 0.52
+      - 0.62
+      - 0.32
+      size: lede
+      color: muted
+      optional: true
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 用装饰图形填补留白
+    - 把正文所有句子一并塞进大字主张
+    ladder: h1
+    focus: claim
+  metric_row:
+    why: 多个互不换算的指标并排时，焦点是「每一个量本身」，不是它们之间的差值；排成一行让观众横向比较量级，而不虚构一条差值轴。
+    fails: 指标之间存在真实胜负关系（同一口径同一期间的两端）时改 two_end；指标是同一量纲的时间序列时改 series_chart。
+    when: 证据形状为 comparison 但没有可相减的两端，或指标单位不一致。
+    slots:
+    - role: eyebrow
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.72
+      - 0.05
+      size: micro
+      color: muted
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.06
+      - 0.86
+      - 0.22
+      size: h1
+      color: ink
+      bold: true
+    - role: metric_cells
+      type: kpi
+      zone:
+      - 0.0
+      - 0.38
+      - 1.0
+      - 0.34
+      size: h2
+      color: ink
+    - role: note
+      type: text
+      zone:
+      - 0.0
+      - 0.74
+      - 0.8
+      - 0.14
+      size: body
+      color: muted
+      optional: true
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 把互不换算的指标画成同一条轴
+    - 虚构一个不存在的差值
+    - 给每个数字配一个图标
+    ladder: h2
+    focus: metric
+  two_end:
+    why: 只有两端、同一口径、同一期间时，差值本身才是结论；把两端拉开、把差值放在中间，观众一眼读到胜负。
+    fails: 只有一端或口径不同时，任何差值都是伪造，退回 metric_row。
+    when: 证据形状 comparison 且 comparison.delta 为真。
+    slots:
+    - role: eyebrow
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.72
+      - 0.05
+      size: micro
+      color: muted
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.04
+      - 0.88
+      - 0.28
+      size: h1
+      color: ink
+      bold: true
+    - role: left_value
+      type: text
+      zone:
+      - 0.0
+      - 0.4
+      - 0.4
+      - 0.22
+      size: display
+      color: ink
+      bold: true
+      anchor: bottom
+    - role: left_label
+      type: text
+      zone:
+      - 0.0
+      - 0.63
+      - 0.4
+      - 0.1
+      size: label
+      color: muted
+    - role: delta
+      type: text
+      zone:
+      - 0.4
+      - 0.3
+      - 0.2
+      - 0.1
+      size: body
+      color: accent
+      bold: true
+      align: center
+    - role: right_value
+      type: text
+      zone:
+      - 0.58
+      - 0.4
+      - 0.42
+      - 0.22
+      size: display
+      color: primary
+      bold: true
+      anchor: bottom
+    - role: right_label
+      type: text
+      zone:
+      - 0.58
+      - 0.63
+      - 0.42
+      - 0.1
+      size: label
+      color: muted
+    - role: rule
+      type: shape
+      shape: line
+      zone:
+      - 0.495
+      - 0.4
+      - 0.0
+      - 0.34
+      optional: true
+      color: hairline
+    - role: note
+      type: text
+      zone:
+      - 0.0
+      - 0.78
+      - 0.8
+      - 0.12
+      size: body
+      color: muted
+      optional: true
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 在口径或期间不同的两端之间画差值
+    - 给两端加无意义的第三条对照
+    ladder: h2
+    focus: claim
+  series_chart:
+    why: 同一量纲随时间推进时，形状是曲线不是数字堆；图占据主区，结论句压在上方解释「该看哪一段」。
+    fails: 类别之间没有顺序关系时不要用折线；类别 > 12 时改表格或拆分。
+    when: 证据形状为 series。
+    slots:
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.58
+      - 0.2
+      size: h2
+      color: ink
+      bold: true
+    - role: takeaway
+      type: text
+      zone:
+      - 0.62
+      - 0.0
+      - 0.38
+      - 0.2
+      size: body
+      color: primary
+      optional: true
+    - role: chart
+      type: chart
+      zone:
+      - 0.0
+      - 0.28
+      - 1.0
+      - 0.56
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 给没有时间顺序的类别画折线
+    - 用 3D 或渐变美化曲线
+    ladder: h2
+    focus: chart
+  part_whole:
+    why: 分项与整体同分母且互斥时，占比形状才成立；环图给整体感，右侧列表承担口径与差值。
+    fails: 相加 100% 但没有共同分母（同一主体可同时满足两项）时不得画占比图，退回 metric_row。
+    when: 证据形状 part_whole 且分母已证明。
+    slots:
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.76
+      - 0.18
+      size: h2
+      color: ink
+      bold: true
+    - role: chart
+      type: chart
+      zone:
+      - 0.0
+      - 0.26
+      - 0.46
+      - 0.62
+    - role: parts
+      type: text
+      zone:
+      - 0.54
+      - 0.26
+      - 0.46
+      - 0.5
+      size: body
+      color: ink
+    - role: note
+      type: text
+      zone:
+      - 0.54
+      - 0.78
+      - 0.46
+      - 0.12
+      size: micro
+      color: muted
+      optional: true
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 在共同分母未证明时画饼图或 100% 堆叠
+    - 把占比图与绝对量混在同一环上
+    ladder: h2
+    focus: chart
+  sequence_steps:
+    why: 阶段有先后时，横向推进让「下一步」成为阅读终点；序号只在顺序已证实时出现。
+    fails: 职责并列或归属未定时，序号与箭头都是伪造，退回 structure_map。
+    when: 证据形状为 sequence 且有明确阶段词或量化推进。
+    slots:
+    - role: eyebrow
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.72
+      - 0.05
+      size: micro
+      color: muted
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.08
+      - 0.86
+      - 0.18
+      size: h2
+      color: ink
+      bold: true
+    - role: steps
+      type: steps
+      zone:
+      - 0.0
+      - 0.34
+      - 1.0
+      - 0.44
+    - role: note
+      type: text
+      zone:
+      - 0.0
+      - 0.8
+      - 0.8
+      - 0.1
+      size: body
+      color: muted
+      optional: true
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 在没有明确先后关系时加序号与箭头
+    - 用箭头表示并列职责
+    ladder: h2
+    focus: step
+  structure_map:
+    why: 并列或从属关系用分组与对齐表达；只有明确给出归属时才用容器与层级，不补汇报线。
+    fails: 有真实先后时改 sequence_steps；只有一个对象时改 statement。
+    when: 证据形状为 structure。
+    slots:
+    - role: eyebrow
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.72
+      - 0.05
+      size: micro
+      color: muted
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.08
+      - 0.86
+      - 0.18
+      size: h2
+      color: ink
+      bold: true
+    - role: groups
+      type: groups
+      zone:
+      - 0.0
+      - 0.32
+      - 1.0
+      - 0.46
+    - role: note
+      type: text
+      zone:
+      - 0.0
+      - 0.8
+      - 0.8
+      - 0.1
+      size: body
+      color: muted
+      optional: true
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 不补作者没写的汇报线或层级
+    - 用容器把并列关系包成上下级
+    ladder: h2
+    focus: claim
+  image_narrative:
+    why: 当理解依赖「看见」时，视觉主体占主区，文字退到安全区；图的职责必须能说出「拿掉它损失什么」。
+    fails: 只有观点、没有可被看见的对象时改 statement；数字证据为主时改 metric_row/series_chart。
+    when: 作者声明了 hero/context/proof 素材（或既有素材），且文字能被安全区容纳。
+    slots:
+    - role: media
+      type: image
+      zone:
+      - 0.56
+      - 0.0
+      - 0.44
+      - 1.0
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.1
+      - 0.5
+      - 0.34
+      size: h1
+      color: ink
+      bold: true
+    - role: lede
+      type: text
+      zone:
+      - 0.0
+      - 0.5
+      - 0.5
+      - 0.3
+      size: body
+      color: muted
+      optional: true
+    - role: eyebrow
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.48
+      - 0.05
+      size: micro
+      color: muted
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 0.52
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 用图片填空
+    - 让背景压住主张
+    - 把生成图当事实证词
+    - 为了「有图」而牺牲文字可读性
+    ladder: h1
+    focus: subject
+  editorial_text:
+    why: 观点需要被读完而不是被扫过；正文分栏形成节奏，留白把句子隔成段落，不靠容器制造「丰富」。
+    fails: 句子超过 4 段或含数字证据时改 metric_row/statement。
+    when: 证据形状为 proposition 且正文 ≥ 3 句、无量化证据。
+    slots:
+    - role: eyebrow
+      type: text
+      zone:
+      - 0.0
+      - 0.0
+      - 0.72
+      - 0.05
+      size: micro
+      color: muted
+    - role: claim
+      type: text
+      zone:
+      - 0.0
+      - 0.08
+      - 0.72
+      - 0.22
+      size: h1
+      color: ink
+      bold: true
+    - role: lede
+      type: text
+      zone:
+      - 0.0
+      - 0.36
+      - 0.52
+      - 0.5
+      size: body
+      color: ink
+      optional: true
+    - role: side_note
+      type: text
+      zone:
+      - 0.58
+      - 0.36
+      - 0.42
+      - 0.5
+      size: body
+      color: muted
+      optional: true
+    - role: source
+      type: text
+      zone:
+      - 0.0
+      - 0.93
+      - 1.0
+      - 0.06
+      size: source
+      color: muted
+      optional: true
+    must_not:
+    - 用项目符号把段落切成碎片
+    - 为了填满版面加无义引语
+    ladder: h1
+    focus: claim

@@ -1,0 +1,146 @@
+{
+ "schema": "pvad-prompt-eval-v1",
+ "policy_sha256": "d3029cad5c48a83dd02c8d56181cdccfd5514366ca828b7c1fc8deb76a3e9fa5",
+ "cases": 8,
+ "candidate": {
+  "passed": 8,
+  "total": 8,
+  "clauses_ok": 45,
+  "clauses": 45
+ },
+ "baseline": {
+  "passed": 0,
+  "total": 8,
+  "clauses_ok": 16,
+  "clauses": 19,
+  "what": "朴素提示词：画面里有什么 + clean composition"
+ },
+ "rows": [
+  {
+   "id": "P01",
+   "name": "主视觉 + 左栏压字",
+   "expect": [
+    "subject_stated",
+    "duty_stated",
+    "role_stated",
+    "quiet_area_stated",
+    "no_panel_guard",
+    "tone_stated",
+    "no_coordinates",
+    "negative_production",
+    "ratio_usable",
+    "ratio_snapped",
+    "target_px_floor",
+    "no_style_words"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; 华东区前置仓的分拣线，两名拣货员在通道间补货; the image carries the page's main visual statement; composed for a 4:5 frame; the left side of the frame stays quiet and continuous with its surroundings for text placed later; do not add a separate panel or any flat shape behind that area; the quiet area keeps an even tone that will carry dark type; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 4:5 still, no border",
+   "fingerprint": "prompt-dacc67c2daad8d77"
+  },
+  {
+   "id": "P02",
+   "name": "右栏压字（安静面在右）",
+   "expect": [
+    "subject_stated",
+    "duty_stated",
+    "quiet_right",
+    "tone_stated",
+    "no_coordinates",
+    "ratio_usable"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; a regional distribution centre aisle at shift change; the image establishes context while the foreground stays readable; composed for a 28:31 frame; the right side of the frame stays quiet and continuous with its surroundings for text placed later; do not add a separate panel or any flat shape behind that area; the quiet area keeps a tone dark enough to carry light type; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 28:31 still, no border",
+   "fingerprint": "prompt-379d69e4f48c171b"
+  },
+  {
+   "id": "P03",
+   "name": "背景氛围图不带主体竞争",
+   "expect": [
+    "subject_stated",
+    "role_background",
+    "duty_stated",
+    "quiet_area_stated",
+    "no_coordinates",
+    "ratio_usable"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "the frame reads as an environment, not a picture of a single thing; space, material and light carry the frame; no single object competes for attention; warehouse racking dissolving into depth, no people; the image frames the message without competing with it; composed for a 16:9 frame; the left side of the frame stays quiet and continuous with its surroundings for text placed later; do not add a separate panel or any flat shape behind that area; the quiet area keeps a tone dark enough to carry light type; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 16:9 still, no border",
+   "fingerprint": "prompt-dff029cfa0a42475"
+  },
+  {
+   "id": "P04",
+   "name": "证据图（proof）不得戏剧化",
+   "expect": [
+    "subject_stated",
+    "proof_plainly",
+    "negative_proof",
+    "no_coordinates",
+    "ratio_usable"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; the damaged pallet corner as found on the dock; the examined subject is shown plainly and readable for verification, without dramatization; composed for a 11:12 frame; the left side of the frame stays quiet and continuous with its surroundings for text placed later; do not add a separate panel or any flat shape behind that area; the quiet area keeps an even tone that will carry dark type; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 11:12 still, no border",
+   "fingerprint": "prompt-bc48712bce394597"
+  },
+  {
+   "id": "P05",
+   "name": "无安全区（版面不压字）就不发让位指令",
+   "expect": [
+    "subject_stated",
+    "quiet_absent",
+    "no_coordinates",
+    "ratio_usable",
+    "target_px_floor"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; one pallet stacked with unlabelled cartons; the image carries the page's main visual statement; composed for a 1:1 frame; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 1:1 still, no border",
+   "fingerprint": "prompt-32db7e3ca4821924"
+  },
+  {
+   "id": "P06",
+   "name": "作者禁项必须保留",
+   "expect": [
+    "subject_stated",
+    "author_avoid",
+    "negative_production",
+    "no_coordinates"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; front-of-store staff restocking a shelf; the image carries the page's main visual statement; composed for a 4:5 frame; the right side of the frame stays quiet and continuous with its surroundings for text placed later; do not add a separate panel or any flat shape behind that area; the quiet area keeps an even tone that will carry dark type; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 4:5 still, no border",
+   "fingerprint": "prompt-7366de2ba2ebe20a"
+  },
+  {
+   "id": "P07",
+   "name": "缺主体时如实登记缺口，不编造主体",
+   "expect": [
+    "subject_missing_reported",
+    "no_fabricated_subject",
+    "no_coordinates"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; the image carries the page's main visual statement; composed for a 4:5 frame; the left side of the frame stays quiet and continuous with its surroundings for text placed later; do not add a separate panel or any flat shape behind that area; the quiet area keeps an even tone that will carry dark type; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 4:5 still, no border",
+   "fingerprint": "prompt-33ccb2d4f21ac9a6"
+  },
+  {
+   "id": "P08",
+   "name": "极端画幅仍给出可用比例与目标像素",
+   "expect": [
+    "ratio_usable",
+    "target_px_floor",
+    "subject_stated",
+    "no_coordinates"
+   ],
+   "failures": [],
+   "passed": true,
+   "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; a single carton on a conveyor; the image carries the page's main visual statement; composed for a 15:32 frame; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 15:32 still, no border",
+   "fingerprint": "prompt-ad2cd2b3258d434d"
+  }
+ ],
+ "note": "只度量说明是否可执行（拍什么/为什么/给谁让位/交付多大），不度量出图质量。没有调用任何图像模型：本包不替外部生成器出图。"
+}

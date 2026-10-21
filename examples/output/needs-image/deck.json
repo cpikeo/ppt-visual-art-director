@@ -1,0 +1,525 @@
+{
+  "canvas": {
+    "height": 720,
+    "ppt_dpi": 96,
+    "width": 1280
+  },
+  "meta": {
+    "audience": "区域运营负责人",
+    "base_dir": "/home/user/ppt-visual-art-director/examples",
+    "brief_sha256": "f099230f384684497245b6b7fe26657a27efbfcac4f9ec00934e5a1e03b9f18e",
+    "decision": "决定是否在华东再加 3 个前置仓",
+    "metric_units": {
+      "直营网点单点月均产出": [
+        "万元"
+      ],
+      "经销网点单点月均产出": [
+        "万元"
+      ]
+    },
+    "plan_schema": "pvad-plan-v1",
+    "policy_sha256": "d3029cad5c48a83dd02c8d56181cdccfd5514366ca828b7c1fc8deb76a3e9fa5",
+    "title": "加仓不再带来增长",
+    "visual_world": "中性纸面：单一底色 + 墨色文字 + 一个语义强调色；材质与光影不参与叙事"
+  },
+  "schema": "pvad-deck-v1",
+  "slides": [
+    {
+      "accent_elements": 0,
+      "composition": "image_narrative",
+      "composition_downgraded": "",
+      "composition_why": "作者声明了 hero 素材：视觉主体占主区，文字退到安全区，先验证可读性再谈构图",
+      "elements": [
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 17.7
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": false,
+          "color": "muted",
+          "height": 21,
+          "id": "s01.eyebrow",
+          "layout_source": "plan",
+          "line_height": 1.42,
+          "max_lines": 2,
+          "role": "eyebrow",
+          "size": 15.0,
+          "text": "01",
+          "tracking": 0.8,
+          "type": "text",
+          "width": 544.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 56.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 471.6
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": true,
+          "color": "ink",
+          "height": 72,
+          "id": "s01.claim",
+          "layout_source": "plan",
+          "line_height": 1.12,
+          "max_lines": 3,
+          "role": "claim",
+          "size": 60.0,
+          "text": "加仓不再带来增长",
+          "tracking": -0.9,
+          "type": "text",
+          "width": 568.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 120.0
+        },
+        {
+          "_missing": true,
+          "brief": {
+            "clauses": [
+              {
+                "slot": "role",
+                "text": "one clearly readable subject, treated as an independent visual object"
+              },
+              {
+                "slot": "role",
+                "text": "its scale, position and internal structure stay clear at the size it will be viewed"
+              },
+              {
+                "slot": "subject",
+                "text": "华东前置仓分拣线，两名拣货员在货架通道间补货，纸箱堆到视线高度"
+              },
+              {
+                "slot": "function",
+                "text": "the image carries the page's main visual statement"
+              },
+              {
+                "slot": "framing",
+                "text": "composed for a 4:5 frame"
+              },
+              {
+                "slot": "quiet_area",
+                "text": "the left side of the frame stays quiet and continuous with its surroundings for text placed later"
+              },
+              {
+                "slot": "quiet_area",
+                "text": "do not add a separate panel or any flat shape behind that area"
+              },
+              {
+                "slot": "tone",
+                "text": "the quiet area keeps an even tone that will carry dark type"
+              },
+              {
+                "slot": "tail",
+                "text": "clean composition"
+              },
+              {
+                "slot": "tail",
+                "text": "no text"
+              },
+              {
+                "slot": "tail",
+                "text": "no logo"
+              },
+              {
+                "slot": "tail",
+                "text": "no watermark"
+              },
+              {
+                "slot": "tail",
+                "text": "no UI elements"
+              },
+              {
+                "slot": "tail",
+                "text": "no clutter"
+              },
+              {
+                "slot": "ratio",
+                "text": "4:5 still, no border"
+              }
+            ],
+            "fingerprint": "prompt-220c84df1047a690",
+            "function": "hero",
+            "issues": [],
+            "negative": "no text, no letters, no numbers, no typography, no logo, no watermark, no UI elements, no clutter, no busy composition, no AI artifacts, no unintended borders or letterboxing, no unintended flat painted panels, no unintended visible seams, no over-sharpening artifacts, no brand logos, no identifiable faces",
+            "prompt": "one clearly readable subject, treated as an independent visual object; its scale, position and internal structure stay clear at the size it will be viewed; 华东前置仓分拣线，两名拣货员在货架通道间补货，纸箱堆到视线高度; the image carries the page's main visual statement; composed for a 4:5 frame; the left side of the frame stays quiet and continuous with its surroundings for text placed later; do not add a separate panel or any flat shape behind that area; the quiet area keeps an even tone that will carry dark type; clean composition; no text; no logo; no watermark; no UI elements; no clutter; 4:5 still, no border",
+            "quiet_side": "left",
+            "ratio": "4:5",
+            "reason": "让观众看见网点密度背后的现场拥挤，而不是用一个百分比代替现场",
+            "role": "subject",
+            "safe_area": {
+              "height": 0.84,
+              "width": 0.46,
+              "x": 0.0,
+              "y": 0.08
+            },
+            "schema": "pvad-prompt-v1",
+            "target_px": {
+              "height": 1248,
+              "width": 992
+            },
+            "text_color": "dark"
+          },
+          "fit": "cover",
+          "function": "hero",
+          "height": 624.0,
+          "id": "s01.media",
+          "layout_source": "author",
+          "reason": "让观众看见网点密度背后的现场拥挤，而不是用一个百分比代替现场",
+          "role": "media",
+          "safe_area": {
+            "height": 0.84,
+            "width": 0.46,
+            "x": 0.0,
+            "y": 0.08
+          },
+          "source": "assets/east_china_dark_store.jpg",
+          "text_color": "dark",
+          "type": "image",
+          "width": 496.0,
+          "x": 712.0,
+          "y": 56.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 79.3
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": false,
+          "color": "muted",
+          "height": 17,
+          "id": "s01.source",
+          "layout_source": "plan",
+          "line_height": 1.3,
+          "max_lines": 2,
+          "role": "source",
+          "size": 13.0,
+          "text": "内部经营看板",
+          "tracking": 0.2,
+          "type": "text",
+          "width": 592.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 632.0
+        }
+      ],
+      "id": "s01",
+      "index": 0,
+      "layout_source": "plan",
+      "meta": {
+        "basis": "已开票收入",
+        "claim_absent": false,
+        "density": "dense",
+        "emphasis": "normal",
+        "emphasis_applied": false,
+        "emphasis_notes": [],
+        "focus": "subject",
+        "has_numeric_evidence": false,
+        "measured": true,
+        "media": {
+          "avoid": [
+            "brand logos",
+            "identifiable faces"
+          ],
+          "decision": "required",
+          "fit": "cover",
+          "function": "hero",
+          "path": "assets/east_china_dark_store.jpg",
+          "reason": "让观众看见网点密度背后的现场拥挤，而不是用一个百分比代替现场",
+          "role": "subject",
+          "safe_area": {
+            "height": 0.84,
+            "width": 0.46,
+            "x": 0.0,
+            "y": 0.08
+          },
+          "source": "author",
+          "subject": "华东前置仓分拣线，两名拣货员在货架通道间补货，纸箱堆到视线高度",
+          "text_color": "dark",
+          "why": "作者声明素材（function=hero）：原样生效；按出图需求登记，不替外部生成器出图"
+        },
+        "metrics": [],
+        "open_questions": [
+          "PROBE_CAUSAL_RISK"
+        ],
+        "period": "2026 Q1–Q3",
+        "reading_seconds": 3.7,
+        "rhythm": "open",
+        "role": "establish",
+        "source": "内部经营看板",
+        "source_zone": {
+          "height": 40.0,
+          "width": 592.0,
+          "x": 72.0,
+          "y": 632.0
+        },
+        "unit": "万元"
+      }
+    },
+    {
+      "accent_elements": 0,
+      "composition": "metric_row",
+      "composition_downgraded": "",
+      "composition_why": "多指标并排但不构成可相减的两端：并排呈现量级，不造差值轴",
+      "elements": [
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 17.7
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": false,
+          "color": "muted",
+          "height": 21,
+          "id": "s02.eyebrow",
+          "layout_source": "plan",
+          "line_height": 1.42,
+          "max_lines": 2,
+          "role": "eyebrow",
+          "size": 15.0,
+          "text": "02",
+          "tracking": 0.8,
+          "type": "text",
+          "width": 816.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 56.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 765.6
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": true,
+          "color": "ink",
+          "height": 72,
+          "id": "s02.claim",
+          "layout_source": "plan",
+          "line_height": 1.12,
+          "max_lines": 3,
+          "role": "claim",
+          "size": 60.0,
+          "text": "单点产出下降集中在直营网点",
+          "tracking": -0.9,
+          "type": "text",
+          "width": 976.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 96.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 154.8
+          },
+          "align": "left",
+          "anchor": "bottom",
+          "bold": true,
+          "color": "ink",
+          "height": 52,
+          "id": "s02.metric_value.1",
+          "layout_source": "plan",
+          "line_height": 1.24,
+          "max_lines": 1,
+          "role": "metric_value.1",
+          "size": 42.0,
+          "text": "3.4 万元",
+          "tracking": -0.3,
+          "type": "text",
+          "width": 560.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 288.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 189.6
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": false,
+          "color": "ink",
+          "height": 25,
+          "id": "s02.metric_label.1",
+          "layout_source": "plan",
+          "line_height": 1.4,
+          "max_lines": 1,
+          "role": "metric_label.1",
+          "size": 18.0,
+          "text": "直营网点单点月均产出",
+          "tracking": 0.8,
+          "type": "text",
+          "width": 560.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 392.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 154.8
+          },
+          "align": "left",
+          "anchor": "bottom",
+          "bold": true,
+          "color": "ink",
+          "height": 52,
+          "id": "s02.metric_value.2",
+          "layout_source": "plan",
+          "line_height": 1.24,
+          "max_lines": 1,
+          "role": "metric_value.2",
+          "size": 42.0,
+          "text": "4.6 万元",
+          "tracking": -0.3,
+          "type": "text",
+          "width": 560.0,
+          "wrap": true,
+          "x": 656.0,
+          "y": 288.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 189.6
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": false,
+          "color": "ink",
+          "height": 25,
+          "id": "s02.metric_label.2",
+          "layout_source": "plan",
+          "line_height": 1.4,
+          "max_lines": 1,
+          "role": "metric_label.2",
+          "size": 18.0,
+          "text": "经销网点单点月均产出",
+          "tracking": 0.8,
+          "type": "text",
+          "width": 560.0,
+          "wrap": true,
+          "x": 656.0,
+          "y": 392.0
+        },
+        {
+          "_measured": {
+            "degraded": false,
+            "lines": 1,
+            "max_line_width": 92.6
+          },
+          "align": "left",
+          "anchor": "top",
+          "bold": false,
+          "color": "muted",
+          "height": 17,
+          "id": "s02.source",
+          "layout_source": "plan",
+          "line_height": 1.3,
+          "max_lines": 2,
+          "role": "source",
+          "size": 13.0,
+          "text": "渠道月度结算表",
+          "tracking": 0.2,
+          "type": "text",
+          "width": 1136.0,
+          "wrap": true,
+          "x": 72.0,
+          "y": 632.0
+        }
+      ],
+      "id": "s02",
+      "index": 1,
+      "layout_source": "plan",
+      "meta": {
+        "basis": "已开票收入",
+        "claim_absent": false,
+        "density": "dense",
+        "emphasis": "lead",
+        "emphasis_applied": false,
+        "emphasis_notes": [
+          "强调档 lead 想上移一档到 display，但主张在这个框里装不下：保持基准档，考虑删内容"
+        ],
+        "focus": "metric",
+        "has_numeric_evidence": true,
+        "measured": true,
+        "media": {
+          "avoid": [],
+          "decision": "none",
+          "fit": "",
+          "function": "",
+          "path": "",
+          "reason": "",
+          "role": "",
+          "safe_area": null,
+          "source": "rule:no-media",
+          "subject": "",
+          "text_color": "",
+          "why": "作者未声明素材，内容也不依赖「看见」：纯排版页，不出图"
+        },
+        "metrics": [
+          {
+            "label": "直营网点单点月均产出",
+            "unit": "万元",
+            "value": "3.4"
+          },
+          {
+            "label": "经销网点单点月均产出",
+            "unit": "万元",
+            "value": "4.6"
+          }
+        ],
+        "open_questions": [],
+        "period": "2026 Q1–Q3",
+        "reading_seconds": 5.0,
+        "rhythm": "close",
+        "role": "compare",
+        "source": "渠道月度结算表",
+        "source_zone": {
+          "height": 40.0,
+          "width": 1136.0,
+          "x": 72.0,
+          "y": 632.0
+        },
+        "unit": "万元"
+      }
+    }
+  ],
+  "theme": {
+    "accent_budget": 2,
+    "colors": {
+      "accent": "#B4522A",
+      "background": "#F7F5F1",
+      "hairline": "#D8D3CB",
+      "ink": "#14161A",
+      "muted": "#6B7076",
+      "negative": "#8C2F1F",
+      "primary": "#1F4E5A",
+      "surface": "#FFFFFF"
+    },
+    "fonts": {
+      "cn": "Noto Sans CJK SC",
+      "latin": "DejaVu Sans"
+    }
+  }
+}

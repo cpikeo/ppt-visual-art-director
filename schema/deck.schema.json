@@ -1,0 +1,451 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://pvad.local/schema/deck.schema.json",
+ "title": "PVAD deck spec (build output / author input)",
+ "description": "执行契约：几何 + 排版 + 数据。作者可以手写或改这个文件（layout_source=author），compose 的推导结果等价于一次草稿。",
+ "type": "object",
+ "required": [
+  "schema",
+  "canvas",
+  "theme",
+  "slides"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "schema": {
+   "type": "string",
+   "const": "pvad-deck-v1"
+  },
+  "canvas": {
+   "type": "object",
+   "required": [
+    "width",
+    "height"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "width": {
+     "type": "number",
+     "exclusiveMinimum": 0
+    },
+    "height": {
+     "type": "number",
+     "exclusiveMinimum": 0
+    },
+    "ppt_dpi": {
+     "type": "number",
+     "exclusiveMinimum": 0
+    }
+   }
+  },
+  "theme": {
+   "type": "object",
+   "required": [
+    "colors",
+    "fonts"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "colors": {
+     "type": "object",
+     "minProperties": 3,
+     "additionalProperties": {
+      "type": "string",
+      "pattern": "^#[0-9A-Fa-f]{6}$"
+     }
+    },
+    "fonts": {
+     "type": "object",
+     "required": [
+      "cn",
+      "latin"
+     ],
+     "additionalProperties": false,
+     "properties": {
+      "cn": {
+       "type": "string"
+      },
+      "latin": {
+       "type": "string"
+      }
+     }
+    },
+    "accent_budget": {
+     "type": "integer",
+     "minimum": 0
+    }
+   }
+  },
+  "meta": {
+   "type": "object"
+  },
+  "slides": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "elements"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "index": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "composition": {
+      "type": "string"
+     },
+     "layout_source": {
+      "type": "string",
+      "enum": [
+       "plan",
+       "author"
+      ]
+     },
+     "composition_why": {
+      "type": "string"
+     },
+     "composition_downgraded": {
+      "type": "string"
+     },
+     "background": {
+      "type": "string"
+     },
+     "accent_elements": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "meta": {
+      "type": "object"
+     },
+     "elements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+       "$ref": "#/$defs/element"
+      }
+     }
+    }
+   }
+  }
+ },
+ "$defs": {
+  "geometry": {
+   "x": {
+    "type": "number"
+   },
+   "y": {
+    "type": "number"
+   },
+   "width": {
+    "type": "number",
+    "minimum": 0
+   },
+   "height": {
+    "type": "number",
+    "minimum": 0
+   }
+  },
+  "element": {
+   "type": "object",
+   "required": [
+    "id",
+    "type",
+    "x",
+    "y",
+    "width",
+    "height"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "type": {
+     "enum": [
+      "text",
+      "shape",
+      "chart",
+      "image"
+     ]
+    },
+    "role": {
+     "type": "string"
+    },
+    "x": {
+     "type": "number"
+    },
+    "y": {
+     "type": "number"
+    },
+    "width": {
+     "type": "number",
+     "minimum": 0
+    },
+    "height": {
+     "type": "number",
+     "minimum": 0
+    },
+    "layout_source": {
+     "type": "string",
+     "enum": [
+      "plan",
+      "author"
+     ]
+    },
+    "text": {
+     "type": "string"
+    },
+    "size": {
+     "type": "number",
+     "exclusiveMinimum": 0
+    },
+    "line_height": {
+     "type": "number",
+     "exclusiveMinimum": 0
+    },
+    "tracking": {
+     "type": "number"
+    },
+    "color": {
+     "type": "string"
+    },
+    "bold": {
+     "type": "boolean"
+    },
+    "italic": {
+     "type": "boolean"
+    },
+    "align": {
+     "enum": [
+      "left",
+      "center",
+      "right"
+     ]
+    },
+    "anchor": {
+     "enum": [
+      "top",
+      "middle",
+      "bottom"
+     ]
+    },
+    "max_lines": {
+     "type": "integer",
+     "minimum": 1
+    },
+    "wrap": {
+     "type": "boolean"
+    },
+    "shape": {
+     "enum": [
+      "rect",
+      "rounded_rect",
+      "ellipse",
+      "triangle",
+      "diamond",
+      "line",
+      "arrow"
+     ]
+    },
+    "fill": {
+     "type": [
+      "string",
+      "object",
+      "null"
+     ]
+    },
+    "stroke": {
+     "type": [
+      "string",
+      "object",
+      "null"
+     ]
+    },
+    "stroke_width": {
+     "type": "number",
+     "minimum": 0
+    },
+    "chart_kind": {
+     "enum": [
+      "column",
+      "bar",
+      "line",
+      "donut",
+      "progress"
+     ]
+    },
+    "categories": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "series": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "name",
+       "values"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "name": {
+        "type": "string",
+        "minLength": 1
+       },
+       "values": {
+        "type": "array",
+        "items": {
+         "type": [
+          "number",
+          "null"
+         ]
+        }
+       }
+      }
+     }
+    },
+    "show_values": {
+     "type": "boolean"
+    },
+    "value_size": {
+     "type": "number"
+    },
+    "label_size": {
+     "type": "number"
+    },
+    "unit_suffix": {
+     "type": "string"
+    },
+    "takeaway": {
+     "type": "string"
+    },
+    "derived": {
+     "type": "string"
+    },
+    "source": {
+     "type": "string"
+    },
+    "fit": {
+     "enum": [
+      "cover",
+      "contain"
+     ]
+    },
+    "asset_id": {
+     "type": "string"
+    },
+    "function": {
+     "type": "string"
+    },
+    "reason": {
+     "type": "string"
+    },
+    "overlay": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 1
+    },
+    "crop": {
+     "type": "array",
+     "minItems": 4,
+     "maxItems": 4,
+     "items": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+     }
+    },
+    "crop_loss": {
+     "type": "number",
+     "minimum": 1
+    },
+    "safe_area": {
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "text_color": {
+     "type": "string"
+    },
+    "asset_sha256": {
+     "type": "string"
+    },
+    "source_px": {
+     "type": "object",
+     "required": [
+      "width",
+      "height"
+     ],
+     "properties": {
+      "width": {
+       "type": "integer"
+      },
+      "height": {
+       "type": "integer"
+      }
+     }
+    },
+    "format": {
+     "type": "string"
+    },
+    "layer": {
+     "type": "string"
+    },
+    "brief": {
+     "type": "object",
+     "required": [
+      "prompt",
+      "negative",
+      "ratio",
+      "target_px",
+      "fingerprint"
+     ],
+     "properties": {
+      "prompt": {
+       "type": "string",
+       "minLength": 1
+      },
+      "negative": {
+       "type": "string",
+       "minLength": 1
+      },
+      "ratio": {
+       "type": "string",
+       "pattern": "^\\d+:\\d+$"
+      },
+      "target_px": {
+       "type": "object",
+       "properties": {
+        "width": {
+         "type": "integer",
+         "minimum": 1
+        },
+        "height": {
+         "type": "integer",
+         "minimum": 1
+        }
+       }
+      },
+      "fingerprint": {
+       "type": "string",
+       "minLength": 8
+      },
+      "issues": {
+       "type": "array"
+      }
+     }
+    }
+   }
+  }
+ }
+}

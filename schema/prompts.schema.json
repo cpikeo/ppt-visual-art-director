@@ -1,0 +1,310 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "pvad-prompts-v1",
+ "title": "提示词策略（语言片段与顺序，不含判断）",
+ "type": "object",
+ "required": [
+  "schema_version",
+  "clause_order",
+  "phrases",
+  "negatives",
+  "limits",
+  "style_words_banned",
+  "ratio",
+  "clause_join"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "schema_version": {
+   "const": "pvad-prompts-v1"
+  },
+  "clause_order": {
+   "type": "array",
+   "minItems": 6,
+   "uniqueItems": true,
+   "items": {
+    "enum": [
+     "role",
+     "subject",
+     "function",
+     "framing",
+     "quiet_area",
+     "tone",
+     "crop_safety",
+     "tail",
+     "ratio"
+    ]
+   }
+  },
+  "phrases": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "role",
+    "function",
+    "quiet_area",
+    "quiet_no_panel",
+    "tone",
+    "crop_safety",
+    "framing",
+    "ratio_label",
+    "tail"
+   ],
+   "properties": {
+    "role": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "background",
+      "subject",
+      "support"
+     ],
+     "properties": {
+      "background": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 3,
+       "items": {
+        "type": "string",
+        "minLength": 8
+       }
+      },
+      "subject": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 3,
+       "items": {
+        "type": "string",
+        "minLength": 8
+       }
+      },
+      "support": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 3,
+       "items": {
+        "type": "string",
+        "minLength": 8
+       }
+      }
+     }
+    },
+    "function": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "hero",
+      "context",
+      "proof",
+      "emotion",
+      "frame"
+     ],
+     "properties": {
+      "hero": {
+       "type": "string",
+       "minLength": 8
+      },
+      "context": {
+       "type": "string",
+       "minLength": 8
+      },
+      "proof": {
+       "type": "string",
+       "minLength": 8
+      },
+      "emotion": {
+       "type": "string",
+       "minLength": 8
+      },
+      "frame": {
+       "type": "string",
+       "minLength": 8
+      }
+     }
+    },
+    "quiet_area": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "left",
+      "right",
+      "top",
+      "bottom",
+      "center"
+     ],
+     "properties": {
+      "left": {
+       "type": "string",
+       "minLength": 8
+      },
+      "right": {
+       "type": "string",
+       "minLength": 8
+      },
+      "top": {
+       "type": "string",
+       "minLength": 8
+      },
+      "bottom": {
+       "type": "string",
+       "minLength": 8
+      },
+      "center": {
+       "type": "string",
+       "minLength": 8
+      }
+     }
+    },
+    "quiet_no_panel": {
+     "type": "string",
+     "minLength": 8
+    },
+    "tone": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "dark",
+      "light"
+     ],
+     "properties": {
+      "dark": {
+       "type": "string",
+       "minLength": 8
+      },
+      "light": {
+       "type": "string",
+       "minLength": 8
+      }
+     }
+    },
+    "crop_safety": {
+     "type": "string",
+     "minLength": 8
+    },
+    "framing": {
+     "type": "string",
+     "pattern": "\\{ratio\\}"
+    },
+    "ratio_label": {
+     "type": "string",
+     "pattern": "\\{ratio\\}"
+    },
+    "tail": {
+     "type": "array",
+     "minItems": 4,
+     "items": {
+      "type": "string",
+      "minLength": 3
+     }
+    }
+   }
+  },
+  "negatives": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "base",
+    "production",
+    "by_function",
+    "join"
+   ],
+   "properties": {
+    "base": {
+     "type": "array",
+     "minItems": 3,
+     "items": {
+      "type": "string",
+      "minLength": 2
+     }
+    },
+    "production": {
+     "type": "array",
+     "minItems": 1,
+     "items": {
+      "type": "string",
+      "minLength": 4
+     }
+    },
+    "by_function": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "proof"
+     ],
+     "properties": {
+      "proof": {
+       "type": "array",
+       "minItems": 1,
+       "items": {
+        "type": "string",
+        "minLength": 4
+       }
+      }
+     }
+    },
+    "join": {
+     "type": "string",
+     "minLength": 1
+    }
+   }
+  },
+  "limits": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "max_chars",
+    "max_negative_terms"
+   ],
+   "properties": {
+    "max_chars": {
+     "type": "integer",
+     "minimum": 200
+    },
+    "max_negative_terms": {
+     "type": "integer",
+     "minimum": 4
+    }
+   }
+  },
+  "style_words_banned": {
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "string",
+    "minLength": 2
+   }
+  },
+  "ratio": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "presets",
+    "tolerance"
+   ],
+   "properties": {
+    "presets": {
+     "type": "array",
+     "minItems": 3,
+     "items": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+       "type": "integer",
+       "minimum": 1
+      }
+     }
+    },
+    "tolerance": {
+     "type": "number",
+     "exclusiveMinimum": 0,
+     "maximum": 0.2
+    }
+   }
+  },
+  "clause_join": {
+   "type": "string",
+   "minLength": 1
+  }
+ }
+}
