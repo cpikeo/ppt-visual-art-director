@@ -231,12 +231,14 @@ def _check_slide(slide, deck, policy, rep, mode, fontbook, cw, ch, colors, metri
     _check_density(numbers, identity, policy, rep, sid)
 
 
+_ALL_KNOWN_FIELDS: set[str] = COMMON_FIELDS | set().union(*TYPE_FIELDS.values())
+
+
 def _check_fields(element: dict, etype: str, rep: _Report, where: dict) -> None:
     allowed = COMMON_FIELDS | TYPE_FIELDS[etype]
     unknown = {k for k in element if k not in allowed and not k.startswith("_")}
-    known = allowed | COMMON_FIELDS | set().union(*TYPE_FIELDS.values())
     for name in sorted(unknown):
-        close = _closest(name, known)
+        close = _closest(name, _ALL_KNOWN_FIELDS)
         if close:
             rep.error("FIELD_UNKNOWN",
                       f"字段名 {name!r} 疑似写错，应为 {close!r}：渲染器不消费该名，等于静默丢弃",
@@ -634,17 +636,45 @@ def _check_evidence_laid_out(slide: dict, rep: "_Report", sid: str) -> None:
     案例 B s04/s10 的回归：作者写了「3 个庄园 / 640 米 / 6 天」，构图选 image_narrative，
     而该配方当时没有指标槽——数字在 plan.json 和 brief 里都在，成片里一个都没有，guard 却 PASS。
     静默丢证据比排版难看严重得多：评审看到的是一页没有证据的图片页。
+
+    落位的形式有三种，都算证据上了页：
+      * 指标槽文字（metric_value / hero_value / left_value / right_value）；
+      * 图表序列里真的带着这些数值（part_whole / series_chart 用图承载量）；
+      * 分项列表（part_whole 的 parts 槽逐条写出标签与数值）。
+    三种都没有才判「声明了却没落版」——只认文字槽会把用图表达的数字误判成丢证据。
     """
     declared = (slide.get("meta") or {}).get("metrics") or []
     if not declared:
         return
-    laid_out = [e for e in slide.get("elements") or []
+    elements = slide.get("elements") or []
+    laid_out = [e for e in elements
                 if str(e.get("role") or "").startswith(
                     ("metric_value", "hero_value", "left_value", "right_value"))]
-    if not laid_out:
-        rep.error("EVIDENCE_NOT_LAID_OUT",
-                  f"声明了 {len(declared)} 个指标，页面上没有任何指标元素：换构图或删数据",
-                  slide=sid)
+    if laid_out:
+        return
+    declared_values = set()
+    for metric in declared:
+        raw = str(metric.get("value") if metric.get("value") is not None else "").replace(",", "").strip()
+        try:
+            declared_values.add(round(float(raw), 6))
+        except ValueError:
+            continue
+    if declared_values:
+        for element in elements:
+            if element.get("type") != "chart":
+                continue
+            for series in element.get("series") or []:
+                for value in series.get("values") or []:
+                    if isinstance(value, (int, float)) and round(float(value), 6) in declared_values:
+                        return
+        for element in elements:
+            if str(element.get("role") or "") == "parts" and element.get("type") == "text":
+                text = str(element.get("text") or "")
+                if any(str(metric.get("label") or "").strip() in text for metric in declared if metric.get("label")):
+                    return
+    rep.error("EVIDENCE_NOT_LAID_OUT",
+              f"声明了 {len(declared)} 个指标，页面上没有任何指标元素、图表数值或分项列表：换构图或删数据",
+              slide=sid)
 
 
 def _intersects(element: dict, zone: dict) -> bool:

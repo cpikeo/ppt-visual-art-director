@@ -21,6 +21,7 @@ def compare(deck: dict, readback: dict, policy) -> dict:
     pos_tol = float(policy.num(POSITION_TOL[0]))
     size_tol = float(policy.num(SIZE_TOL[0]))
     size_pt_tol = float(policy.num("thresholds.size_pt_tolerance"))
+    theme_colors = (deck.get("theme") or {}).get("colors") or {}
     mismatches: list[dict] = []
     matched = 0
 
@@ -41,7 +42,7 @@ def compare(deck: dict, readback: dict, policy) -> dict:
                 continue
             matched += 1
             _check_geometry(mismatches, sid, eid, element, shape, pos_tol, size_tol)
-            _check_payload(mismatches, sid, eid, element, shape, size_pt_tol)
+            _check_payload(mismatches, sid, eid, element, shape, size_pt_tol, theme_colors)
         for name in by_name:
             if name not in expected:
                 mismatches.append({"kind": "extra", "slide": sid, "element": name,
@@ -71,7 +72,7 @@ def _check_geometry(mismatches, sid, eid, element, shape, pos_tol, size_tol) -> 
                                "detail": f"{axis} 偏差 {abs(float(element[axis]) - float(shape[axis])):.2f}px"})
 
 
-def _check_payload(mismatches, sid, eid, element, shape, size_pt_tol) -> None:
+def _check_payload(mismatches, sid, eid, element, shape, size_pt_tol, theme_colors) -> None:
     etype = element["type"]
     if etype == "text":
         expected_text = str(element.get("text") or "")
@@ -86,7 +87,7 @@ def _check_payload(mismatches, sid, eid, element, shape, size_pt_tol) -> None:
                                "expected": element["size"], "actual": sizes[0],
                                "detail": "字号与 spec 不一致"})
         colors = shape.get("colors") or []
-        expected_color = _hex_of(element.get("color"))
+        expected_color = _resolve_color(element.get("color"), theme_colors)
         if colors and expected_color and colors[0].upper() != expected_color:
             mismatches.append({"kind": "payload", "slide": sid, "element": eid, "field": "color",
                                "expected": expected_color, "actual": colors[0],
@@ -168,6 +169,19 @@ def _values_differ(left, right) -> bool:
 def _hex_of(value) -> str | None:
     if isinstance(value, str) and value.startswith("#"):
         return value.upper()
+    return None
+
+
+def _resolve_color(value, theme_colors: dict) -> str | None:
+    """把颜色值（十六进制或 theme token）解析为可比较的大写十六进制。
+
+    fidelity 之前对 token 颜色整体跳过（_hex_of("ink") 返回 None），
+    导致 token 映射错误会假 PASS。这里把 token 通过 deck.theme.colors 解析后再比对。
+    """
+    if isinstance(value, str) and value.startswith("#"):
+        return value.upper()
+    if isinstance(value, str) and value in theme_colors:
+        return str(theme_colors[value]).lstrip("#").upper()
     return None
 
 

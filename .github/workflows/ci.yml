@@ -1,0 +1,53 @@
+name: PVAD CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile all Python modules
+        run: python -m compileall -q scripts evals tests
+
+      - name: Validate JSON schemas
+        run: python -c "import json,pathlib; from jsonschema import Draft202012Validator; [Draft202012Validator.check_schema(json.loads(p.read_text())) for p in pathlib.Path('schema').glob('*.json')]; print('schemas PASS')"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
+      - name: Judgment baseline + ablation
+        run: python evals/judgment_eval.py --ablate
+
+      - name: Prompt layer evaluation
+        run: python evals/prompt_eval.py
+
+      - name: Typography evaluation
+        run: python evals/typography_eval.py
+
+      - name: Build skill package smoke check
+        run: python scripts/package_skill.py --out /tmp/pvad-package --include-tests
+
+      - name: Confirm CI does not claim external release gates
+        run: |
+          if ! grep -q "require external evidence" .github/workflows/ci.yml; then echo "CI must state external evidence is required"; exit 1; fi
+          echo "external gates assertion PASS"

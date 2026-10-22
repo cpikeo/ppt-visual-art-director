@@ -177,10 +177,26 @@ def parse_atoms(slide: dict, policy) -> dict:
         body_lines.append(line)
         i += 1
 
+    # 作者显式声明的 metrics 是权威数据，但 content 常常把同一数字复述一遍
+    # （真实 brief 里「叙述 + 结构化数据」并存是常态）。重复计入会让环形图多出扇区、
+    # 指标行被列数上限截断、来源与图例重复——所以按「数值 + 标签」合并，不新增条目。
+    index_by_key: dict = {}
+    for i, metric in enumerate(metrics):
+        index_by_key.setdefault(_metric_key(metric), i)
     for metric in slide.get("metrics") or []:
-        metrics.append({"value": metric.get("value"), "unit": metric.get("unit") or "",
-                        "label": metric.get("label") or "", "desc": metric.get("desc") or "",
-                        "period": metric.get("period") or ""})
+        declared = {"value": metric.get("value"), "unit": metric.get("unit") or "",
+                    "label": metric.get("label") or "", "desc": metric.get("desc") or "",
+                    "period": metric.get("period") or ""}
+        key = _metric_key(declared)
+        if key in index_by_key:
+            merged = dict(metrics[index_by_key[key]])
+            for field in ("label", "unit", "desc", "period"):
+                if declared[field]:
+                    merged[field] = declared[field]
+            metrics[index_by_key[key]] = merged
+        else:
+            index_by_key[key] = len(metrics)
+            metrics.append(declared)
 
     # 词表在原文上匹配：归一化只服务排版，不能让「第一步」这类线索在切分时消失
     text = (slide.get("content") or "")
@@ -225,6 +241,23 @@ def _split_value_unit(raw: str) -> tuple[str, str]:
     if not m:
         return raw, ""
     return m.group(1), m.group(2).strip()
+
+
+def _metric_key(metric: dict) -> tuple:
+    """指标同一性：数值 + 标签（有标签时），否则数值 + 单位。
+
+    用于把「作者显式声明的 metrics」与「content 里复述的同一数字」合并成一条。
+    单位写法差异（% 与 ％、空单位）不参与同一性判定：同一个量不会因为写法不同被数两遍；
+    单位本身以作者声明为准（见 parse_atoms 的合并逻辑）。
+    """
+    raw = str(metric.get("value") if metric.get("value") is not None else "").replace(",", "").strip()
+    try:
+        number = round(float(raw), 6)
+    except ValueError:
+        number = raw
+    label = str(metric.get("label") or "").strip()
+    unit = str(metric.get("unit") or "").replace("％", "%").strip()
+    return (number, label) if label else (number, unit)
 
 
 def _period_of(text: str) -> str:

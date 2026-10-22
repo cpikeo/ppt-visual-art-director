@@ -340,9 +340,10 @@ def _fill_body(composition, elements, slots, page, atoms, frame, policy, fontboo
             add_text("note", notes, slots["note"]["zone"], "body", "muted")
 
     elif composition == "metric_row":
-        _metric_cells(elements, slots, metrics, frame, policy, fontbook, add_text_box, accent_used)
+        dropped = _metric_cells(elements, slots, metrics, frame, policy, fontbook, add_text_box, accent_used)
         if "note" in slots:
             add_text("note", "\n".join(atoms["body_lines"][:2]), slots["note"]["zone"], "body", "muted")
+        return dropped or 0
 
     elif composition == "two_end":
         _two_end(elements, slots, metrics, page["understanding"]["comparison"],
@@ -454,26 +455,25 @@ def _compose_media(slots, slide, page, frame, policy, elements, base_dir) -> dic
 
 
 def _metric_cells(elements, slots, metrics, frame, policy, fontbook, add_text_box, accent_used):
+    total = len(metrics)
     metrics = metrics[:4]
+    dropped = total - len(metrics)
     if not metrics:
-        return
+        return dropped
     zone = slots["metric_cells"]["zone"]
     cells = frame.columns(zone, len(metrics))
     size_key = "h2" if len(metrics) <= 3 else "lede"
     for i, (cell, metric) in enumerate(zip(cells, metrics)):
         x, y, w, h = cell
-        value_size = policy.size(size_key)
         unit = metric.get("unit") or ""
         value = f"{metric['value']}{NBSP if unit else ''}{unit}"
-        color = "ink"
-        add_text_box(f"metric_value.{i + 1}", value, (x, y, w, h * 0.46), size_key, color, bold=True,
+        add_text_box(f"metric_value.{i + 1}", value, (x, y, w, h * 0.46), size_key, "ink", bold=True,
                  anchor="bottom", max_lines=1)
-        if accent_used[0] and color == "accent":
-            pass
         add_text_box(f"metric_label.{i + 1}", metric.get("label") or "", (x, y + h * 0.5, w, h * 0.2),
                  "label", "ink")
         add_text_box(f"metric_desc.{i + 1}", metric.get("desc") or metric.get("period") or "",
                  (x, y + h * 0.72, w, h * 0.2), "micro", "muted")
+    return dropped
 
 
 def _two_end(elements, slots, metrics, comparison, frame, policy, fontbook, add_text_box, accent_used):

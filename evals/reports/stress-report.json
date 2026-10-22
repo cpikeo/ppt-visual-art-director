@@ -1,0 +1,92 @@
+{
+  "schema": "pvad-stress-report-v1",
+  "note": "合成工程压力测试；不代表视觉质量、真实业务内容或目标 PowerPoint 性能。",
+  "environment": {
+    "python": "3.13.16",
+    "platform": "linux"
+  },
+  "runs": [
+    {
+      "slides": 20,
+      "commands": {
+        "plan": {
+          "seconds": 1.1537,
+          "exit": 0,
+          "stdout_tail": "{\n  \"plan_path\": \"/tmp/pvad-stress-20-odxx1ume/plan.json\",\n  \"pages\": 20,\n  \"policy_sha256\": \"ab493b4d44e3cbaf0d61b0ebf87eea580f6b7eea98dd8402d78b8620dfcdc627\",\n  \"brief_sha256\": \"67f6df290f39675e09eced657e9f18f02298be50dec3f2cb13356c42c7d92bdd\",\n  \"claims_absent\": [],\n  \"open_questions\": 0,\n  \"warnings\": [],\n  \"plan_digest\": \"d0abfbc504dc96d1bfe50522d291ba875a1c0378bc351dfda3ca6a1f37fe6e8d\"\n}\n",
+          "stderr_tail": ""
+        },
+        "build": {
+          "seconds": 1.296,
+          "exit": 0,
+          "stdout_tail": "{\n  \"deck_path\": \"/tmp/pvad-stress-20-odxx1ume/deck.json\",\n  \"slides\": 20,\n  \"elements\": 82,\n  \"deck_digest\": \"c7135ea63204341260c4c189982b46baf186f90da41e7e34b033a85a21e0ddf0\"\n}\n",
+          "stderr_tail": ""
+        },
+        "release_check": {
+          "seconds": 7.1656,
+          "exit": 1,
+          "stdout_tail": "atus\": \"PARTIALLY VERIFIED\",\n      \"evidence\": \"actual PPTX readback rendered by internal renderer; not PowerPoint rendering\"\n    },\n    \"G-DECK\": {\n      \"status\": \"NOT RUN\",\n      \"evidence\": \"independent whole-deck visual/narrative review required\"\n    },\n    \"G-TGT\": {\n      \"status\": \"NOT VERIFIED\",\n      \"evidence\": \"NOT VERIFIED — 未在目标 PowerPoint 中打开、编辑、另存\"\n    },\n    \"G-COMPLY\": {\n      \"status\": \"NOT RUN\",\n      \"evidence\": \"asset authorization/privacy review not automated\"\n    }\n  }\n}\n",
+          "stderr_tail": ""
+        },
+        "review_package": {
+          "seconds": 1.0667,
+          "exit": 0,
+          "stdout_tail": "{\n  \"stage\": \"review\",\n  \"out_dir\": \"/tmp/pvad-stress-20-odxx1ume/review-package\",\n  \"files\": [\n    \"manifest.json\",\n    \"deck.pptx\",\n    \"preview-spec.png\",\n    \"preview-pptx.png\",\n    \"delivery-summary.md\",\n    \"REVIEW_REQUIRED.md\",\n    \"SHA256SUMS.txt\"\n  ],\n  \"verified\": true\n}\n",
+          "stderr_tail": ""
+        }
+      },
+      "max_child_rss_kb": 208376,
+      "pptx_bytes": 69463,
+      "deck_json_bytes": 85551,
+      "elements": 82,
+      "images": 2,
+      "charts": 2,
+      "engineering_status": "PASS",
+      "delivery_status": "BLOCK — Delivery",
+      "pixel_status": "MATCH",
+      "fidelity_status": "MATCH",
+      "target_powerpoint_seconds": "未测量",
+      "external_blind_review": "未测量"
+    },
+    {
+      "slides": 50,
+      "commands": {
+        "plan": {
+          "seconds": 1.1523,
+          "exit": 0,
+          "stdout_tail": "{\n  \"plan_path\": \"/tmp/pvad-stress-50-gu6lutx0/plan.json\",\n  \"pages\": 50,\n  \"policy_sha256\": \"ab493b4d44e3cbaf0d61b0ebf87eea580f6b7eea98dd8402d78b8620dfcdc627\",\n  \"brief_sha256\": \"30c4abca0034e910923529cc4d940ba46599ad2891663e3ff3f98b1e6cfa8c59\",\n  \"claims_absent\": [],\n  \"open_questions\": 0,\n  \"warnings\": [],\n  \"plan_digest\": \"6d8ee94d4d6f19f905a074e2c38d596169dc5f544cd92fe51eca5037625ac2a2\"\n}\n",
+          "stderr_tail": ""
+        },
+        "build": {
+          "seconds": 1.314,
+          "exit": 0,
+          "stdout_tail": "{\n  \"deck_path\": \"/tmp/pvad-stress-50-gu6lutx0/deck.json\",\n  \"slides\": 50,\n  \"elements\": 205,\n  \"deck_digest\": \"6097066f697cb925e04d87c3bc516c8d1428b79df3bb48d3895536b2d99f98a8\"\n}\n",
+          "stderr_tail": ""
+        },
+        "release_check": {
+          "seconds": 15.9839,
+          "exit": 1,
+          "stdout_tail": "atus\": \"PARTIALLY VERIFIED\",\n      \"evidence\": \"actual PPTX readback rendered by internal renderer; not PowerPoint rendering\"\n    },\n    \"G-DECK\": {\n      \"status\": \"NOT RUN\",\n      \"evidence\": \"independent whole-deck visual/narrative review required\"\n    },\n    \"G-TGT\": {\n      \"status\": \"NOT VERIFIED\",\n      \"evidence\": \"NOT VERIFIED — 未在目标 PowerPoint 中打开、编辑、另存\"\n    },\n    \"G-COMPLY\": {\n      \"status\": \"NOT RUN\",\n      \"evidence\": \"asset authorization/privacy review not automated\"\n    }\n  }\n}\n",
+          "stderr_tail": ""
+        },
+        "review_package": {
+          "seconds": 1.2879,
+          "exit": 0,
+          "stdout_tail": "{\n  \"stage\": \"review\",\n  \"out_dir\": \"/tmp/pvad-stress-50-gu6lutx0/review-package\",\n  \"files\": [\n    \"manifest.json\",\n    \"deck.pptx\",\n    \"preview-spec.png\",\n    \"preview-pptx.png\",\n    \"delivery-summary.md\",\n    \"REVIEW_REQUIRED.md\",\n    \"SHA256SUMS.txt\"\n  ],\n  \"verified\": true\n}\n",
+          "stderr_tail": ""
+        }
+      },
+      "max_child_rss_kb": 212232,
+      "pptx_bytes": 131410,
+      "deck_json_bytes": 212187,
+      "elements": 205,
+      "images": 5,
+      "charts": 5,
+      "engineering_status": "PASS",
+      "delivery_status": "BLOCK — Delivery",
+      "pixel_status": "MATCH",
+      "fidelity_status": "MATCH",
+      "target_powerpoint_seconds": "未测量",
+      "external_blind_review": "未测量"
+    }
+  ]
+}
