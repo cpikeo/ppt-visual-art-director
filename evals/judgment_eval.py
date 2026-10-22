@@ -6,7 +6,7 @@
   L1 判断准确率   本文件：cases.yaml 的离散判断命中率 + 误判明细
   L2 消融覆盖率   --ablate：逐条去掉词表/规则，看哪些用例会翻转
                   （翻转 = 该规则在当前用例集上是被测到的；不翻转 ≠ 无用，只说明没测到）
-  L3 视觉质量    不在这里。见 evals/blind_pack.py 与 SKILL §6：人工盲评，未跑就写未跑。
+  L3 视觉质量    不在这里。见 evals/blind_pack.py 与 SKILL「证据层级」：人工盲评，未跑就写未跑。
 
 用法：
     python evals/judgment_eval.py                       # 打基准
@@ -236,7 +236,7 @@ def main(argv=None) -> int:
             for row in report["ablation"]["rows"]:
                 mark = "覆盖" if row["covered"] else "未覆盖"
                 print(f"  {row['lexicon']:18s} {mark:6s} {','.join(row['flipped_cases']) or '—'}")
-        print("注意：本基准只测离散判断，不测构图、断行或美感；视觉质量需人工盲评（SKILL §6）。")
+        print("注意：本基准只测离散判断，不测构图、断行或美感；视觉质量需人工盲评（SKILL「证据层级」）。")
 
     if args.report:
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)

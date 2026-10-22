@@ -161,6 +161,9 @@ def run_build(args, policy) -> int:
     plan = read_json(args.plan)
     if plan.get("schema") != "pvad-plan-v1":
         raise InputError(f"plan 版本不认识：{plan.get('schema')!r}")
+    plan_errors = validate_against(plan, "plan.schema.json")
+    if plan_errors:
+        raise InputError("plan 结构与 schema 不符：\n" + "\n".join(f"  - {e}" for e in plan_errors[:10]))
     if plan.get("policy_sha256") != policy.sha256:
         raise InputError("plan 与当前策略指纹不一致：策略改过就要重跑 plan，不要用旧判断配新几何")
     brief_path = args.brief or plan.get("brief_path")
@@ -172,6 +175,18 @@ def run_build(args, policy) -> int:
         raise InputError(str(exc)) from None
     if brief.get("_brief_sha256") != plan.get("brief_sha256"):
         raise InputError("brief 在 plan 之后被改过：重跑 plan，避免判断与原文错位")
+
+    blocking_codes = set(policy.req("verification.build_blocking_open_questions"))
+    unresolved = [
+        {"slide": page.get("id"), "code": question.get("code"), "question": question.get("question")}
+        for page in plan.get("pages") or []
+        for question in page.get("open_questions") or []
+        if question.get("code") in blocking_codes
+    ]
+    if unresolved:
+        print(json.dumps({"status": "BLOCK — BUILD", "unresolved": unresolved},
+                         ensure_ascii=False, indent=2))
+        return policy.req("verification.exit_codes.blocked")
 
     deck = compose_deck(brief, plan, policy, fontbook=FontBook(policy),
                         base_dir=Path(brief_path).expanduser().resolve().parent)
@@ -191,7 +206,7 @@ def run_build(args, policy) -> int:
 def run_media(args, policy) -> int:
     """把「还需要生产的图」连同生产说明导出，交给摄影师或外部生成器。
 
-    本包不调用图像生成：只出说明（SKILL §5），出图后的质量由 QC 硬门与人判分别负责。
+    本包不调用图像生成：只出说明（SKILL「素材艺术指导与合规」），出图后的质量由 QC 硬门与人判分别负责。
     """
     from prompt import manifest
 
@@ -216,6 +231,53 @@ def run_media(args, policy) -> int:
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
+
+
+def run_handoff(args, policy) -> int:
+    """从 plan 派生最小 THINK→BUILD 交接；不创建第二份权威真值。"""
+    from workflows import handoff_markdown
+
+    plan = read_json(args.plan)
+    errors = validate_against(plan, "plan.schema.json")
+    if errors:
+        raise InputError("plan 结构与 schema 不符：\n" + "\n".join(f"  - {e}" for e in errors[:10]))
+    text = handoff_markdown(plan)
+    target = Path(args.out).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(target, text.encode("utf-8"))
+    print(json.dumps({"handoff_path": str(target), "pages": len(plan.get("pages") or []),
+                      "source": str(Path(args.plan).resolve()), "derived": True},
+                     ensure_ascii=False, indent=2))
+    return policy.req("verification.exit_codes.ok")
+
+
+def run_impact(args, policy) -> int:
+    """比较改稿前后 deck JSON，给出保守验证范围和变更摘要。"""
+    from workflows import impact
+
+    before, _ = load_deck(args.before)
+    after, _ = load_deck(args.after)
+    for label, deck in (("before", before), ("after", after)):
+        errors = validate_deck(deck)
+        if errors:
+            raise InputError(f"{label} deck 结构与 schema 不符：\n" + "\n".join(f"  - {e}" for e in errors[:10]))
+    result = impact(before, after)
+    if args.out:
+        write_json(args.out, result)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return policy.req("verification.exit_codes.ok")
+
+
+def run_package(args, policy) -> int:
+    """Create Draft/Review/Release package; Release is impossible while delivery is blocked."""
+    from release import ReleaseEvidenceError, build_package
+
+    try:
+        result = build_package(args.manifest, args.stage, args.out)
+    except (OSError, json.JSONDecodeError, ReleaseEvidenceError) as exc:
+        raise InputError(f"交付包生成失败：{exc}") from None
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return policy.req("verification.exit_codes.ok")
 
 
 def run_check(args, policy) -> int:
@@ -262,7 +324,8 @@ def run_check(args, policy) -> int:
                                                  "hint": "先过 schema，再谈排版", "items": []}],
                  "stats": {}, "degraded": False}
         manifest.update({"status": "BLOCKED", "guard": guard})
-        write_json(manifest_path, manifest)
+        _apply_delivery_gates(manifest, mode)
+        _write_manifest_and_summary(manifest_path, manifest)
         print(json.dumps({"status": "BLOCKED", "fix_groups": guard["fix_groups"]},
                          ensure_ascii=False, indent=2))
         return exit_block
@@ -277,7 +340,8 @@ def run_check(args, policy) -> int:
         manifest["guard"] = guard
         manifest["status"] = "PASS" if guard["status"] == "PASS" else "BLOCKED"
         manifest["verification"]["structural"] = "PASS" if guard["status"] == "PASS" else "BLOCK"
-        write_json(manifest_path, manifest)
+        _apply_delivery_gates(manifest, mode)
+        _write_manifest_and_summary(manifest_path, manifest)
         print(json.dumps(_printable(result, mode, policy), ensure_ascii=False, indent=2))
         return policy.req("verification.exit_codes.ok") if manifest["status"] == "PASS" else exit_block
     if guard["status"] == "PASS" or args.force_compile:
@@ -334,10 +398,69 @@ def run_check(args, policy) -> int:
     manifest["fidelity"] = result.get("fidelity")
     manifest["pixel"] = result.get("pixel")
     manifest["status"] = "PASS" if result["status"] == "PASS" and _release_ready(result, mode, policy) else "BLOCKED"
-    write_json(manifest_path, manifest)
 
-    print(json.dumps(_printable(result, mode, policy), ensure_ascii=False, indent=2))
+    external_gates = None
+    if args.evidence:
+        from release import ReleaseEvidenceError, evaluate_evidence, load_evidence
+        if not manifest.get("output_sha256"):
+            raise InputError("没有生成 PPTX，不能接收外部 release evidence")
+        try:
+            evidence = load_evidence(args.evidence, SCHEMA_DIR)
+            external_gates = evaluate_evidence(evidence, manifest["output_sha256"], deck)
+        except ReleaseEvidenceError as exc:
+            raise InputError(str(exc)) from None
+        manifest["release_evidence_path"] = str(Path(args.evidence).expanduser().resolve())
+    _apply_delivery_gates(manifest, mode, external_gates)
+    _write_manifest_and_summary(manifest_path, manifest)
+
+    printable = _printable(result, mode, policy)
+    printable["delivery_status"] = manifest["delivery_status"]
+    printable["quality_gates"] = manifest["quality_gates"]
+    print(json.dumps(printable, ensure_ascii=False, indent=2))
+    if mode == "release" and manifest["delivery_status"] != "READY TO RELEASE":
+        return exit_block
     return policy.req("verification.exit_codes.ok") if manifest["status"] == "PASS" else exit_block
+
+
+def _write_manifest_and_summary(manifest_path: Path, manifest: dict) -> None:
+    """Write the auditable manifest and its deterministic one-page delivery view."""
+    from release import write_delivery_summary
+
+    summary_path = manifest_path.parent / "delivery-summary.md"
+    manifest["delivery_summary"] = str(summary_path.resolve())
+    write_json(manifest_path, manifest)
+    write_delivery_summary(manifest, summary_path)
+
+
+def _apply_delivery_gates(manifest: dict, mode: str, external_gates: dict | None = None) -> None:
+    """把工程结果映射到稳定质量门；未执行的人工/目标环境检查绝不推定为 PASS。"""
+    verification = manifest.get("verification") or {}
+    structural = "PASS" if manifest.get("status") == "PASS" and verification.get("structural") == "PASS" else "FAIL"
+    readback = verification.get("pptx_readback")
+    preview = verification.get("spec_render")
+    external_gates = external_gates or {}
+    deck_gate = external_gates.get("G-DECK", {"status": "NOT RUN", "evidence": "independent whole-deck visual/narrative review required"})
+    target_gate = external_gates.get("G-TGT", {"status": "NOT VERIFIED", "evidence": verification.get("target_powerpoint")})
+    semantic_pass = readback == "MATCH" and deck_gate.get("status") == "PASS"
+    preview_pass = preview == "PASS" and target_gate.get("status") == "PASS"
+    gates = {
+        "G-STR": {"status": structural, "evidence": "guard + schema + PPTX compile/readback"},
+        "G-SEM": {"status": "PASS" if semantic_pass else ("PARTIALLY VERIFIED" if readback == "MATCH" else "NOT RUN"),
+                  "evidence": "PPTX object/payload fidelity + human claim/evidence review" if semantic_pass else "PPTX object/payload fidelity; claim/evidence human review not executed"},
+        "G-PRE": {"status": "PASS" if preview_pass else ("PARTIALLY VERIFIED" if preview == "PASS" else "NOT RUN"),
+                  "evidence": "internal readback preview + target PowerPoint visual verification" if preview_pass else "actual PPTX readback rendered by internal renderer; not PowerPoint rendering"},
+        "G-DECK": deck_gate,
+        "G-TGT": target_gate,
+        "G-COMPLY": external_gates.get("G-COMPLY", {"status": "NOT RUN", "evidence": "asset authorization/privacy review not automated"}),
+    }
+    manifest["quality_gates"] = gates
+    if mode != "release":
+        manifest["delivery_status"] = "NOT ASSESSED — run release checks and external reviews"
+        return
+    manifest["delivery_status"] = (
+        "READY TO RELEASE" if all(g["status"] == "PASS" for g in gates.values())
+        else "BLOCK — Delivery"
+    )
 
 
 def _release_ready(result: dict, mode: str, policy) -> bool:
@@ -411,9 +534,21 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--out-dir", default=None)
     check.add_argument("--pages", help="只取这些页（1-based，逗号分隔）")
     check.add_argument("--force-compile", action="store_true", help="BLOCK 也编译，便于定位")
+    check.add_argument("--evidence", help="绑定本次 PPTX SHA-256 的外部整稿/目标环境/合规证据 YAML/JSON")
     media = sub.add_parser("media", help="deck → 待生产素材的生产说明（提示词 / 比例 / 目标像素）")
     media.add_argument("deck")
     media.add_argument("--out", default=None, help="写入清单文件（默认只打印摘要）")
+    handoff = sub.add_parser("handoff", help="plan → 人类可读的最小 THINK→BUILD 交接摘要（派生视图）")
+    handoff.add_argument("plan")
+    handoff.add_argument("--out", default="handoff.md")
+    impact = sub.add_parser("impact", help="改稿前后 deck JSON → 变更摘要与保守验证范围")
+    impact.add_argument("before")
+    impact.add_argument("after")
+    impact.add_argument("--out", default=None)
+    package = sub.add_parser("package", help="manifest → Draft / Review / Release 交付包")
+    package.add_argument("manifest")
+    package.add_argument("--stage", choices=["draft", "review", "release"], required=True)
+    package.add_argument("--out", required=True)
     return parser
 
 
@@ -440,6 +575,12 @@ def main(argv=None) -> int:
             return run_build(args, policy)
         if args.command == "media":
             return run_media(args, policy)
+        if args.command == "handoff":
+            return run_handoff(args, policy)
+        if args.command == "impact":
+            return run_impact(args, policy)
+        if args.command == "package":
+            return run_package(args, policy)
         return run_check(args, policy)
     except InputError as exc:
         print(f"输入错误：{exc}", file=sys.stderr)

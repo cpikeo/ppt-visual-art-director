@@ -25,7 +25,7 @@ manifest 里 `verification.target_powerpoint` 与 `target_renderer` 恒为 `NOT 
 ## 3. 判断基准（`evals/judgment_eval.py`）
 
 ```bash
-python evals/judgment_eval.py                  # 29 例离散判断
+python evals/judgment_eval.py                  # 读取 evals/cases.yaml 的全部离散判断案例
 python evals/judgment_eval.py --baseline       # 与「无判断基线」对照
 python evals/judgment_eval.py --ablate         # 逐条词表消融
 ```
@@ -70,6 +70,10 @@ python evals/blind_pack.py score --pack pack/ --sheet sheet-alice.yaml --sheet s
 
 ## 6. 发布结论模板
 
+`manifest.status=PASS` 只表示本技能包内的工程链通过；发布资格看 `delivery_status` 与 `quality_gates`。默认目标环境、整稿人工复核和合规复核没有外部证据，因此 `release` 会返回退出码 1 并保持 `BLOCK — Delivery`，不能把内部预览写成正式发布通过。
+
+外部检查完成后，使用 `check ... --mode release --evidence release-evidence.yaml` 接入。证据必须符合 `schema/release-evidence.schema.json` 并绑定同一 PPTX SHA-256。目标环境动作、七项整稿检查、MUST FIX、素材台账或无外部素材声明任一不完整，都不能把对应门写成 PASS。
+
 ```
 PASS — Structural Preview
   guard:  PASS（0 error / N warnings）
@@ -88,3 +92,10 @@ NOT RUN — Independent Visual Review
 2. 未执行/未验证的项目，逐条列出原因。
 3. 基线对照的数字与口径（基线是什么、样本有多大、什么条件下可比）。
 4. 已知风险与下一步优先级。
+
+## 8. 分阶段交付
+
+- Draft 包用于内部制作，不能转述为正式验收；
+- Review 包用于整稿、目标环境与合规复核，必须保留 `REVIEW_REQUIRED.md`；
+- Release 包只有在六门均 PASS、`delivery_status=READY TO RELEASE` 时才允许生成；
+- 三类包都由 manifest 派生并带文件散列，禁止手工复制后沿用旧证据。

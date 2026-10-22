@@ -1,0 +1,357 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pvad.local/schema/release-evidence.schema.json",
+  "title": "PVAD external release evidence bound to one PPTX artifact",
+  "type": "object",
+  "required": [
+    "schema",
+    "artifact_sha256"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "pvad-release-evidence-v1"
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "deck_review": {
+      "$ref": "#/$defs/deckReview"
+    },
+    "target_environment": {
+      "$ref": "#/$defs/targetEnvironment"
+    },
+    "compliance": {
+      "$ref": "#/$defs/compliance"
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "required": [
+        "status",
+        "reviewer",
+        "reviewed_at"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewed_at": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "deckReview": {
+      "type": "object",
+      "required": [
+        "status",
+        "reviewer",
+        "reviewed_at",
+        "checklist",
+        "must_fix",
+        "defects"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewed_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checklist": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "first_attention",
+            "claim_evidence_focus",
+            "adjacent_increment",
+            "critical_page_weight",
+            "climax_position",
+            "visual_family",
+            "whole_deck_rhythm"
+          ],
+          "properties": {
+            "first_attention": {
+              "type": "boolean"
+            },
+            "claim_evidence_focus": {
+              "type": "boolean"
+            },
+            "adjacent_increment": {
+              "type": "boolean"
+            },
+            "critical_page_weight": {
+              "type": "boolean"
+            },
+            "climax_position": {
+              "type": "boolean"
+            },
+            "visual_family": {
+              "type": "boolean"
+            },
+            "whole_deck_rhythm": {
+              "type": "boolean"
+            }
+          }
+        },
+        "must_fix": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "defects": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "targetEnvironment": {
+      "type": "object",
+      "required": [
+        "status",
+        "reviewer",
+        "reviewed_at",
+        "application",
+        "application_version",
+        "operating_system",
+        "fonts",
+        "actions",
+        "issues"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewed_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "application": {
+          "const": "Microsoft PowerPoint"
+        },
+        "application_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operating_system": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fonts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "actions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "opened",
+            "slide_show_checked",
+            "edited",
+            "saved_as",
+            "reopened",
+            "charts_checked",
+            "line_breaks_checked",
+            "crops_checked"
+          ],
+          "properties": {
+            "opened": {
+              "type": "boolean"
+            },
+            "slide_show_checked": {
+              "type": "boolean"
+            },
+            "edited": {
+              "type": "boolean"
+            },
+            "saved_as": {
+              "type": "boolean"
+            },
+            "reopened": {
+              "type": "boolean"
+            },
+            "charts_checked": {
+              "type": "boolean"
+            },
+            "line_breaks_checked": {
+              "type": "boolean"
+            },
+            "crops_checked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "assetRecord": {
+      "type": "object",
+      "required": [
+        "slide_id",
+        "source",
+        "author_or_institution",
+        "acquisition",
+        "license",
+        "commercial_use",
+        "modification_allowed",
+        "attribution",
+        "intended_use_cleared",
+        "privacy_cleared",
+        "generated",
+        "professional_review"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "slide_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "author_or_institution": {
+          "type": "string",
+          "minLength": 1
+        },
+        "acquisition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commercial_use": {
+          "type": "boolean"
+        },
+        "modification_allowed": {
+          "type": "boolean"
+        },
+        "attribution": {
+          "type": "string"
+        },
+        "privacy_cleared": {
+          "type": "boolean"
+        },
+        "generated": {
+          "type": "boolean"
+        },
+        "professional_review": {
+          "enum": [
+            "not_required",
+            "pass",
+            "fail"
+          ],
+          "description": "必要专业复核状态；生成素材若承载人物/事件/产品或专业内容必须 pass"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "intended_use_cleared": {
+          "type": "boolean",
+          "description": "具名合规复核者已确认本项目预期用途落在授权范围内"
+        }
+      }
+    },
+    "compliance": {
+      "type": "object",
+      "required": [
+        "status",
+        "reviewer",
+        "reviewed_at",
+        "no_external_assets",
+        "assets",
+        "sensitive_content_reviewed",
+        "issues"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "reviewer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewed_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "no_external_assets": {
+          "type": "boolean"
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/assetRecord"
+          }
+        },
+        "sensitive_content_reviewed": {
+          "type": "boolean"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

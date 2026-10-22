@@ -1,0 +1,48 @@
+schema: pvad-release-evidence-v1
+artifact_sha256: "REPLACE_WITH_FINAL_PPTX_SHA256"
+
+deck_review:
+  status: FAIL
+  reviewer: "REQUIRED_NAMED_REVIEWER"
+  reviewed_at: "REQUIRED_ISO_DATETIME"
+  checklist:
+    first_attention: false
+    claim_evidence_focus: false
+    adjacent_increment: false
+    critical_page_weight: false
+    climax_position: false
+    visual_family: false
+    whole_deck_rhythm: false
+  must_fix: ["REMOVE_TEMPLATE_PLACEHOLDER_AFTER_REAL_REVIEW"]
+  defects: []
+  notes: "Only set PASS after reviewing the exact artifact."
+
+target_environment:
+  status: FAIL
+  reviewer: "REQUIRED_NAMED_REVIEWER"
+  reviewed_at: "REQUIRED_ISO_DATETIME"
+  application: "Microsoft PowerPoint"
+  application_version: "REQUIRED_EXACT_VERSION"
+  operating_system: "REQUIRED_EXACT_OS"
+  fonts: ["REQUIRED_INSTALLED_FONT_LIST"]
+  actions:
+    opened: false
+    slide_show_checked: false
+    edited: false
+    saved_as: false
+    reopened: false
+    charts_checked: false
+    line_breaks_checked: false
+    crops_checked: false
+  issues: ["REMOVE_TEMPLATE_PLACEHOLDER_AFTER_REAL_VERIFICATION"]
+  notes: "Internal renderer output is not target PowerPoint evidence."
+
+compliance:
+  status: FAIL
+  reviewer: "REQUIRED_NAMED_REVIEWER"
+  reviewed_at: "REQUIRED_ISO_DATETIME"
+  no_external_assets: false
+  assets: []
+  sensitive_content_reviewed: false
+  issues: ["RECONCILE_EVERY_ACTUAL_IMAGE_OR_DECLARE_NO_EXTERNAL_ASSETS"]
+  notes: "Generated imagery must be declared and professionally reviewed where required."

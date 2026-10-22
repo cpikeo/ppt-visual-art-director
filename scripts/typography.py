@@ -294,15 +294,6 @@ def _preferred_break(tokens: list[str], policy) -> int:
     return punct or space
 
 
-def _last_unit(line: str) -> str:
-    """取行末一个排印单元（拉丁词或单字）。"""
-    m = re.search(r"[A-Za-z0-9][A-Za-z0-9.,%+\-_/:'′″]*$", line)
-    if m:
-        seg = m.group(0)
-        return seg + (" " if line.endswith(" ") else "")
-    return line[-1]
-
-
 def _ladder_key(policy, size: float) -> str:
     """把自由字号映射回最接近的语义档（用于取行高/字距/行数上限）。"""
     scale = policy.req("typography.scale")
@@ -371,15 +362,3 @@ def reading_seconds(text: str, policy) -> float:
     """讲稿时长估算：按字数/语速，只用于节奏提示，不是硬门。"""
     chars = len(re.sub(r"\s", "", text or ""))
     return round(chars / float(policy.num("thresholds.words_per_second")), 1)
-
-
-def display_pairs(items: list[dict]) -> list[str]:
-    """把指标原子渲染成「值 + 单位 + 标签」的展示行（供 KPI 与预览同源使用）。"""
-    rows = []
-    for item in items:
-        value = str(item.get("value", "")).strip()
-        unit = str(item.get("unit", "") or "").strip()
-        label = str(item.get("label", "") or "").strip()
-        head = f"{value}{NBSP if unit else ''}{unit}"
-        rows.append({"head": head, "label": label, "desc": item.get("desc", "")})
-    return rows

@@ -192,20 +192,6 @@ def _draw_text(draw, item, scale, fontbook: FontBook, policy) -> None:
         draw.text((x - bbox[0], baseline_top - bbox[1]), line, font=font, fill=color)
 
 
-def _load_image_bytes(item, policy):
-    """spec 侧从文件取，回读侧从 PPTX 提取的字节取——两条路径都要能画。"""
-    import io
-
-    from PIL import Image
-    if item.get("blob"):
-        return Image.open(io.BytesIO(item["blob"])).convert("RGB")
-    from assets import load, resolve_source
-    path = resolve_source(item.get("path"), item.get("base_dir") or None)
-    if path is None:
-        return None
-    return load(path)
-
-
 def visible_image(box_px, source, fit: str = "cover", base_dir=None, policy=None, blob=None):
     """返回「这个框里最终会被看见的图像内容」（已按 fit 裁切/留白）。
 
@@ -422,27 +408,6 @@ def _ladder(policy, size: float) -> str:
 # ──────────────────────────────────────────────────────────────────────────
 # 渲染整稿 + 对照
 # ──────────────────────────────────────────────────────────────────────────
-def render_deck_spec(deck: dict, out_dir, policy, fontbook: FontBook, pages=None) -> list[str]:
-    out_dir = Path(out_dir)
-    paths = []
-    for index, slide in enumerate(deck["slides"]):
-        if pages is not None and index not in pages:
-            continue
-        paths.append(render_page(page_model_from_spec(deck, slide),
-                                 out_dir / f"{index + 1:02d}-{slide['id']}-spec.png", policy, fontbook))
-    return paths
-
-
-def render_deck_readback(deck: dict, readback: dict, out_dir, policy, fontbook: FontBook,
-                         pages=None) -> list[str]:
-    out_dir = Path(out_dir)
-    paths = []
-    for index, (rb_slide, spec_slide) in enumerate(zip(readback["slides"], deck["slides"])):
-        if pages is not None and index not in pages:
-            continue
-        paths.append(render_page(page_model_from_readback(deck, rb_slide, spec_slide),
-                                 out_dir / f"{index + 1:02d}-{spec_slide['id']}-pptx.png", policy, fontbook))
-    return paths
 
 
 def pixel_diff(path_a, path_b, policy) -> dict:

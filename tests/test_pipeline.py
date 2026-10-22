@@ -25,8 +25,9 @@ class TestHappyPath(unittest.TestCase):
         cls.tmp = tmpdir()
         cls.plan, cls.deck, cls.manifest, cls.artifacts = support.pipeline(cls.tmp, mode="release")
 
-    def test_exit_codes_are_zero(self):
-        self.assertEqual(self.artifacts["exit"], EXIT_OK, self.artifacts["stderr"])
+    def test_release_exit_is_blocked_until_external_mandatory_gates_are_verified(self):
+        self.assertEqual(self.artifacts["exit"], EXIT_BLOCK, self.artifacts["stderr"])
+        self.assertEqual(self.manifest["delivery_status"], "BLOCK — Delivery")
 
     def test_plan_records_judgment_and_policy(self):
         self.assertEqual(self.plan["schema"], "pvad-plan-v1")
@@ -57,6 +58,9 @@ class TestHappyPath(unittest.TestCase):
         self.assertTrue(verification["target_powerpoint"].startswith("NOT VERIFIED"))
         self.assertTrue(verification["target_renderer"].startswith("NOT VERIFIED"))
         self.assertTrue(verification["independent_visual_review"].startswith("NOT RUN"))
+        self.assertEqual(self.manifest["quality_gates"]["G-TGT"]["status"], "NOT VERIFIED")
+        self.assertEqual(self.manifest["quality_gates"]["G-COMPLY"]["status"], "NOT RUN")
+        self.assertEqual(self.manifest["delivery_status"], "BLOCK — Delivery")
 
     def test_output_hash_matches_file(self):
         import hashlib
@@ -75,20 +79,17 @@ class TestHappyPath(unittest.TestCase):
 
 
 class TestBlocking(unittest.TestCase):
-    def test_release_without_provenance_blocks_and_writes_blocked_manifest(self):
+    def test_build_without_provenance_is_stopped_before_layout(self):
         tmp = tmpdir()
         text = support.MINI_BRIEF.replace("period: 2026 Q1–Q3\n", "").replace("basis: 已开票收入\n", "")
         brief = write_brief(tmp, text=text)
         plan, deck = tmp / "plan.json", tmp / "deck.json"
         self.assertEqual(support.run_cli("plan", brief, "--out", plan).returncode, EXIT_OK)
-        self.assertEqual(support.run_cli("build", plan, "--brief", brief, "--out", deck).returncode, EXIT_OK)
-        result = support.run_cli("check", deck, tmp / "out.pptx", "--mode", "release",
-                                 "--out-dir", tmp / "report")
+        result = support.run_cli("build", plan, "--brief", brief, "--out", deck)
         self.assertEqual(result.returncode, EXIT_BLOCK)
-        manifest = support.load_json(tmp / "report" / "manifest.json")
-        self.assertEqual(manifest["status"], "BLOCKED")
-        codes = {e["code"] for e in manifest["guard"]["errors"]}
-        self.assertIn("PROVENANCE_MISSING", codes)
+        self.assertIn("BLOCK — BUILD", result.stdout)
+        self.assertIn("PROVENANCE_MISSING", result.stdout)
+        self.assertFalse(deck.exists(), "语义闸门失败后不应先生成 deck 再补理由")
 
     def test_strict_plan_blocks_on_absent_claim(self):
         tmp = tmpdir()
@@ -98,6 +99,18 @@ class TestBlocking(unittest.TestCase):
         result = support.run_cli("plan", brief, "--out", tmp / "plan.json", "--strict")
         self.assertEqual(result.returncode, EXIT_BLOCK)
         self.assertIn("主张未决", result.stdout)
+
+    def test_build_blocks_unresolved_claim_even_without_plan_strict_flag(self):
+        tmp = tmpdir()
+        brief = write_brief(tmp, text="audience: 评审\ndecision: 批准\ntension: 渠道选择\n"
+                                      "source: 看板\nunit: '%'\nperiod: '2026'\nbasis: 收入口径\nslides:\n"
+                                      "  - id: s01\n    title: 渠道结构\n    content: |-\n"
+                                      "      经销 51%\n      直营 34%\n      电商 15%\n")
+        plan = tmp / "plan.json"
+        self.assertEqual(support.run_cli("plan", brief, "--out", plan).returncode, EXIT_OK)
+        result = support.run_cli("build", plan, "--brief", brief, "--out", tmp / "deck.json")
+        self.assertEqual(result.returncode, EXIT_BLOCK)
+        self.assertIn("CLAIM_ABSENT", result.stdout)
 
     def test_policy_drift_blocks_build(self):
         tmp = tmpdir()

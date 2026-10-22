@@ -16,7 +16,7 @@
     char_wrap         没有任何标点/空格可依、纯逐字断开的行占比（反映可读性）
 
 局限：这是度量模型里的排版，不是目标 PowerPoint 的真实断行；字体回退与
-真实换行仍须在 PowerPoint 中复核（SKILL §6）。
+真实换行仍须在 PowerPoint 中复核（SKILL「中文排版」「证据层级」）。
 """
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def run(policy, fontbook) -> dict:
         metric: round(result["candidate"][f"{metric}_rate"] - result["baseline"][f"{metric}_rate"], 4)
         for metric in ("unit_split", "forbidden_start", "char_wrap")
     }
-    result["note"] = "度量模型结果，不等于目标 PowerPoint 的真实断行；见 SKILL §6。"
+    result["note"] = "度量模型结果，不等于目标 PowerPoint 的真实断行；见 SKILL「中文排版」「证据层级」。"
     return result
 
 

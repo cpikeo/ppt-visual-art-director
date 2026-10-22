@@ -4,7 +4,7 @@
 
 四层边界里的位置：
 
-  判断（要不要图、图承担什么、缺了就丢什么）  → judgment / SKILL §5
+  判断（要不要图、图承担什么、缺了就丢什么）  → judgment / SKILL「素材艺术指导与合规」
   语言（用哪些词、什么顺序、反向词清单）      → policy/prompts.yaml
   翻译（本文）：把已结算的结论拼成 prompt/negative/ratio/target_px  → 无决策权
   契约与证据：schema/prompts.schema.json + tests + evals/prompt_eval.py
@@ -262,4 +262,4 @@ def manifest(deck: dict, policy) -> dict:
             "to_produce": len(to_produce),
             "entries": entries,
             "disclaimer": "提示词只规定「拍什么/为什么拍/给谁让位/交付多大」，"
-                          "不保证出图好看；图片质量由 QC 硬门与人工评审分别判定（SKILL §5、§6）。"}
+                          "不保证出图好看；图片质量由 QC 硬门与人工评审分别判定（SKILL「素材艺术指导与合规」「证据层级」）。"}

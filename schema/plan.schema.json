@@ -154,7 +154,8 @@
        "comparison": {
         "type": "object",
         "required": [
-         "delta"
+         "delta",
+         "expression"
         ],
         "properties": {
          "delta": {
@@ -165,6 +166,13 @@
          },
          "same_unit": {
           "type": "boolean"
+         },
+         "expression": {
+          "enum": [
+           "none",
+           "difference",
+           "ratio"
+          ]
          }
         }
        },

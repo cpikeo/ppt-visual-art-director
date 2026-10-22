@@ -176,6 +176,8 @@ judgment:
     comparison_end: ["相比", "对比", "高于", "低于", "vs", "VS", "前者", "后者", "高出", "低了", "超过", "不到",
                      "同比", "环比", "较", "倍"]
     comparison_negated: ["未超过", "没有超过", "不高于", "不低于", "不得超", "没有低于"]
+    # 两端页的中心表达必须跟随作者主张：写“倍”就显示比值，不能擅自改成绝对差。
+    comparison_ratio: ["倍", "倍于"]
     series: ["逐年", "逐月", "逐季", "逐周", "趋势", "走势", "CAGR", "年复合", "连续三个季度", "连续三年"]
     part_whole: ["占比", "占", "其中", "其余", "构成", "结构占比", "份额"]
     denominator_risk: ["相加", "合计", "加总", "总和为", "共 100", "100%"]
@@ -278,4 +280,12 @@ verification:
 
   default_mode: draft
   release_requires: [source, unit, period, basis]
+  # BUILD 前的语义闸门：这些未决项会改变事实、主张、素材证据或页面存在价值，不能静默落版。
+  build_blocking_open_questions:
+    - CLAIM_ABSENT
+    - PROVENANCE_MISSING
+    - ASSET_REASON_MISSING
+    - ASSET_PROOF_UNSOURCED
+    - ASSET_VS_EVIDENCE
+    - EMPTY_PAGE
   exit_codes: {ok: 0, blocked: 1, usage: 2}

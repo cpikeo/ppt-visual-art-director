@@ -233,8 +233,8 @@ class TestRenderComparison(unittest.TestCase):
         from PIL import Image
         deck, tmp = make()
         path = render_page(page_model_from_spec(deck, deck["slides"][0]), tmp / "p.png", POLICY, FONTS)
-        image = Image.open(path)
-        self.assertEqual(image.size, (int(deck["canvas"]["width"]), int(deck["canvas"]["height"])))
+        with Image.open(path) as image:
+            self.assertEqual(image.size, (int(deck["canvas"]["width"]), int(deck["canvas"]["height"])))
 
 
 if __name__ == "__main__":

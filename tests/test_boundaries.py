@@ -255,7 +255,8 @@ class TestNoStyleDrift(unittest.TestCase):
         plan_a, deck_a, _ = load(plain)
         plan_b, deck_b, _ = load(hinted)
         # 词表命中只多一条待确认问题
-        self.assertTrue([q for q in plan_b["pages"][0]["open_questions"] if "PROBE" in q["code"]])
+        self.assertTrue([q for q in plan_b["pages"][0]["open_questions"]
+                         if q["code"] in ("ASSET_HINT", "PROBE_VISUAL_SUBJECT")])
         # 几何与配色一律相同（同一构图、同一槽位）：没有「行业 → 风格」的通路
         self.assertEqual(
             [(e["type"], e.get("role"), round(e["width"]), round(e["height"])) for e in deck_a["slides"][0]["elements"]],

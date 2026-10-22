@@ -5,7 +5,7 @@
 纪律：
   * 这里只拦确定性错误：几何越界、墨迹相撞、装不下、图表载荷非法、字段名写错、
     证据缺来源。输出只有 PASS / BLOCK，不评分、不重新设计。
-  * 审美与构图平衡不在这里判：guard PASS 不等于设计通过（SKILL.md §6）。
+  * 审美与构图平衡不在这里判：guard PASS 不等于设计通过（SKILL「四层架构与权威源」「证据层级」）。
   * 文本容量用 typography 的真实度量；没有字体度量时降级并把 degraded 写进报告。
 """
 from __future__ import annotations
@@ -791,17 +791,6 @@ def _check_metric_units(metric_units, rep) -> None:
             rep.error("UNIT_INCONSISTENT", f"指标「{metric}」跨页出现多个单位 {sorted(real)}：同一指标必须同单位")
 
 
-def collect_metric_units(deck: dict) -> dict:
-    """跨页同指标单位登记（由调用方在 guard 前后注入；保持 guard 无状态）。"""
-    registry: dict[str, set] = {}
-    for slide in deck.get("slides") or []:
-        for element in slide.get("elements") or []:
-            if element.get("type") == "text" and str(element.get("role", "")).startswith("metric_"):
-                label = str(element.get("role"))
-                registry.setdefault(label, set())
-    return registry
-
-
 def _finish(rep: _Report, deck: dict, mode: str) -> dict:
     errors = rep.errors
     blocking = set(rep.policy.req("verification.blocking_codes"))
@@ -818,5 +807,5 @@ def _finish(rep: _Report, deck: dict, mode: str) -> dict:
                         "items": items[:8]} for code, items in sorted(groups.items())],
         "stats": rep.stats,
         "degraded": not rep.stats["measured"],
-        "disclaimer": "guard 只拦硬错误：PASS 不代表构图、层级或排版质量通过（SKILL.md §6）。",
+        "disclaimer": "guard 只拦硬错误：PASS 不代表构图、层级或排版质量通过（SKILL「四层架构与权威源」「证据层级」）。",
     }

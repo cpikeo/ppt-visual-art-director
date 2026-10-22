@@ -156,21 +156,42 @@
 ## 6. manifest 键
 
 ```
-status                     PASS / BLOCKED（先写 BLOCKED，全链完成才改）
+status                     PASS / BLOCKED（技能包内部工程链；先写 BLOCKED，全链完成才改）
+delivery_status            READY TO RELEASE / BLOCK — Delivery / NOT ASSESSED
 mode                       spec / draft / release
 deck_sha256 / spec_digest  稿与规格的指纹
 policy                     {policy_sha256, canvas, key_thresholds}
 guard                      {status, errors[], warnings[], fix_groups[], stats, degraded}
 fidelity                   {status: MATCH/MISMATCH, matched_elements, summary, mismatches[]}
 pixel                      {pages[], worst_ratio, limit, status}
+quality_gates              G-STR / G-SEM / G-PRE / G-DECK / G-TGT / G-COMPLY 的独立状态与证据
 previews                   {spec_sheet, pptx_sheet, pages[]}
 output_pptx / output_sha256
-verification.target_powerpoint           恒为 NOT VERIFIED
-verification.target_renderer             恒为 NOT VERIFIED
-verification.independent_visual_review   恒为 NOT RUN（除非盲评真跑过）
+verification.target_powerpoint           未实际验证时为 NOT VERIFIED
+verification.target_renderer             未实际验证时为 NOT VERIFIED
+verification.independent_visual_review   无有效评分时为 NOT RUN
 ```
 
-交付时同时核对：**退出码 + manifest.status + output_sha256**。三者任一不符，不得宣称成功。
+工程取证同时核对：**退出码 + `manifest.status` + `output_sha256`**；正式交付还必须核对 `delivery_status` 与全部强制 `quality_gates`。内部工程状态 PASS 不等于可发布。
+
+### 6.1 外部发布证据
+
+`check --evidence <yaml/json>` 接收整稿人工复核、目标 PowerPoint 和合规记录。完整字段只以 `schema/release-evidence.schema.json` 为准；执行纪律如下：
+
+- 记录必须绑定本次 `output_sha256`，散列不一致直接拒绝；
+- 整稿记录含七项检查、具名评审者、时间、缺陷和 MUST FIX；
+- 目标环境记录必须写精确 PowerPoint 版本、OS、字体及打开/播放/编辑/另存/重开等实际动作；
+- 合规记录必须与 deck 中实际图片逐项对账，或在确无外部素材时明确声明；
+- 缺失记录保持 NOT RUN / NOT VERIFIED，失败记录不得被人工覆盖；
+- 完整外部记录只证明该散列对应制品，不可跨版本复用。
+
+### 6.2 派生交付视图与交付包
+
+- 每次最终 `check` 在报告目录生成 `delivery-summary.md`；它只从 manifest 派生，不是第二份状态真值。
+- `package --stage draft`：内部草稿包，不宣称视觉或目标环境完成。
+- `package --stage review`：含预览和 `REVIEW_REQUIRED.md`，用于收集外部证据。
+- `package --stage release`：仅当 `delivery_status=READY TO RELEASE` 时生成。
+- 每个包包含 `SHA256SUMS.txt`；内容修改后必须重建并重验。
 
 ## 7. 文本测量边界
 

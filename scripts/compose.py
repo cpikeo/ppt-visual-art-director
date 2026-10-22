@@ -129,15 +129,6 @@ def _text_el(eid: str, role: str, text: str, box, *, policy, fontbook: FontBook,
     }
 
 
-def _shape_el(eid: str, role: str, box, *, shape: str = "line", color: str = "hairline",
-              width_px: float = 1.0) -> dict:
-    x, y, w, h = box
-    return {"id": eid, "type": "shape", "role": role, "shape": shape,
-            "x": x, "y": y, "width": max(w, 0.0), "height": max(h, width_px),
-            "fill": {"type": "none"}, "stroke": color, "stroke_width": width_px,
-            "layout_source": "plan"}
-
-
 # ──────────────────────────────────────────────────────────────────────────
 # 单页
 # ──────────────────────────────────────────────────────────────────────────
@@ -354,7 +345,8 @@ def _fill_body(composition, elements, slots, page, atoms, frame, policy, fontboo
             add_text("note", "\n".join(atoms["body_lines"][:2]), slots["note"]["zone"], "body", "muted")
 
     elif composition == "two_end":
-        _two_end(elements, slots, metrics, frame, policy, fontbook, add_text_box, accent_used)
+        _two_end(elements, slots, metrics, page["understanding"]["comparison"],
+                 frame, policy, fontbook, add_text_box, accent_used)
         if "note" in slots:
             add_text("note", "\n".join(atoms["body_lines"][:2]), slots["note"]["zone"], "body", "muted")
 
@@ -482,7 +474,7 @@ def _metric_cells(elements, slots, metrics, frame, policy, fontbook, add_text_bo
                  (x, y + h * 0.72, w, h * 0.2), "micro", "muted")
 
 
-def _two_end(elements, slots, metrics, frame, policy, fontbook, add_text_box, accent_used):
+def _two_end(elements, slots, metrics, comparison, frame, policy, fontbook, add_text_box, accent_used):
     metrics = metrics[:2]
     if len(metrics) < 2:
         return
@@ -499,7 +491,7 @@ def _two_end(elements, slots, metrics, frame, policy, fontbook, add_text_box, ac
         add_text_box(f"{label_key}", metric.get("label") or "", frame.zone(slots[label_key]["zone"]),
                      "label", "muted")
     if "delta" in slots:
-        delta = _delta_text(left, right)
+        delta = _comparison_text(left, right, comparison.get("expression") or "difference")
         if delta:
             add_text_box("delta", delta, frame.zone(slots["delta"]["zone"]),
                          slots["delta"].get("size", "body"), "accent", bold=True, align="center")
@@ -512,12 +504,19 @@ def _two_end(elements, slots, metrics, frame, policy, fontbook, add_text_box, ac
                          "layout_source": "plan"})
 
 
-def _delta_text(left: dict, right: dict) -> str:
+def _comparison_text(left: dict, right: dict, expression: str) -> str:
+    """按 THINK 已记录的比较表达生成中心标签，不在 BUILD 阶段改写主张。"""
     try:
         a = float(str(left["value"]).replace(",", ""))
         b = float(str(right["value"]).replace(",", ""))
     except (TypeError, ValueError):
         return ""
+    if expression == "ratio":
+        if b == 0:
+            return ""
+        ratio = abs(a / b)
+        pretty = f"{ratio:.1f}".rstrip("0").rstrip(".")
+        return f"{pretty}{NBSP}倍"
     unit = right.get("unit") or left.get("unit") or ""
     magnitude = abs(b - a)
     pretty = f"{magnitude:.2f}".rstrip("0").rstrip(".") if magnitude % 1 else f"{int(magnitude)}"

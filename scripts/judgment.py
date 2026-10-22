@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """judgment.py · 设计判断协议的可执行部分（判断，不是排版）。
 
-边界（与 SKILL.md §3 一一对应）：
+边界（与 SKILL「设计判断协议」 一一对应）：
   * 只产出「判断 + 依据 + 未决问题」，不产出坐标、不写 PPTX。
   * 每一条判断都带 source：
         author   —— 作者显式声明（压过推导）
@@ -269,7 +269,7 @@ def judge_deck(brief: dict, policy, base_dir=None) -> dict:
 
     # 全篇：高潮页与节奏复查（整稿层判断，不是逐页加总）
     climax = _pick_climax(pages)
-    if climax:
+    if climax is not None:
         pages[climax]["decision"]["emphasis"] = "lead"
         pages[climax]["decision"]["emphasis_why"] = "整套最强的一击落在这里：证据最实、且直接支撑收束页的决定。"
     for i, page in enumerate(pages):
@@ -321,6 +321,10 @@ def _judge_page(slide: dict, brief: dict, policy, lex: dict, probes: dict,
 
     # 2. 证据形状
     evidence = _judge_evidence(slide, atoms, claim, lex, non_year, trace, probes)
+    comparison_expression = (
+        "ratio" if evidence.get("delta") and hits(claim.get("text") or "", lex.get("comparison_ratio") or [])
+        else "difference" if evidence.get("delta") else "none"
+    )
 
     # 3. 角色
     role = _judge_role(slide, index, total, evidence, claim, atoms, lex, trace)
@@ -367,7 +371,8 @@ def _judge_page(slide: dict, brief: dict, policy, lex: dict, probes: dict,
             "evidence": evidence,
             "comparison": {"delta": evidence.get("delta", False),
                            "ends": evidence.get("ends", 0),
-                           "same_unit": evidence.get("same_unit", False)},
+                           "same_unit": evidence.get("same_unit", False),
+                           "expression": comparison_expression},
             "denominator": evidence.get("denominator", {"proven": False, "why": "无占比证据"}),
             "sentence_count": len(atoms["sentences"]),
         },
@@ -689,7 +694,7 @@ def _judge_media(slide: dict, atoms: dict, claim: dict, evidence: dict, composit
                  lex: dict, probes: dict, policy, base_dir=None) -> dict:
     """素材判断：要不要图、图承担什么、拿掉会损失什么。
 
-    纪律（SKILL §5）：
+    纪律（SKILL「素材艺术指导与合规」）：
       * 出图由作者声明决定；词表只提示，未声明就 decision=none，绝不自动出图。
       * 声明了就必须说明职责（role + function）；说不出理由的装饰性素材是待确认问题。
       * 生成图不充当事实证词：proof 职能要求作者给出来源，否则记未断言。
@@ -792,7 +797,9 @@ def _questions(slide, atoms, claim, evidence, lex, probes, policy, brief, media=
                 "correlation_cue": bool(hits(text, lex["correlation_cue"])),
             }.get(name, True)
             if relevant:
-                out.append({"code": f"PROBE_{name.upper()}", "question": probe,
+                # 素材提示使用稳定代码 ASSET_HINT；不要再在 media 分支生成同义副本。
+                code = "ASSET_HINT" if name == "visual_subject" else f"PROBE_{name.upper()}"
+                out.append({"code": code, "question": probe,
                             "why": f"命中词表 {name}: {hits(text, words)[:3]}"})
     if claim["source"] == "absent":
         out.append({"code": "CLAIM_ABSENT",
@@ -806,7 +813,8 @@ def _questions(slide, atoms, claim, evidence, lex, probes, policy, brief, media=
                     "question": f"这一页的数字缺 {missing}：请在页内或 brief 级补齐，否则 release 会被拦。",
                     "why": "数字必须与来源、单位、期间、口径同源"})
     if media:
-        if media.get("hint") and media["decision"] == "none":
+        if media.get("hint") and media["decision"] == "none" and not any(
+                q["code"] == "ASSET_HINT" for q in out):
             out.append({"code": "ASSET_HINT", "question": probes.get("visual_subject", ""),
                         "why": f"命中 visual_subject: {media['hint']}（只提示，不自动出图）"})
         if media["decision"] != "none" and not media.get("reason"):

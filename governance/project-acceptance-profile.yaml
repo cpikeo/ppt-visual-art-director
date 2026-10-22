@@ -1,0 +1,73 @@
+profile_version: "1.0"
+profile_status: "DRAFT"
+project:
+  project_id: "ppt-visual-art-director-skill"
+  project_name: "PPT Visual Art Director Skill"
+  owner: null
+  repository_revision: "9c9165662e9428018737835c1183ca7d4ef74e34 + uncommitted audited worktree"
+
+target_environment:
+  application: "Microsoft PowerPoint"
+  application_version: null
+  operating_system: null
+  slide_aspect_ratio: "16:9"
+  required_fonts:
+    - "Noto Sans CJK SC"
+    - "DejaVu Sans"
+  verification_method: []
+  verified_by: null
+
+# 目标版本、OS、项目责任人和真实素材合规流程未由项目方提供，配置保持 DRAFT。
+# 本仓库的 release 工程链不会把这些空缺推定为通过；manifest.delivery_status 保持 BLOCK — Delivery。
+release_gates:
+  G-STR:
+    required: true
+    coverage: "all_pages_and_elements"
+    verification_entrypoint: "python scripts/pvad.py check <deck.json> <output.pptx> --mode release"
+  G-SEM:
+    required: true
+    coverage: "all_critical_claims_and_data_visualizations"
+    verification_entrypoint: "PPTX readback fidelity plus human claim/evidence review"
+  G-PRE:
+    required: true
+    coverage: "all_pages"
+    verification_entrypoint: "release manifest previews; external renderer evidence still required for full PASS"
+  G-DECK:
+    required: true
+    coverage: "all critical pages plus risk-stratified ordinary pages"
+    verification_entrypoint: "record review in release-evidence.yaml, then pvad.py check ... --evidence release-evidence.yaml"
+  G-TGT:
+    required: true
+    coverage: "critical page types and known rendering risks"
+    verification_entrypoint: "execute exact PowerPoint/OS checklist externally; record it in release-evidence.yaml; then rerun check --evidence"
+  G-COMPLY:
+    required: true
+    coverage: "all used assets and sensitive content"
+    verification_entrypoint: "reconcile actual deck images with release-evidence.yaml compliance ledger; then rerun check --evidence"
+
+critical_pages:
+  page_ids: []
+  page_types: [cover, decision, data_or_chart, text_dense, transition, conclusion]
+  additional_risk_selectors: [font_fallback, complex_chart, dense_labels, sensitive_or_licensed_asset]
+
+sampling:
+  machine_contract_checks_full_coverage: true
+  ordinary_low_risk_page_min_ratio: 0.20
+  method: "risk_stratified_random"
+  random_seed: null
+  round_fraction_up: true
+  minimum_one_page_per_stratum: true
+  strata: [page_role, content_type, risk_level, rendering_characteristics]
+  expansion_triggers:
+    on_any_must_fix: "review_all_pages_in_affected_class"
+    on_hard_error: "block_and_review_all_dependent_outputs"
+    on_repeated_same_root_cause: "review_all_pages_sharing_the_root_cause"
+    on_authority_or_contract_conflict: "pause_affected_release_and_run_related_regression"
+
+risk_acceptance:
+  approval_required: true
+  approver_role: "release_owner"
+  require_named_owner: true
+  require_expiry_or_recheck_condition: true
+  require_disclosure_to_recipient: true
+  prohibited_for: [fact_or_evidence_error, legal_or_license_issue, privacy_issue, hard_error, unresolved_must_fix, authority_conflict, required_gate]

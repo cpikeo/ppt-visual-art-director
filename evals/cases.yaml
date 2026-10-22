@@ -22,7 +22,7 @@ cases:
   - id: J01
     category: claim
     statement: 作者主张压过正文证据行
-    protocol: SKILL §3「主张」：作者写了就用，写不出留空不编
+    protocol: SKILL「设计判断协议」「主张」：作者写了就用，写不出留空不编
     slide:
       id: s01
       title: 交付周期
@@ -33,7 +33,7 @@ cases:
   - id: J02
     category: claim
     statement: 话题标签不升格为主张（只有分项数字，没有结论句 → absent）
-    protocol: SKILL §3「主张」：话题标签不立主张，记 open question
+    protocol: SKILL「设计判断协议」「主张」：话题标签不立主张，记 open question
     slide:
       id: s01
       title: 渠道结构
@@ -46,7 +46,7 @@ cases:
   - id: J03
     category: claim
     statement: 正文结论句可竞争主张位
-    protocol: SKILL §3「主张」：正文带主张形状才可竞争
+    protocol: SKILL「设计判断协议」「主张」：正文带主张形状才可竞争
     slide:
       id: s01
       title: 渠道复盘
@@ -58,7 +58,7 @@ cases:
   - id: J04
     category: role
     statement: 封面日期/评审名不参与角色判断
-    protocol: SKILL §3「判断陷阱」：元信息不是内容
+    protocol: SKILL「设计判断协议」「判断陷阱」：元信息不是内容
     slides:
       - id: s01
         title: 发布周期可以再压缩一半
@@ -71,7 +71,7 @@ cases:
   - id: J05
     category: evidence
     statement: 相加为 100% 不证明同一分母
-    protocol: SKILL §3「数量陷阱」
+    protocol: SKILL「设计判断协议」「数量陷阱」
     slide:
       id: s01
       title: 用药结果
@@ -84,7 +84,7 @@ cases:
   - id: J06
     category: evidence
     statement: 同分母互斥分项可以画占比
-    protocol: SKILL §3「证据形状」
+    protocol: SKILL「设计判断协议」「证据形状」
     slide:
       id: s01
       title: 收入构成
@@ -97,7 +97,7 @@ cases:
   - id: J07
     category: evidence
     statement: 单点同比不是时间序列
-    protocol: SKILL §3「内容理解」：形状由内容形状决定
+    protocol: SKILL「设计判断协议」「内容理解」：形状由内容形状决定
     slide:
       id: s01
       title: 单店产出同比下滑 21%
@@ -107,7 +107,7 @@ cases:
   - id: J08
     category: evidence
     statement: 并列职责不是时间线
-    protocol: SKILL §3「判断陷阱」：职责并列 ≠ 上下级 ≠ 顺序
+    protocol: SKILL「设计判断协议」「判断陷阱」：职责并列 ≠ 上下级 ≠ 顺序
     slide:
       id: s01
       title: 两个组的职责
@@ -119,7 +119,7 @@ cases:
   - id: J09
     category: evidence
     statement: 有编号的阶段才是顺序
-    protocol: SKILL §3「证据形状」
+    protocol: SKILL「设计判断协议」「证据形状」
     slide:
       id: s01
       title: 上线分三步
@@ -132,7 +132,7 @@ cases:
   - id: J10
     category: evidence
     statement: 同单位两端才有差值
-    protocol: SKILL §3「数量陷阱」：差值需要同口径
+    protocol: SKILL「设计判断协议」「数量陷阱」：差值需要同口径
     slide:
       id: s01
       title: 经销渠道单店产出高出直营 2.4 倍
@@ -148,7 +148,7 @@ cases:
   - id: J11
     category: evidence
     statement: 不同单位并排不能相减
-    protocol: SKILL §3「数量陷阱」
+    protocol: SKILL「设计判断协议」「数量陷阱」
     slide:
       id: s01
       title: 门店与产出
@@ -164,7 +164,7 @@ cases:
   - id: J12
     category: chart
     statement: 作者给出图数据时形状随数据
-    protocol: SKILL §3「生产规格」：图由作者声明决定
+    protocol: SKILL「设计判断协议」「生产规格」：图由作者声明决定
     slide:
       id: s01
       title: 占比逐季抬升
@@ -180,7 +180,7 @@ cases:
   - id: J13
     category: evidence
     statement: 结构词 + 多条目 → 结构页而不是流程页
-    protocol: SKILL §3「判断陷阱」：结构不明先补证据
+    protocol: SKILL「设计判断协议」「判断陷阱」：结构不明先补证据
     slide:
       id: s01
       title: 组织分为三个模块
@@ -193,7 +193,7 @@ cases:
   - id: J14
     category: probe
     statement: 因果措辞只产生待确认问题，不产生箭头
-    protocol: SKILL §3「词表只提示」
+    protocol: SKILL「设计判断协议」「词表只提示」
     slide:
       id: s01
       title: 因此我们应当转向
@@ -203,7 +203,7 @@ cases:
   - id: J15
     category: provenance
     statement: 数字缺来源时追问而不是补编
-    protocol: SKILL §6「证据分层」
+    protocol: SKILL「证据层级」「证据层级」
     slide:
       id: s01
       title: 收入 4.6 万元
@@ -216,7 +216,7 @@ cases:
   - id: J16
     category: role
     statement: 末页带请求 → 收束并承接决定
-    protocol: SKILL §3「受众 · 决定」
+    protocol: SKILL「设计判断协议」「受众 · 决定」
     slides:
       - id: s01
         title: 门店在增，产出在跌
@@ -230,7 +230,7 @@ cases:
   - id: J17
     category: evidence
     statement: 无证据的纯观点页不硬凑图表
-    protocol: SKILL §2「结论先于装饰」
+    protocol: SKILL「四层架构与权威源」「结论先于装饰」
     slide:
       id: s01
       title: 加店不再带来增长
@@ -240,7 +240,7 @@ cases:
   - id: J18
     category: evidence
     statement: 单位不一致时不造差值轴
-    protocol: SKILL §3「数量陷阱」
+    protocol: SKILL「设计判断协议」「数量陷阱」
     slide:
       id: s01
       title: 收入与门店
@@ -252,7 +252,7 @@ cases:
   - id: J19
     category: claim
     statement: 只有标题没有证据 → 主张与证据都记未决
-    protocol: SKILL §3：判不准就落未断言
+    protocol: SKILL「设计判断协议」：判不准就落未断言
     slide:
       id: s01
       title: 2026 年渠道工作概览
@@ -262,7 +262,7 @@ cases:
   - id: J20
     category: evidence
     statement: 时间读数（≥3 个期间）才是曲线
-    protocol: SKILL §3「内容理解」
+    protocol: SKILL「设计判断协议」「内容理解」
     slide:
       id: s01
       title: 收入逐季变化
@@ -275,7 +275,7 @@ cases:
   - id: J21
     category: probe
     statement: 条件与已发生事实不共用一个形态
-    protocol: SKILL §3「判断陷阱」
+    protocol: SKILL「设计判断协议」「判断陷阱」
     slide:
       id: s01
       title: 如果渠道继续扩张
@@ -285,7 +285,7 @@ cases:
   - id: J22
     category: evidence
     statement: 相关措辞不被画成因果链
-    protocol: SKILL §3「数量陷阱」
+    protocol: SKILL「设计判断协议」「数量陷阱」
     slide:
       id: s01
       title: 门店与口碑同步上升
@@ -295,7 +295,7 @@ cases:
   - id: J23
     category: claim
     statement: 标题含数值变化即论断
-    protocol: SKILL §3「主张」
+    protocol: SKILL「设计判断协议」「主张」
     slide:
       id: s01
       title: 单店产出下降 21%
@@ -305,7 +305,7 @@ cases:
   - id: J24
     category: evidence
     statement: 占比声明 + 同单位分项 → 占比页
-    protocol: SKILL §3「证据形状」
+    protocol: SKILL「设计判断协议」「证据形状」
     slide:
       id: s01
       title: 三项业务占比
@@ -318,7 +318,7 @@ cases:
   - id: J25
     category: evidence
     statement: 有占比声明但分项合计不到 100 时，仍按整体分项处理（不靠数值求和兜底）
-    protocol: SKILL §3「证据形状」：占比声明来自作者，不只来自算术
+    protocol: SKILL「设计判断协议」「证据形状」：占比声明来自作者，不只来自算术
     slide:
       id: s01
       title: 会员业务占比
@@ -331,7 +331,7 @@ cases:
   - id: J26
     category: evidence
     statement: 结构词 + 多条目 → 结构页
-    protocol: SKILL §3「判断陷阱」：结构不明先补证据，不补连线
+    protocol: SKILL「设计判断协议」「判断陷阱」：结构不明先补证据，不补连线
     slide:
       id: s01
       title: 三模块体系
@@ -344,7 +344,7 @@ cases:
   - id: J27
     category: role
     statement: 中间页的「请批准」把页面任务变成说服
-    protocol: SKILL §3「受众 · 决定」
+    protocol: SKILL「设计判断协议」「受众 · 决定」
     slides:
       - id: s01
         title: 门店在增，产出在跌
@@ -360,7 +360,7 @@ cases:
   - id: J28
     category: claim
     statement: 变化措辞本身就是论断（即使没有数字）
-    protocol: SKILL §3「主张」：结论措辞才算主张位
+    protocol: SKILL「设计判断协议」「主张」：结论措辞才算主张位
     slide:
       id: s01
       title: 单店产出逐季走高
@@ -370,7 +370,7 @@ cases:
   - id: J29
     category: claim
     statement: 行动语气被识别为「要决定」，而不是普通描述
-    protocol: SKILL §3「受众 · 决定」：决定类型决定收束页焦点
+    protocol: SKILL「设计判断协议」「受众 · 决定」：决定类型决定收束页焦点
     slide:
       id: s01
       title: 应当重新评估渠道预算
@@ -380,7 +380,7 @@ cases:
   - id: J30
     category: media
     statement: 作者声明素材 → 判断记 required 并采用声明职能
-    protocol: SKILL §5「素材职责」：出图由作者声明决定，职责必须说清
+    protocol: SKILL「素材艺术指导与合规」「素材职责」：出图由作者声明决定，职责必须说清
     slide:
       id: s01
       title: 加店不再带来增长
@@ -394,7 +394,7 @@ cases:
   - id: J31
     category: media
     statement: 未声明素材 + 出现可视对象 → 只提示，不出图
-    protocol: SKILL §5：词表只提示，未声明不出图（避免自动配图导致的素材堆砌）
+    protocol: SKILL「素材艺术指导与合规」：词表只提示，未声明不出图（避免自动配图导致的素材堆砌）
     slide:
       id: s01
       title: 车间产能复盘
@@ -404,7 +404,7 @@ cases:
   - id: J32
     category: media
     statement: 纯数据页不因词表提示自动配图
-    protocol: SKILL §5 / §3「数量陷阱」：数字页的主要视觉是数据形状
+    protocol: SKILL「素材艺术指导与合规」「设计判断协议」「数量陷阱」：数字页的主要视觉是数据形状
     slide:
       id: s01
       title: 经销渠道单店产出高出直营 2.4 倍
@@ -416,3 +416,15 @@ cases:
         直营门店单店月产出
         万元
     expect: {media_decision: none, composition: two_end}
+
+  - id: J33
+    category: evidence
+    statement: 明确流程词使同单位阶段读数成为顺序，而不是并排比较
+    protocol: SKILL「设计判断协议」：流程关系必须来自作者的强顺序措辞；删除 sequence_strong 后本例应翻转
+    slide:
+      id: s01
+      title: 上线流程分为两个阶段
+      content: |-
+        灰度阶段 10 天
+        全量阶段 5 天
+    expect: {evidence: sequence, composition: sequence_steps}

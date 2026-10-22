@@ -11,8 +11,9 @@
 它们共同的问题不是「不好看」，而是**产物与作者意图不一致且无人报告**。
 测试通过≠设计优秀；但「内容悄悄少一条」必须在测试里被固定住。
 """
-import shutil
 import unittest
+
+from PIL import Image
 
 import support
 from support import ROOT, tmpdir
@@ -32,7 +33,9 @@ def deck_for(text: str, *, with_asset: bool = False):
     if with_asset:
         target = tmp / "assets"
         target.mkdir(parents=True, exist_ok=True)
-        shutil.copy(ROOT / "examples" / "assets" / "warehouse.jpg", target / "warehouse.jpg")
+        # 自包含夹具：旧测试依赖未纳入仓库的 examples/assets/warehouse.jpg，
+        # 导致干净 clone 永远报 FileNotFoundError。语义测试只需要一张可解码且分辨率足够的图。
+        Image.new("RGB", (1600, 1200), (210, 214, 208)).save(target / "warehouse.jpg", quality=90)
     brief, _ = load_brief(support.write_brief(tmp, text=text), POLICY, SCHEMA_DIR)
     return compose_deck(brief, judge_deck(brief, POLICY), POLICY)
 
@@ -144,6 +147,20 @@ slides:
         self.assertIn("left_value", roles(slide))
         result = guard_check(deck, POLICY, mode="draft")
         self.assertNotIn("EVIDENCE_NOT_LAID_OUT", {e["code"] for e in result["errors"]})
+
+
+class TestComparisonMeaningSurvivesBuild(unittest.TestCase):
+    def test_ratio_claim_is_not_rewritten_as_absolute_difference(self):
+        """标题声明“倍”时，中心关系必须仍是比值，不能被 BUILD 改写成金额差。"""
+        tmp = tmpdir()
+        brief, _ = load_brief(support.write_brief(tmp), POLICY, SCHEMA_DIR)
+        plan = judge_deck(brief, POLICY)
+        page = plan["pages"][1]
+        self.assertEqual(page["understanding"]["comparison"]["expression"], "ratio")
+        deck = compose_deck(brief, plan, POLICY)
+        delta = next(e for e in deck["slides"][1]["elements"] if e.get("role") == "delta")
+        self.assertIn("倍", delta["text"])
+        self.assertNotIn("万元", delta["text"])
 
 
 class TestStepOverflowIsReported(unittest.TestCase):

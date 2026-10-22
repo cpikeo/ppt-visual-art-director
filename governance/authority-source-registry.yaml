@@ -1,0 +1,119 @@
+registry_version: "1.0"
+status: "REVIEWED"
+project:
+  repository_name: "cpikeo/ppt-visual-art-director"
+  repository_revision: "9c9165662e9428018737835c1183ca7d4ef74e34 + uncommitted audited worktree"
+
+# REVIEWED 表示路径、消费者和命令已在本次工作区核验；维护责任人尚未由项目方具名，故不得设为 ACTIVE。
+authority_sources:
+  - authority_id: "SRC-PROTOCOL-001"
+    layer: markdown_protocol
+    path: "SKILL.md"
+    owns: ["设计判断顺序、冲突优先级、THINK-BUILD-VERIFY 边界、人工验收口径"]
+    must_not_own: ["机器阈值、枚举、坐标、算法真值"]
+    consumers: ["AI skill workflow", "references/contract.md", "references/verification.md"]
+    requirement_ids: ["G-SEM", "G-DECK"]
+    verification:
+      command: "python -m unittest discover -s tests -p 'test_boundaries.py' && python -m unittest discover -s tests -p 'test_judgment.py'"
+      expected_result: "all tests pass"
+    owner: "Visual Art Director / protocol maintainer (unassigned)"
+    last_verified_revision: "worktree audit 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-POLICY-001"
+    layer: structured_policy
+    path: "policy/strategy.yaml"
+    owns: ["运行枚举、字号与间距、阈值、阻断码、BUILD 未决项闸门"]
+    must_not_own: ["构图配方正文", "提示词语言片段", "Python 分支副本"]
+    consumers: ["scripts/policy.py", "scripts/judgment.py", "scripts/guard.py", "scripts/typography.py"]
+    requirement_ids: ["G-STR", "G-SEM"]
+    verification:
+      command: "python -m unittest discover -s tests -p 'test_policy_and_brief.py' && python -m unittest discover -s tests -p 'test_boundaries.py'"
+      expected_result: "all tests pass; no dead numeric policy leaf"
+    owner: "engineering maintainer (unassigned)"
+    last_verified_revision: "worktree audit 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-POLICY-002"
+    layer: structured_policy
+    path: "policy/composition.yaml"
+    owns: ["构图候选、适用条件、失败条件、槽位和配方禁令"]
+    must_not_own: ["自动审美终判", "Schema 字段契约"]
+    consumers: ["scripts/policy.py", "scripts/compose.py", "scripts/judgment.py"]
+    requirement_ids: ["G-SEM", "G-DECK"]
+    verification:
+      command: "python -m unittest discover -s tests -p 'test_boundaries.py' && python -m unittest discover -s tests -p 'test_semantic_loss.py'"
+      expected_result: "all tests pass"
+    owner: "Visual Art Director / engineering maintainer (unassigned)"
+    last_verified_revision: "worktree audit 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-POLICY-003"
+    layer: structured_policy
+    path: "policy/prompts.yaml"
+    owns: ["素材生产说明语言片段、顺序、画幅与长度策略"]
+    must_not_own: ["是否需要素材、素材审美终判"]
+    consumers: ["scripts/prompt.py"]
+    requirement_ids: ["G-SEM", "G-COMPLY"]
+    verification:
+      command: "python evals/prompt_eval.py"
+      expected_result: "all prompt cases pass"
+    owner: "asset direction maintainer (unassigned)"
+    last_verified_revision: "worktree audit 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-SCHEMA-001"
+    layer: schema
+    path: "schema/"
+    owns: ["brief、plan、deck、policy、composition、prompt 与 release evidence 的字段和类型契约"]
+    must_not_own: ["审美结论、隐式事实推断"]
+    consumers: ["scripts/brief.py", "scripts/policy.py", "scripts/pvad.py"]
+    requirement_ids: ["G-STR", "G-SEM"]
+    verification:
+      command: "python -m unittest discover -s tests -p 'test_policy_and_brief.py' && python -m unittest discover -s tests -p 'test_pipeline.py'"
+      expected_result: "all tests pass"
+    owner: "engineering maintainer (unassigned)"
+    last_verified_revision: "worktree audit 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-EXEC-001"
+    layer: python_execution
+    path: "scripts/"
+    owns: ["解析、确定性推导、BUILD 闸门、PPTX 编译、回读、渲染对照、外部证据校验、交付摘要/分阶段打包与硬错误阻断"]
+    must_not_own: ["未经证据的事实关系", "人工视觉终验"]
+    consumers: ["scripts/pvad.py CLI"]
+    requirement_ids: ["G-STR", "G-SEM", "G-PRE"]
+    verification:
+      command: "python -m unittest discover -s tests"
+      expected_result: "all tests pass"
+    owner: "engineering maintainer (unassigned)"
+    last_verified_revision: "worktree audit 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-TESTS-001"
+    layer: tests
+    path: "tests/"
+    owns: ["契约、边界、语义不丢失、编译、回读、渲染与发布状态的回归证据"]
+    must_not_own: ["以通过率替代视觉质量或目标环境结论"]
+    consumers: ["local verification workflow"]
+    requirement_ids: ["G-STR", "G-SEM", "G-PRE", "G-DECK", "G-TGT", "G-COMPLY"]
+    verification:
+      command: "python -m unittest discover -s tests"
+      expected_result: "all tests pass; external gates remain explicitly unverified"
+    owner: "QA / engineering maintainer (unassigned)"
+    last_verified_revision: "worktree audit 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-GOV-001"
+    layer: project_governance
+    path: "governance/release-evidence.template.yaml"
+    owns: ["单一最终 PPTX 的整稿人工复核、目标环境和素材合规证据入口"]
+    must_not_own: ["机器阈值、自动审美结论、未执行检查的 PASS 声明"]
+    consumers: ["scripts/release.py", "scripts/pvad.py check --evidence"]
+    requirement_ids: ["G-SEM", "G-PRE", "G-DECK", "G-TGT", "G-COMPLY"]
+    verification:
+      command: "python -m unittest discover -s tests -p 'test_release.py'"
+      expected_result: "evidence is schema-valid, artifact-bound, and incomplete records never pass"
+    owner: "release owner / reviewers (unassigned)"
+    last_verified_revision: "worktree implementation 2026-10-22"
+    status: "UNVERIFIED_OWNER"
