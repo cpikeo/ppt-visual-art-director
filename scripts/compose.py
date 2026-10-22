@@ -361,12 +361,12 @@ def _fill_body(composition, elements, slots, page, atoms, frame, policy, fontboo
 
     elif composition == "part_whole":
         if chart:
-            elements.append(_chart_el(f"{page['id']}.chart", "chart", frame.zone(slots["chart"]["zone"]),
-                                      chart, policy))
+            _append_part_whole_chart(elements, f"{page['id']}.chart", frame.zone(slots["chart"]["zone"]),
+                                     chart, policy, add_text_box, frame)
         elif metrics:
             payload = _metrics_as_donut(metrics, policy)
-            elements.append(_chart_el(f"{page['id']}.chart", "chart", frame.zone(slots["chart"]["zone"]),
-                                      payload, policy))
+            _append_part_whole_chart(elements, f"{page['id']}.chart", frame.zone(slots["chart"]["zone"]),
+                                     payload, policy, add_text_box, frame)
         if "parts" in slots:
             lines = []
             for m in metrics:
@@ -383,7 +383,7 @@ def _fill_body(composition, elements, slots, page, atoms, frame, policy, fontboo
     elif composition == "structure_map":
         _groups(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent_used)
 
-    elif composition == "image_narrative":
+    elif composition in ("image_narrative", "image_narrative_left"):
         body = "\n".join(atoms["body_lines"] or atoms["sentences"][:2])
         if "lede" in slots and body:
             add_text("lede", body, slots["lede"]["zone"], "body", "muted")
@@ -391,12 +391,13 @@ def _fill_body(composition, elements, slots, page, atoms, frame, policy, fontboo
             _metric_cells(elements, slots, metrics, frame, policy, fontbook, add_text_box, accent_used)
 
     elif composition == "editorial_text":
-        body = "\n".join(atoms["body_lines"] or atoms["sentences"])
+        lines = list(atoms["body_lines"] or atoms["sentences"])
+        side_note = lines[-1] if lines and "side_note" in slots else ""
+        body_lines = lines[:-1] if side_note and len(lines) > 1 else lines
         if "lede" in slots:
-            add_text("lede", body, slots["lede"]["zone"], "body", "ink")
-        if "side_note" in slots:
-            add_text("side_note", "\n".join(atoms["sentences"][-1:]), slots["side_note"]["zone"],
-                     "body", "muted")
+            add_text("lede", "\n".join(body_lines), slots["lede"]["zone"], "lede", "ink")
+        if "side_note" in slots and side_note:
+            add_text("side_note", side_note, slots["side_note"]["zone"], "body", "muted")
     return 0
 
 
@@ -423,6 +424,7 @@ def _compose_media(slots, slide, page, frame, policy, elements, base_dir) -> dic
         "fit": author.get("fit") or ("cover" if function in ("hero", "frame", "emotion") else "contain"),
         "function": function,
         "reason": media.get("reason") or "",
+        "alt_text": "概念氛围图：" + (media.get("reason") or function),
         "safe_area": author.get("safe_area") or None,
         "text_color": author.get("text_color") or "",
         "layout_source": "author",
@@ -548,23 +550,26 @@ def _steps(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent
 
 
 def _groups(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent_used):
-    items = atoms["bullets"] or [s for s in atoms["sentences"] if s]
-    items = items[:6]
+    items = (atoms["bullets"] or [s for s in atoms["sentences"] if s])[:6]
     if not items:
         return
-    cells = frame.columns(slots["groups"]["zone"], min(len(items), 3))
-    per = (len(items) + len(cells) - 1) // len(cells)
-    for i, cell in enumerate(cells):
-        x, y, w, h = cell
-        chunk = items[i * per:(i + 1) * per]
-        if not chunk:
-            continue
-        title, desc = _split_item(chunk[0])
-        add_text_box(f"group_title.{i + 1}", title, (x, y, w, h * 0.22), "body", "ink", bold=True)
-        body = "\n".join([desc] + [_split_item(it)[0] for it in chunk[1:]]) if desc else \
-            "\n".join(_split_item(it)[0] for it in chunk[1:])
-        if body.strip():
-            add_text_box(f"group_body.{i + 1}", body, (x, y + h * 0.26, w, h * 0.7), "body", "muted")
+    # 每个语义项必须拥有自己的标题与说明。旧实现把第2/4项塞进前一项正文，
+    # 视觉上只剩两组，却仍声称“四支柱”；这是信息结构丢失，不是排版偏好。
+    columns = 2 if len(items) == 4 else min(len(items), 3)
+    rows = (len(items) + columns - 1) // columns
+    x0, y0, total_w, total_h = frame.zone(slots["groups"]["zone"])
+    gx, gy = frame.gutter, 24.0
+    cell_w = (total_w - gx * (columns - 1)) / columns
+    cell_h = (total_h - gy * (rows - 1)) / rows
+    for i, item in enumerate(items):
+        row, column = divmod(i, columns)
+        x = frame.snap(x0 + column * (cell_w + gx))
+        y = frame.snap(y0 + row * (cell_h + gy))
+        w, h = frame.snap(cell_w), frame.snap(cell_h)
+        title, desc = _split_item(item)
+        add_text_box(f"group_title.{i + 1}", title, (x, y, w, h * 0.30), "body", "ink", bold=True)
+        if desc:
+            add_text_box(f"group_body.{i + 1}", desc, (x, y + h * 0.38, w, h * 0.56), "body", "muted")
 
 
 def _split_item(item: str) -> tuple[str, str]:
@@ -584,6 +589,37 @@ def _metrics_as_donut(metrics: list[dict], policy) -> dict:
     return {"kind": "donut", "categories": [m.get("label") or f"分项{i + 1}"
                                             for i, m in enumerate(metrics)],
             "series": [{"name": "占比", "values": values}], "derived": "from_metrics"}
+
+
+def _append_part_whole_chart(elements, eid: str, box, chart: dict, policy, add_text_box, frame) -> None:
+    """环图使用原生形状图例，避免 PowerPoint 用主题自动色重绘 legend key。
+
+    OOXML 的 dPt 分片色在部分 PowerPoint/预览路径中不会同步到内建图例色块；
+    这里关闭内建图例，并让图例色块和圆环共同读取同一 palette token。
+    """
+    if (chart.get("kind") or "column") != "donut":
+        elements.append(_chart_el(eid, "chart", box, chart, policy))
+        return
+    x, y, w, h = box
+    chart_element = _chart_el(eid, "chart", (x, y, w * 0.48, h), chart, policy)
+    chart_element["show_legend"] = False
+    elements.append(chart_element)
+    categories = list(chart.get("categories") or [])
+    palette = ["primary", "accent", "muted", "ink"]
+    count = max(1, len(categories))
+    line_h = min(48.0, h / (count + 0.5))
+    total_h = line_h * count
+    top = y + max(0.0, (h - total_h) / 2)
+    legend_x = x + w * 0.55
+    key = min(12.0, line_h * 0.38)
+    for i, label in enumerate(categories):
+        cy = top + i * line_h + line_h / 2
+        add_text_box(f"legend_key.{i + 1}", "■",
+                     (legend_x, cy - line_h * 0.42, key + 4, line_h * 0.84),
+                     "micro", palette[i % len(palette)])
+        add_text_box(f"legend_label.{i + 1}", str(label),
+                     (legend_x + key + 10, cy - line_h * 0.42, w * 0.42, line_h * 0.84),
+                     "micro", "ink")
 
 
 def _chart_el(eid: str, role: str, box, chart: dict, policy) -> dict:

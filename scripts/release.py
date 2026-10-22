@@ -15,6 +15,10 @@ from pathlib import Path
 import yaml
 
 
+ROOT = Path(__file__).resolve().parent.parent
+SCHEMA_DIR = ROOT / "schema"
+
+
 class ReleaseEvidenceError(ValueError):
     pass
 
@@ -91,7 +95,7 @@ def _evaluate_compliance(record, deck: dict) -> dict:
     complete_assets = (not record["no_external_assets"] and actual == declared and bool(actual))
     rights_ok = all(item["intended_use_cleared"] and item["privacy_cleared"]
                     and item["professional_review"] != "fail"
-                    and (not item["generated"] or item["professional_review"] == "pass")
+                    and (item["generated"] == "no" or (item["generated"] == "yes" and item["professional_review"] == "pass"))
                     for item in record["assets"])
     passable = (record["status"] == "PASS" and not record["issues"]
                 and record["sensitive_content_reviewed"]
@@ -103,6 +107,72 @@ def _evaluate_compliance(record, deck: dict) -> dict:
         "evidence": f"reviewer={record['reviewer']}; actual_assets={len(actual)}; declared={len(declared)}; "
                     f"missing={len(missing)}; extra={len(extra)}; issues={len(record['issues'])}",
     }
+
+
+def evidence_template(manifest: dict, deck: dict) -> dict:
+    """Prefill facts only; every human decision remains FAIL/false/unknown."""
+    _validate_manifest(manifest)
+    artifact_sha = manifest.get("output_sha256")
+    if not artifact_sha:
+        raise ReleaseEvidenceError("manifest 尚无 output_sha256，先完成 draft/release check")
+    assets = []
+    for slide_id, source in _deck_assets(deck):
+        assets.append({
+            "slide_id": slide_id,
+            "source": source,
+            "author_or_institution": "REQUIRED",
+            "acquisition": "REQUIRED",
+            "license": "REQUIRED",
+            "commercial_use": False,
+            "modification_allowed": False,
+            "intended_use_cleared": False,
+            "attribution": "",
+            "privacy_cleared": False,
+            "generated": "unknown",
+            "professional_review": "fail",
+            "notes": "Complete from the actual source; do not infer rights from file presence.",
+        })
+    fonts = [str(value) for value in (deck.get("theme") or {}).get("fonts", {}).values() if value]
+    return {
+        "schema": "pvad-release-evidence-v1",
+        "artifact_sha256": artifact_sha,
+        "deck_review": {
+            "status": "FAIL", "reviewer": "REQUIRED_NAMED_REVIEWER", "reviewed_at": "REQUIRED_ISO_DATETIME",
+            "checklist": {key: False for key in (
+                "first_attention", "claim_evidence_focus", "adjacent_increment", "critical_page_weight",
+                "climax_position", "visual_family", "whole_deck_rhythm")},
+            "must_fix": ["COMPLETE_REAL_WHOLE_DECK_REVIEW"], "defects": [],
+            "notes": "Bound to this artifact; do not mark PASS before visual review.",
+        },
+        "target_environment": {
+            "status": "FAIL", "reviewer": "REQUIRED_NAMED_REVIEWER", "reviewed_at": "REQUIRED_ISO_DATETIME",
+            "application": "Microsoft PowerPoint", "application_version": "REQUIRED_EXACT_VERSION",
+            "operating_system": "REQUIRED_EXACT_OS", "fonts": fonts or ["REQUIRED_INSTALLED_FONT_LIST"],
+            "actions": {key: False for key in (
+                "opened", "slide_show_checked", "edited", "saved_as", "reopened", "charts_checked",
+                "line_breaks_checked", "crops_checked")},
+            "issues": ["COMPLETE_REAL_TARGET_ENVIRONMENT_CHECK"],
+            "notes": "Internal previews are not target PowerPoint evidence.",
+        },
+        "compliance": {
+            "status": "FAIL", "reviewer": "REQUIRED_NAMED_REVIEWER", "reviewed_at": "REQUIRED_ISO_DATETIME",
+            "no_external_assets": not assets, "assets": assets, "sensitive_content_reviewed": False,
+            "issues": ["COMPLETE_REAL_RIGHTS_PRIVACY_AND_GENERATION_REVIEW"],
+            "notes": "Actual deck image inventory is prefilled; all rights and generation attributes remain unresolved.",
+        },
+    }
+
+
+def write_evidence_template(manifest: dict, deck: dict, path) -> str:
+    value = evidence_template(manifest, deck)
+    # The generated file is schema-valid but deliberately failing all human gates.
+    import jsonschema
+    schema = json.loads((SCHEMA_DIR / "release-evidence.schema.json").read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(value)
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(yaml.safe_dump(value, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return str(target)
 
 
 def delivery_summary(manifest: dict) -> str:
@@ -147,32 +217,82 @@ def write_delivery_summary(manifest: dict, path) -> str:
     return str(target)
 
 
+def _validate_manifest(manifest: dict) -> None:
+    import jsonschema
+    schema = json.loads((SCHEMA_DIR / "manifest.schema.json").read_text(encoding="utf-8"))
+    errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(manifest),
+                    key=lambda error: list(error.absolute_path))
+    if errors:
+        details = [f"{'/'.join(map(str, error.absolute_path)) or '<root>'}: {error.message}"
+                   for error in errors[:12]]
+        raise ReleaseEvidenceError("manifest 不符合 schema：\n  - " + "\n  - ".join(details))
+
+
+def _safe_source(path, *, suffixes: set[str], label: str) -> Path:
+    if not path:
+        raise ReleaseEvidenceError(f"manifest 缺少 {label} 路径")
+    item = Path(path).expanduser()
+    if item.is_symlink():
+        raise ReleaseEvidenceError(f"{label} 不得是符号链接：{item}")
+    resolved = item.resolve()
+    if not resolved.is_file():
+        raise ReleaseEvidenceError(f"{label} 文件不存在：{resolved}")
+    if resolved.suffix.lower() not in suffixes:
+        raise ReleaseEvidenceError(f"{label} 文件类型不允许：{resolved.suffix}")
+    return resolved
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def build_package(manifest_path, stage: str, out_dir) -> dict:
-    source = Path(manifest_path).expanduser().resolve()
-    manifest = json.loads(source.read_text(encoding="utf-8"))
+    source = _safe_source(manifest_path, suffixes={".json"}, label="manifest")
+    try:
+        manifest = json.loads(source.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ReleaseEvidenceError(f"manifest JSON 解析失败：{exc}") from None
+    _validate_manifest(manifest)
     if stage not in {"draft", "review", "release"}:
         raise ReleaseEvidenceError(f"未知交付阶段：{stage}")
     if stage == "release" and manifest.get("delivery_status") != "READY TO RELEASE":
         raise ReleaseEvidenceError("Release 包要求 delivery_status=READY TO RELEASE；当前制品仍被阻断")
-    target = Path(out_dir).expanduser()
-    target.mkdir(parents=True, exist_ok=True)
-    copied = []
 
-    def copy_if(path, name=None):
-        if not path:
-            return
-        item = Path(path)
-        if item.is_file():
-            destination = target / (name or item.name)
-            shutil.copy2(item, destination)
-            copied.append(destination)
+    pptx = _safe_source(manifest.get("output_pptx"), suffixes={".pptx"}, label="PPTX")
+    actual_sha = _file_sha256(pptx)
+    if actual_sha != manifest.get("output_sha256"):
+        raise ReleaseEvidenceError("PPTX 实际 SHA-256 与 manifest 不一致；拒绝打包陈旧或被替换的制品")
 
-    copy_if(source, "manifest.json")
-    copy_if(manifest.get("output_pptx"), "deck.pptx")
+    declared: list[tuple[Path, str]] = [(source, "manifest.json"), (pptx, "deck.pptx")]
     previews = manifest.get("previews") or {}
     if stage in {"review", "release"}:
-        copy_if(previews.get("spec_sheet"), "preview-spec.png")
-        copy_if(previews.get("pptx_sheet"), "preview-pptx.png")
+        declared.extend([
+            (_safe_source(previews.get("spec_sheet"), suffixes={".png"}, label="spec preview"), "preview-spec.png"),
+            (_safe_source(previews.get("pptx_sheet"), suffixes={".png"}, label="pptx preview"), "preview-pptx.png"),
+        ])
+    evidence_path = manifest.get("release_evidence_path")
+    if stage == "release":
+        if not evidence_path:
+            raise ReleaseEvidenceError("Release 包缺少 release_evidence_path")
+        evidence_source = _safe_source(evidence_path, suffixes={".yaml", ".yml", ".json"}, label="release evidence")
+        if _file_sha256(evidence_source) != manifest.get("release_evidence_sha256"):
+            raise ReleaseEvidenceError("release evidence 实际 SHA-256 与 manifest 不一致")
+        declared.append((evidence_source, "release-evidence" + Path(evidence_path).suffix.lower()))
+
+    target = Path(out_dir).expanduser()
+    if target.exists() and (target.is_symlink() or any(target.iterdir())):
+        raise ReleaseEvidenceError(f"输出目录必须不存在或为空，拒绝覆盖：{target}")
+    target.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for item, name in declared:
+        destination = target / name
+        if destination.exists():
+            raise ReleaseEvidenceError(f"拒绝覆盖交付包文件：{destination}")
+        shutil.copy2(item, destination)
+        if _file_sha256(item) != _file_sha256(destination):
+            raise ReleaseEvidenceError(f"复制后散列不一致：{name}")
+        copied.append(destination)
+
     summary = target / "delivery-summary.md"
     summary.write_text(delivery_summary(manifest), encoding="utf-8")
     copied.append(summary)
@@ -181,6 +301,10 @@ def build_package(manifest_path, stage: str, out_dir) -> dict:
         checklist.write_text("# Review 包\n\n请完成整稿、目标环境及合规复核；不得把本包当作正式 Release。\n", encoding="utf-8")
         copied.append(checklist)
     checksums = target / "SHA256SUMS.txt"
-    lines = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in sorted(copied)]
-    checksums.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"stage": stage, "out_dir": str(target), "files": [p.name for p in copied] + [checksums.name]}
+    entries = [(path.name, _file_sha256(path)) for path in sorted(copied)]
+    checksums.write_text("\n".join(f"{digest}  {name}" for name, digest in entries) + "\n", encoding="utf-8")
+    for name, expected in entries:
+        if _file_sha256(target / name) != expected:
+            raise ReleaseEvidenceError(f"交付包最终散列复核失败：{name}")
+    return {"stage": stage, "out_dir": str(target.resolve()),
+            "files": [path.name for path in copied] + [checksums.name], "verified": True}

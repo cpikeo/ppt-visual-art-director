@@ -283,7 +283,12 @@
           "type": "boolean"
         },
         "generated": {
-          "type": "boolean"
+          "enum": [
+            "yes",
+            "no",
+            "unknown"
+          ],
+          "description": "生成属性；unknown 不得通过合规门"
         },
         "professional_review": {
           "enum": [

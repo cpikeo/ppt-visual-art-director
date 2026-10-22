@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pvad.local/schema/inspection.schema.json",
+  "title": "Observable facts extracted from an existing PPTX",
+  "type": "object",
+  "required": [
+    "schema",
+    "source",
+    "artifact_sha256",
+    "slide_size",
+    "stats",
+    "slides",
+    "risks",
+    "limitations",
+    "accessibility",
+    "font_diagnostics"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "pvad-inspection-v2"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "slide_size": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "slides",
+        "objects",
+        "text",
+        "charts",
+        "images",
+        "shapes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "slides": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "charts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "images": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shapes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "slides": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "id",
+          "background",
+          "objects",
+          "layout",
+          "notes_present"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "id": {
+            "type": "string"
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "objects": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "layout": {
+            "type": "string"
+          },
+          "notes_present": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "slide",
+          "object",
+          "detail"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "OUT_OF_CANVAS",
+              "GEOMETRY_DEGENERATE",
+              "TEXT_SIZE_INHERITED",
+              "FONT_INHERITED",
+              "CHART_KIND_UNKNOWN",
+              "IMAGE_HASH_UNAVAILABLE"
+            ]
+          },
+          "slide": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "object": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "accessibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "images",
+        "images_missing_alt",
+        "hyperlinks",
+        "slides_with_notes",
+        "reading_order"
+      ],
+      "properties": {
+        "images": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "images_missing_alt": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "hyperlinks": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "slides_with_notes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reading_order": {
+          "type": "string"
+        }
+      }
+    },
+    "font_diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "explicit_fonts",
+        "inherited_font_objects",
+        "target_environment_match"
+      ],
+      "properties": {
+        "explicit_fonts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inherited_font_objects": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "target_environment_match": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

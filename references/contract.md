@@ -174,6 +174,8 @@ verification.independent_visual_review   无有效评分时为 NOT RUN
 
 工程取证同时核对：**退出码 + `manifest.status` + `output_sha256`**；正式交付还必须核对 `delivery_status` 与全部强制 `quality_gates`。内部工程状态 PASS 不等于可发布。
 
+manifest 的正式字段契约见 `schema/manifest.schema.json`。`check` 写盘前和 `package` 读入时都会校验；`READY TO RELEASE` 必须同时满足 release 模式、工程 PASS、有最终制品散列和六门全 PASS。`security.author_code_executed` 记录是否显式执行过非沙箱作者 Python 稿。
+
 ### 6.1 外部发布证据
 
 `check --evidence <yaml/json>` 接收整稿人工复核、目标 PowerPoint 和合规记录。完整字段只以 `schema/release-evidence.schema.json` 为准；执行纪律如下：
@@ -185,6 +187,8 @@ verification.independent_visual_review   无有效评分时为 NOT RUN
 - 缺失记录保持 NOT RUN / NOT VERIFIED，失败记录不得被人工覆盖；
 - 完整外部记录只证明该散列对应制品，不可跨版本复用。
 
+`pvad.py evidence-init manifest.json --deck deck.json` 可预填制品散列、实际图片和字体；评审者、授权、生成属性及所有人工动作保持 FAIL / false / unknown，不得自动升格为证据。
+
 ### 6.2 派生交付视图与交付包
 
 - 每次最终 `check` 在报告目录生成 `delivery-summary.md`；它只从 manifest 派生，不是第二份状态真值。
@@ -192,6 +196,12 @@ verification.independent_visual_review   无有效评分时为 NOT RUN
 - `package --stage review`：含预览和 `REVIEW_REQUIRED.md`，用于收集外部证据。
 - `package --stage release`：仅当 `delivery_status=READY TO RELEASE` 时生成。
 - 每个包包含 `SHA256SUMS.txt`；内容修改后必须重建并重验。
+- `package` 拒绝 Schema 非法的 manifest、散列不一致的 PPTX、符号链接、异常文件类型和非空输出目录，并在复制后复核散列。
+- `scripts/package_skill.py` 使用明确 allowlist 构建不含 `audit/`、缓存和生成报告的干净技能包；`--include-tests` 才附带 tests/evals。
+
+### 6.3 既有 PPTX 只读检查
+
+`pvad.py inspect existing.pptx --out inspection.json` 的契约见 `schema/inspection.schema.json`。它只记录页面、对象、几何、显式字体/字号、图表载荷和图片散列；不恢复主张、证据状态、页面任务或设计意图。完整改稿流程见 `references/modification-workflow.md`。
 
 ## 7. 文本测量边界
 

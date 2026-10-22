@@ -99,3 +99,9 @@ NOT RUN — Independent Visual Review
 - Review 包用于整稿、目标环境与合规复核，必须保留 `REVIEW_REQUIRED.md`；
 - Release 包只有在六门均 PASS、`delivery_status=READY TO RELEASE` 时才允许生成；
 - 三类包都由 manifest 派生并带文件散列，禁止手工复制后沿用旧证据。
+
+## 9. CI、压力测试与独立基准边界
+
+- CI 只证明 Python、Schema、单元/集成、评估回归、CLI 与干净打包；不能把 Linux CI 写成 PowerPoint PASS。
+- `evals/stress_eval.py` 记录 20/50 页合成长稿的工程时间、最大 RSS、PPTX 大小和打包耗时；它不证明视觉质量或真实项目性能，目标 PowerPoint 未跑时写“未测量”。
+- 独立项目基准的治理见 `evals/benchmarks/README.md` 与 `schema/benchmark-case.schema.json`。没有至少两名独立专家、固定输入/制品散列和目标环境时只能是 DRAFT；实现人员看过后只能作为 `EXPOSED_REGRESSION` 回归集。

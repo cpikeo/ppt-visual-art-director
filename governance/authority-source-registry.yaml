@@ -65,7 +65,7 @@ authority_sources:
   - authority_id: "SRC-SCHEMA-001"
     layer: schema
     path: "schema/"
-    owns: ["brief、plan、deck、policy、composition、prompt 与 release evidence 的字段和类型契约"]
+    owns: ["brief、plan、deck、policy、composition、prompt、manifest、release evidence、inspection 与 benchmark case 的字段和类型契约"]
     must_not_own: ["审美结论、隐式事实推断"]
     consumers: ["scripts/brief.py", "scripts/policy.py", "scripts/pvad.py"]
     requirement_ids: ["G-STR", "G-SEM"]
@@ -79,7 +79,7 @@ authority_sources:
   - authority_id: "SRC-EXEC-001"
     layer: python_execution
     path: "scripts/"
-    owns: ["解析、确定性推导、BUILD 闸门、PPTX 编译、回读、渲染对照、外部证据校验、交付摘要/分阶段打包与硬错误阻断"]
+    owns: ["解析、确定性推导、BUILD 闸门、PPTX 编译、回读、渲染对照、作者代码许可、PPTX只读检查、外部证据校验、交付摘要/安全打包与硬错误阻断"]
     must_not_own: ["未经证据的事实关系", "人工视觉终验"]
     consumers: ["scripts/pvad.py CLI"]
     requirement_ids: ["G-STR", "G-SEM", "G-PRE"]
@@ -115,5 +115,19 @@ authority_sources:
       command: "python -m unittest discover -s tests -p 'test_release.py'"
       expected_result: "evidence is schema-valid, artifact-bound, and incomplete records never pass"
     owner: "release owner / reviewers (unassigned)"
+    last_verified_revision: "worktree implementation 2026-10-22"
+    status: "UNVERIFIED_OWNER"
+
+  - authority_id: "SRC-RELEASE-001"
+    layer: release_engineering
+    path: "VERSION + CHANGELOG.md + scripts/package_skill.py"
+    owns: ["技能包版本、迁移说明、运行包 allowlist、干净包 smoke"]
+    must_not_own: ["质量门 PASS、目标 PowerPoint 结论、审美评分"]
+    consumers: ["CI", "skill distributors", "release reviewers"]
+    requirement_ids: ["G-STR"]
+    verification:
+      command: "python -m unittest discover -s tests -p 'test_skill_package.py' && python -m unittest discover -s tests -p 'test_productization.py'"
+      expected_result: "clean package smoke passes; audit/cache absent; version and migrations match"
+    owner: "release engineering maintainer (unassigned)"
     last_verified_revision: "worktree implementation 2026-10-22"
     status: "UNVERIFIED_OWNER"

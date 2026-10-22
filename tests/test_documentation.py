@@ -15,8 +15,8 @@ class TestProtocolReferences(unittest.TestCase):
         anchors = re.findall(r'<a id="([a-z0-9-]+)"></a>', text)
         self.assertEqual(len(anchors), len(set(anchors)))
         required = {"workflow", "task-routing", "think-handoff", "authority-boundaries",
-                    "design-judgment", "chinese-typography", "asset-direction",
-                    "evidence-levels", "quality-gates"}
+                    "design-judgment", "chinese-typography", "visual-order", "editorial-typography",
+                    "asset-direction", "evidence-levels", "quality-gates"}
         self.assertTrue(required <= set(anchors))
 
     def test_active_files_do_not_reference_bare_skill_section_numbers(self):
@@ -59,6 +59,21 @@ class TestDesignGuidance(unittest.TestCase):
         for case in cases:
             for field in ("**输入**", "**错误设计**", "**为什么错**", "**修正**", "**必须保留**", "**不适用条件**"):
                 self.assertIn(field, case)
+
+    def test_visual_order_reference_preserves_execution_and_conflict_priority(self):
+        text = (ROOT / "references" / "visual-art-direction.md").read_text(encoding="utf-8")
+        self.assertIn("理解内容 → 明确核心信息 → 确立视觉概念 → 建立阅读层级 → 组织构图与排版 → 选择和处理素材 → 检查实际呈现效果", text)
+        self.assertIn("真实性与合规", text)
+        self.assertIn("删减 → 重组 → 调整比例与空间 → 优化排版 → 处理素材 → 添加必要效果", text)
+        for question in ("传达什么", "突出什么", "如何阅读", "为何这样表达", "什么可以删除"):
+            self.assertIn(question, text)
+
+    def test_typography_protocol_preserves_decision_order_and_editing_priority(self):
+        text = (ROOT / "references" / "typography-editorial-composition.md").read_text(encoding="utf-8")
+        for stage in ("THINK｜理解与编辑", "COMPOSE｜建立文字构图", "TYPESET｜字体与排版", "VERIFY｜实际渲染校验"):
+            self.assertIn(stage, text)
+        self.assertIn("删除重复 → 合并相近观点 → 缩短冗余表达 → 调整层级 → 重组构图 → 必要时拆页", text)
+        self.assertIn("语义与事实准确 ＞ 阅读清晰 ＞ 信息层级 ＞ 构图与空间 ＞ 视觉表现 ＞ 装饰细节", text)
 
     def test_visual_concept_is_not_accepted_as_style_label_only(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")

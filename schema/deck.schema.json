@@ -316,6 +316,9 @@
     "show_values": {
      "type": "boolean"
     },
+    "show_legend": {
+     "type": "boolean"
+    },
     "value_size": {
      "type": "number"
     },
@@ -332,6 +335,9 @@
      "type": "string"
     },
     "source": {
+     "type": "string"
+    },
+    "alt_text": {
      "type": "string"
     },
     "fit": {

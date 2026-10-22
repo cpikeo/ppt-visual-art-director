@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pvad.local/schema/manifest.schema.json",
+  "title": "PVAD verification and delivery manifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "status",
+    "mode",
+    "deck_path",
+    "deck_sha256",
+    "spec_digest",
+    "policy",
+    "verification"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "pvad-manifest-v1"
+    },
+    "status": {
+      "enum": [
+        "PASS",
+        "BLOCKED"
+      ]
+    },
+    "mode": {
+      "enum": [
+        "spec",
+        "draft",
+        "release"
+      ]
+    },
+    "deck_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "deck_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "spec_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "policy": {
+      "type": "object"
+    },
+    "security": {
+      "type": "object",
+      "required": [
+        "author_code_executed",
+        "author_code_path",
+        "sandboxed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "author_code_executed": {
+          "type": "boolean"
+        },
+        "author_code_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sandboxed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "required": [
+        "structural",
+        "pptx_readback",
+        "spec_render",
+        "target_powerpoint",
+        "target_renderer",
+        "independent_visual_review"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "structural": {
+          "type": "string"
+        },
+        "pptx_readback": {
+          "type": "string"
+        },
+        "spec_render": {
+          "type": "string"
+        },
+        "target_powerpoint": {
+          "type": "string"
+        },
+        "target_renderer": {
+          "type": "string"
+        },
+        "independent_visual_review": {
+          "type": "string"
+        }
+      }
+    },
+    "guard": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "fidelity": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "pixel": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "previews": {
+      "type": "object",
+      "required": [
+        "spec_sheet",
+        "pptx_sheet",
+        "pages"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "spec_sheet": {
+          "type": "string"
+        },
+        "pptx_sheet": {
+          "type": "string"
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_pptx": {
+      "type": "string"
+    },
+    "output_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "release_evidence_path": {
+      "type": "string"
+    },
+    "delivery_summary": {
+      "type": "string"
+    },
+    "delivery_status": {
+      "enum": [
+        "READY TO RELEASE",
+        "BLOCK — Delivery",
+        "NOT ASSESSED — run release checks and external reviews"
+      ]
+    },
+    "quality_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "G-STR",
+        "G-SEM",
+        "G-PRE",
+        "G-DECK",
+        "G-TGT",
+        "G-COMPLY"
+      ],
+      "properties": {
+        "G-STR": {
+          "$ref": "#/$defs/gate"
+        },
+        "G-SEM": {
+          "$ref": "#/$defs/gate"
+        },
+        "G-PRE": {
+          "$ref": "#/$defs/gate"
+        },
+        "G-DECK": {
+          "$ref": "#/$defs/gate"
+        },
+        "G-TGT": {
+          "$ref": "#/$defs/gate"
+        },
+        "G-COMPLY": {
+          "$ref": "#/$defs/gate"
+        }
+      }
+    },
+    "release_evidence_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "gate": {
+      "type": "object",
+      "required": [
+        "status",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "BLOCK",
+            "PARTIALLY VERIFIED",
+            "NOT VERIFIED",
+            "NOT RUN"
+          ]
+        },
+        "evidence": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "delivery_status": {
+            "const": "READY TO RELEASE"
+          }
+        },
+        "required": [
+          "delivery_status"
+        ]
+      },
+      "then": {
+        "required": [
+          "output_pptx",
+          "output_sha256",
+          "quality_gates"
+        ],
+        "properties": {
+          "status": {
+            "const": "PASS"
+          },
+          "mode": {
+            "const": "release"
+          },
+          "quality_gates": {
+            "properties": {
+              "G-STR": {
+                "properties": {
+                  "status": {
+                    "const": "PASS"
+                  }
+                }
+              },
+              "G-SEM": {
+                "properties": {
+                  "status": {
+                    "const": "PASS"
+                  }
+                }
+              },
+              "G-PRE": {
+                "properties": {
+                  "status": {
+                    "const": "PASS"
+                  }
+                }
+              },
+              "G-DECK": {
+                "properties": {
+                  "status": {
+                    "const": "PASS"
+                  }
+                }
+              },
+              "G-TGT": {
+                "properties": {
+                  "status": {
+                    "const": "PASS"
+                  }
+                }
+              },
+              "G-COMPLY": {
+                "properties": {
+                  "status": {
+                    "const": "PASS"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "security": {
+            "properties": {
+              "author_code_executed": {
+                "const": true
+              }
+            }
+          }
+        },
+        "required": [
+          "security"
+        ]
+      },
+      "then": {
+        "properties": {
+          "security": {
+            "properties": {
+              "author_code_path": {
+                "type": "string"
+              },
+              "sandboxed": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "release_evidence_path"
+        ]
+      },
+      "then": {
+        "required": [
+          "release_evidence_sha256"
+        ]
+      }
+    }
+  ]
+}

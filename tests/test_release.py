@@ -77,7 +77,7 @@ class TestReleaseEvidence(unittest.TestCase):
                 "acquisition": "licensed source", "license": "project-specific permission",
                 "commercial_use": False, "modification_allowed": False,
                 "intended_use_cleared": True, "attribution": "", "privacy_cleared": True,
-                "generated": False, "professional_review": "not_required",
+                "generated": "no", "professional_review": "not_required",
             }],
         })
         deck = {"slides": [{"id": "s1", "elements": [{"type": "image", "source": "asset.jpg"}]}]}
@@ -92,7 +92,7 @@ class TestReleaseEvidence(unittest.TestCase):
                 "slide_id": "s1", "source": "generated.png", "author_or_institution": "AI tool",
                 "acquisition": "generated", "license": "tool terms", "commercial_use": True,
                 "modification_allowed": True, "intended_use_cleared": True, "attribution": "",
-                "privacy_cleared": True, "generated": True, "professional_review": "not_required",
+                "privacy_cleared": True, "generated": "yes", "professional_review": "not_required",
             }],
         })
         deck = {"slides": [{"id": "s1", "elements": [{"type": "image", "source": "generated.png"}]}]}
@@ -120,6 +120,8 @@ class TestReleaseEvidence(unittest.TestCase):
         final = support.load_json(artifacts["report"] / "manifest.json")
         self.assertEqual(final["delivery_status"], "READY TO RELEASE")
         self.assertTrue(all(gate["status"] == "PASS" for gate in final["quality_gates"].values()))
+        import hashlib
+        self.assertEqual(final["release_evidence_sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
         release_dir = tmp / "release-package"
         packaged = support.run_cli("package", artifacts["report"] / "manifest.json",
                                    "--stage", "release", "--out", release_dir)
@@ -143,6 +145,33 @@ class TestDeliveryExperience(unittest.TestCase):
         self.assertIn(self.manifest["output_sha256"], text)
         self.assertIn("G-TGT", text)
         self.assertIn("由 manifest 确定性生成", text)
+
+    def test_evidence_init_prefills_facts_but_never_passes_human_gates(self):
+        import yaml
+        output = self.tmp / "initialized-evidence.yaml"
+        result = support.run_cli("evidence-init", self.artifacts["report"] / "manifest.json",
+                                 "--deck", self.tmp / "deck.json", "--out", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        value = yaml.safe_load(output.read_text(encoding="utf-8"))
+        self.assertEqual(value["artifact_sha256"], self.manifest["output_sha256"])
+        self.assertEqual(value["deck_review"]["status"], "FAIL")
+        self.assertFalse(any(value["deck_review"]["checklist"].values()))
+        self.assertEqual(value["target_environment"]["status"], "FAIL")
+        self.assertFalse(any(value["target_environment"]["actions"].values()))
+        self.assertEqual(value["compliance"]["status"], "FAIL")
+        self.assertTrue(value["compliance"]["no_external_assets"])
+        loaded = load_evidence(output, ROOT / "schema")
+        self.assertEqual(loaded["artifact_sha256"], self.manifest["output_sha256"])
+
+    def test_evidence_init_rejects_deck_from_another_manifest(self):
+        changed = json.loads((self.tmp / "deck.json").read_text(encoding="utf-8"))
+        changed["slides"][0]["id"] = "changed"
+        path = self.tmp / "changed-deck.json"
+        path.write_text(json.dumps(changed, ensure_ascii=False), encoding="utf-8")
+        result = support.run_cli("evidence-init", self.artifacts["report"] / "manifest.json",
+                                 "--deck", path, "--out", self.tmp / "should-not-exist.yaml")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("SHA-256", result.stderr)
 
     def test_draft_and_review_packages_are_distinct(self):
         manifest = self.artifacts["report"] / "manifest.json"

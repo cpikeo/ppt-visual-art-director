@@ -595,3 +595,43 @@ recipes:
     - 为了填满版面加无义引语
     ladder: h1
     focus: claim
+
+  image_narrative_left:
+    why: 连续影像叙事需要方向变化时，图像置左、文字置右；变化必须由阅读节奏与素材视线方向支持。
+    fails: 文字过长、图像主体朝外或变化无叙事理由时改 image_narrative/statement。
+    when: 作者明确选择方向变化，且素材主体、文字长度与前后页节奏允许图左文右。
+    slots:
+      - role: media
+        type: image
+        zone: [0.0, 0.0, 0.44, 1.0]
+      - role: claim
+        type: text
+        zone: [0.5, 0.1, 0.5, 0.34]
+        size: h1
+        color: ink
+        bold: true
+        max_lines: 3
+      - role: lede
+        type: text
+        zone: [0.5, 0.46, 0.5, 0.18]
+        size: body
+        color: muted
+        optional: true
+      - role: metric_cells
+        type: kpi
+        zone: [0.5, 0.66, 0.5, 0.22]
+        optional: true
+      - role: eyebrow
+        type: text
+        zone: [0.52, 0.0, 0.48, 0.05]
+        size: micro
+        color: muted
+      - role: source
+        type: text
+        zone: [0.48, 0.93, 0.52, 0.06]
+        size: source
+        color: muted
+        optional: true
+    must_not: [用图片填空, 让背景压住主张, 把生成图当事实证词, 为了变化而翻转构图]
+    ladder: h1
+    focus: subject

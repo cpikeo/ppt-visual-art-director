@@ -434,7 +434,13 @@ def contact_sheet(paths: list, out_path, policy, labels: list | None = None) -> 
     if not paths:
         raise RenderError("没有可拼图的页面")
     columns = int(policy.opt("render.contact_sheet_columns", 2))
-    thumbs = [Image.open(p) for p in paths]
+    thumb_width = int(policy.opt("render.contact_sheet_thumb_width", 480))
+    thumbs = []
+    for path in paths:
+        with Image.open(path) as image:
+            thumb = image.convert("RGB")
+            thumb.thumbnail((thumb_width, max(1, round(image.height * thumb_width / image.width))), Image.Resampling.LANCZOS)
+            thumbs.append(thumb)
     gap = 16
     label_h = 26
     cell_w = max(t.width for t in thumbs)
@@ -457,4 +463,7 @@ def contact_sheet(paths: list, out_path, policy, labels: list | None = None) -> 
     target = Path(out_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(target, "PNG", optimize=True)
+    sheet.close()
+    for thumb in thumbs:
+        thumb.close()
     return str(target)

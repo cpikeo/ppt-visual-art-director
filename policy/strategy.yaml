@@ -132,7 +132,7 @@ enums:
   role: [establish, explain, compare, prove, persuade, summarize]
   evidence: [comparison, series, part_whole, number, structure, sequence, proposition, none]
   claim_source: [author, derived, absent]
-  composition: [statement, metric_row, two_end, series_chart, part_whole, sequence_steps, structure_map, editorial_text, image_narrative]
+  composition: [statement, metric_row, two_end, series_chart, part_whole, sequence_steps, structure_map, editorial_text, image_narrative, image_narrative_left]
   density: [sparse, balanced, dense]
   rhythm_move: [open, build, turn, hold, breathe, close]
   emphasis: [lead, normal, quiet]
@@ -241,7 +241,20 @@ render:
   ghost_supersample: 2
   ghost_max_pages: 8
   contact_sheet_columns: 2
+  contact_sheet_thumb_width: 480  # 仅联系表缩略图；单页证据保留原始渲染，避免长稿联系表占用过高内存
   diff_grid: 4                # 像素差比较下采样网格（px）
+
+security:
+  # OOXML/PPTX 资源安全预算，只防止解压炸弹和异常规模输入，不评价设计质量。
+  pptx:
+    max_file_bytes: 250000000
+    max_zip_entries: 20000
+    max_uncompressed_bytes: 1000000000
+    max_entry_bytes: 250000000
+    max_compression_ratio: 200
+    max_slides: 500
+    max_objects_per_slide: 5000
+    max_embedded_image_pixels: 100000000
 
 verification:
   modes: [spec, draft, release]

@@ -72,11 +72,15 @@ class InputError(RuntimeError):
     """输入/用法错误：退出码 2。"""
 
 
-def load_deck(path) -> tuple[dict, str]:
+def load_deck(path, *, allow_author_code: bool = False) -> tuple[dict, str]:
     source = Path(path).expanduser()
     if not source.is_file():
         raise InputError(f"找不到 deck：{source}")
     if source.suffix.lower() == ".py":
+        if not allow_author_code:
+            raise InputError("拒绝执行作者 Python 稿：它是可信代码而非沙箱。"
+                             "确认来源并显式传入 --allow-author-code 才可执行；否则改用 deck.json")
+        print(f"SECURITY WARNING — 正在执行可信作者代码（非沙箱）：{source.resolve()}", file=sys.stderr)
         return _load_python_deck(source), str(source)
     deck = read_json(source)
     return deck, str(source)
@@ -251,12 +255,32 @@ def run_handoff(args, policy) -> int:
     return policy.req("verification.exit_codes.ok")
 
 
+def run_inspect(args, policy) -> int:
+    """只读提取既有 PPTX 的可观察对象；不恢复设计意图。"""
+    from pptx_inspect import InspectError, inspect_pptx
+
+    try:
+        result = inspect_pptx(args.pptx, policy)
+    except InspectError as exc:
+        raise InputError(str(exc)) from None
+    errors = validate_against(result, "inspection.schema.json")
+    if errors:
+        raise InputError("inspection 结构与 schema 不符（引擎缺陷）：\n"
+                         + "\n".join(f"  - {e}" for e in errors[:12]))
+    if args.out:
+        write_json(args.out, result)
+    print(json.dumps({"schema": result["schema"], "source": result["source"],
+                      "artifact_sha256": result["artifact_sha256"], "stats": result["stats"],
+                      "risks": len(result["risks"]), "out": args.out}, ensure_ascii=False, indent=2))
+    return policy.req("verification.exit_codes.ok")
+
+
 def run_impact(args, policy) -> int:
     """比较改稿前后 deck JSON，给出保守验证范围和变更摘要。"""
     from workflows import impact
 
-    before, _ = load_deck(args.before)
-    after, _ = load_deck(args.after)
+    before, _ = load_deck(args.before, allow_author_code=args.allow_author_code)
+    after, _ = load_deck(args.after, allow_author_code=args.allow_author_code)
     for label, deck in (("before", before), ("after", after)):
         errors = validate_deck(deck)
         if errors:
@@ -265,6 +289,34 @@ def run_impact(args, policy) -> int:
     if args.out:
         write_json(args.out, result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    return policy.req("verification.exit_codes.ok")
+
+
+def run_evidence_init(args, policy) -> int:
+    """Prefill artifact and asset facts; every human gate remains explicitly failing."""
+    from release import ReleaseEvidenceError, write_evidence_template
+
+    manifest = read_json(args.manifest)
+    manifest_errors = validate_against(manifest, "manifest.schema.json")
+    if manifest_errors:
+        raise InputError("manifest 结构与 schema 不符：\n" + "\n".join(f"  - {e}" for e in manifest_errors[:12]))
+    deck_path = args.deck or manifest.get("deck_path")
+    if not deck_path or Path(deck_path).suffix.lower() == ".py":
+        raise InputError("evidence-init 需要可审计的 deck.json；作者 Python 稿请先输出 JSON")
+    deck = read_json(deck_path)
+    deck_errors = validate_deck(deck)
+    if deck_errors:
+        raise InputError("deck 结构与 schema 不符：\n" + "\n".join(f"  - {e}" for e in deck_errors[:10]))
+    if manifest.get("deck_sha256") != sha256_file(deck_path):
+        raise InputError("deck.json SHA-256 与 manifest 不一致；不得用另一版本初始化证据")
+    try:
+        output = write_evidence_template(manifest, deck, args.out)
+    except ReleaseEvidenceError as exc:
+        raise InputError(str(exc)) from None
+    print(json.dumps({"evidence_path": output, "artifact_sha256": manifest.get("output_sha256"),
+                      "assets": sum(1 for slide in deck.get("slides", [])
+                                    for element in slide.get("elements", []) if element.get("type") == "image"),
+                      "human_gates_prefilled_as_pass": False}, ensure_ascii=False, indent=2))
     return policy.req("verification.exit_codes.ok")
 
 
@@ -291,7 +343,9 @@ def run_check(args, policy) -> int:
     mode = args.mode or policy.req("verification.default_mode")
     if mode not in policy.req("verification.modes"):
         raise InputError(f"未知 mode：{mode}")
-    deck, deck_path = load_deck(args.deck)
+    if mode == "release" and Path(args.deck).suffix.lower() == ".py":
+        raise InputError("release 模式禁止执行作者 Python 稿；先在受控 Draft 步骤生成并审阅 deck.json，再对 JSON 发布检查")
+    deck, deck_path = load_deck(args.deck, allow_author_code=args.allow_author_code)
     schema_errors = validate_deck(deck)
     out_dir = Path(args.out_dir or (Path(args.output).parent / "pvad-report")).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -304,6 +358,11 @@ def run_check(args, policy) -> int:
         "deck_sha256": sha256_file(deck_path) if Path(deck_path).suffix != ".py" else digest(deck),
         "spec_digest": digest(deck),
         "policy": policy_json(policy),
+        "security": {
+            "author_code_executed": Path(deck_path).suffix.lower() == ".py",
+            "author_code_path": str(Path(deck_path).resolve()) if Path(deck_path).suffix.lower() == ".py" else None,
+            "sandboxed": False if Path(deck_path).suffix.lower() == ".py" else None,
+        },
         "verification": {
             "structural": "pending",
             "pptx_readback": "pending",
@@ -313,7 +372,7 @@ def run_check(args, policy) -> int:
             "independent_visual_review": "NOT RUN — 需人工盲评（evals/blind_pack.py 生成 pack 后回收 sheet）",
         },
     }
-    write_json(manifest_path, manifest)   # 先落未完成状态，中断后不得读到 PASS
+    _write_manifest(manifest_path, manifest)   # 先落未完成状态，中断后不得读到 PASS
 
     exit_block = policy.req("verification.exit_codes.blocked")
     if schema_errors:
@@ -388,8 +447,11 @@ def run_check(args, policy) -> int:
                                       for i in pages])
         sheet_rb = contact_sheet(rb_pngs, out_dir / "preview-pptx.png", policy,
                                  labels=[f"{i + 1:02d} {deck['slides'][i]['id']} · readback" for i in pages])
-        result["previews"] = {"spec_sheet": sheet, "pptx_sheet": sheet_rb,
-                              "pages": spec_pngs + rb_pngs}
+        result["previews"] = {
+            "spec_sheet": str(Path(sheet).resolve()),
+            "pptx_sheet": str(Path(sheet_rb).resolve()),
+            "pages": [str(Path(path).resolve()) for path in spec_pngs + rb_pngs],
+        }
         manifest["previews"] = result["previews"]
         manifest["output_pptx"] = str(pptx_path.resolve())
         manifest["output_sha256"] = compile_report["output_sha256"]
@@ -409,7 +471,9 @@ def run_check(args, policy) -> int:
             external_gates = evaluate_evidence(evidence, manifest["output_sha256"], deck)
         except ReleaseEvidenceError as exc:
             raise InputError(str(exc)) from None
-        manifest["release_evidence_path"] = str(Path(args.evidence).expanduser().resolve())
+        evidence_path = Path(args.evidence).expanduser().resolve()
+        manifest["release_evidence_path"] = str(evidence_path)
+        manifest["release_evidence_sha256"] = sha256_file(evidence_path)
     _apply_delivery_gates(manifest, mode, external_gates)
     _write_manifest_and_summary(manifest_path, manifest)
 
@@ -422,13 +486,21 @@ def run_check(args, policy) -> int:
     return policy.req("verification.exit_codes.ok") if manifest["status"] == "PASS" else exit_block
 
 
+def _write_manifest(manifest_path: Path, manifest: dict) -> None:
+    errors = validate_against(manifest, "manifest.schema.json")
+    if errors:
+        raise InputError("manifest 结构与 schema 不符（引擎缺陷）：\n"
+                         + "\n".join(f"  - {e}" for e in errors[:12]))
+    write_json(manifest_path, manifest)
+
+
 def _write_manifest_and_summary(manifest_path: Path, manifest: dict) -> None:
     """Write the auditable manifest and its deterministic one-page delivery view."""
     from release import write_delivery_summary
 
     summary_path = manifest_path.parent / "delivery-summary.md"
     manifest["delivery_summary"] = str(summary_path.resolve())
-    write_json(manifest_path, manifest)
+    _write_manifest(manifest_path, manifest)
     write_delivery_summary(manifest, summary_path)
 
 
@@ -534,6 +606,8 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--out-dir", default=None)
     check.add_argument("--pages", help="只取这些页（1-based，逗号分隔）")
     check.add_argument("--force-compile", action="store_true", help="BLOCK 也编译，便于定位")
+    check.add_argument("--allow-author-code", action="store_true",
+                       help="显式许可执行可信 .py 作者稿；非沙箱，默认拒绝")
     check.add_argument("--evidence", help="绑定本次 PPTX SHA-256 的外部整稿/目标环境/合规证据 YAML/JSON")
     media = sub.add_parser("media", help="deck → 待生产素材的生产说明（提示词 / 比例 / 目标像素）")
     media.add_argument("deck")
@@ -541,10 +615,19 @@ def build_parser() -> argparse.ArgumentParser:
     handoff = sub.add_parser("handoff", help="plan → 人类可读的最小 THINK→BUILD 交接摘要（派生视图）")
     handoff.add_argument("plan")
     handoff.add_argument("--out", default="handoff.md")
+    inspect_cmd = sub.add_parser("inspect", help="既有 PPTX → 可观察对象与保守工程风险（不推断设计意图）")
+    inspect_cmd.add_argument("pptx")
+    inspect_cmd.add_argument("--out", default=None)
     impact = sub.add_parser("impact", help="改稿前后 deck JSON → 变更摘要与保守验证范围")
     impact.add_argument("before")
     impact.add_argument("after")
     impact.add_argument("--out", default=None)
+    impact.add_argument("--allow-author-code", action="store_true",
+                        help="显式许可执行可信 .py 作者稿；非沙箱，默认拒绝")
+    evidence_init = sub.add_parser("evidence-init", help="manifest + deck → 默认失败的外部证据预填模板")
+    evidence_init.add_argument("manifest")
+    evidence_init.add_argument("--deck", help="覆盖 manifest.deck_path；必须是 deck.json")
+    evidence_init.add_argument("--out", default="release-evidence.yaml")
     package = sub.add_parser("package", help="manifest → Draft / Review / Release 交付包")
     package.add_argument("manifest")
     package.add_argument("--stage", choices=["draft", "review", "release"], required=True)
@@ -577,8 +660,12 @@ def main(argv=None) -> int:
             return run_media(args, policy)
         if args.command == "handoff":
             return run_handoff(args, policy)
+        if args.command == "inspect":
+            return run_inspect(args, policy)
         if args.command == "impact":
             return run_impact(args, policy)
+        if args.command == "evidence-init":
+            return run_evidence_init(args, policy)
         if args.command == "package":
             return run_package(args, policy)
         return run_check(args, policy)

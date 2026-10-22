@@ -11,6 +11,7 @@
   "enums",
   "id",
   "judgment",
+  "security",
   "thresholds",
   "typography",
   "verification",
@@ -574,6 +575,11 @@
      "minimum": 1,
      "maximum": 6
     },
+    "contact_sheet_thumb_width": {
+     "type": "integer",
+     "minimum": 160,
+     "maximum": 1280
+    },
     "diff_grid": {
      "type": "integer",
      "minimum": 1
@@ -774,6 +780,63 @@
       "max_decode": {
        "type": "integer",
        "minimum": 1000000
+      }
+     }
+    }
+   }
+  },
+  "security": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "pptx"
+   ],
+   "properties": {
+    "pptx": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "max_file_bytes",
+      "max_zip_entries",
+      "max_uncompressed_bytes",
+      "max_entry_bytes",
+      "max_compression_ratio",
+      "max_slides",
+      "max_objects_per_slide",
+      "max_embedded_image_pixels"
+     ],
+     "properties": {
+      "max_file_bytes": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "max_zip_entries": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "max_uncompressed_bytes": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "max_entry_bytes": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "max_compression_ratio": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "max_slides": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "max_objects_per_slide": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "max_embedded_image_pixels": {
+       "type": "integer",
+       "minimum": 1
       }
      }
     }

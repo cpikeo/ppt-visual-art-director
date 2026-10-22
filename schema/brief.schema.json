@@ -1,384 +1,385 @@
 {
- "$schema": "https://json-schema.org/draft/2020-12/schema",
- "$id": "https://pvad.local/schema/brief.schema.json",
- "title": "PVAD design brief (input contract)",
- "description": "输入契约：作者写给技能包的唯一需求面。字段缺省不猜内容，只记录 open question；类型或枚举错误直接拒绝（不静默忽略）。",
- "type": "object",
- "required": [
-  "slides"
- ],
- "additionalProperties": false,
- "properties": {
-  "meta": {
-   "type": "object",
-   "additionalProperties": false,
-   "properties": {
-    "title": {
-     "type": "string"
-    },
-    "author": {
-     "type": "string"
-    },
-    "date": {
-     "type": "string"
-    },
-    "lang": {
-     "type": "string",
-     "enum": [
-      "zh",
-      "en",
-      "mixed"
-     ]
-    }
-   }
-  },
-  "audience": {
-   "type": "string"
-  },
-  "decision": {
-   "type": "string"
-  },
-  "tension": {
-   "type": "string"
-  },
-  "visual_world": {
-   "type": "string"
-  },
-  "source": {
-   "type": "string",
-   "description": "全稿默认来源；逐页 source 压过"
-  },
-  "unit": {
-   "type": "string"
-  },
-  "period": {
-   "type": "string"
-  },
-  "basis": {
-   "type": "string"
-  },
-  "brand": {
-   "type": "object",
-   "additionalProperties": false,
-   "properties": {
-    "colors": {
-     "type": "object",
-     "additionalProperties": {
-      "type": "string",
-      "pattern": "^#[0-9A-Fa-f]{6}$"
-     }
-    },
-    "fonts": {
-     "type": "object",
-     "additionalProperties": false,
-     "properties": {
-      "cn": {
-       "type": "string"
-      },
-      "latin": {
-       "type": "string"
-      }
-     }
-    }
-   }
-  },
-  "constraints": {
-   "type": "object",
-   "additionalProperties": false,
-   "properties": {
-    "avoid": {
-     "type": "array",
-     "items": {
-      "type": "string"
-     }
-    },
-    "density": {
-     "type": "string",
-     "enum": [
-      "sparse",
-      "balanced",
-      "dense"
-     ]
-    },
-    "max_slides": {
-     "type": "integer",
-     "minimum": 1
-    }
-   }
-  },
-  "slides": {
-   "type": "array",
-   "minItems": 1,
-   "items": {
-    "type": "object",
-    "required": [
-     "title"
-    ],
-    "additionalProperties": false,
-    "properties": {
-     "id": {
-      "type": "string"
-     },
-     "title": {
-      "type": "string",
-      "minLength": 1
-     },
-     "content": {
-      "type": "string"
-     },
-     "claim": {
-      "type": "string",
-      "description": "作者显式主张；写了就是主张位，不被正文顶掉"
-     },
-     "insight": {
-      "type": "string",
-      "description": "本页唯一结论（作者判断），压过推导"
-     },
-     "role": {
-      "type": "string",
-      "enum": [
-       "establish",
-       "explain",
-       "compare",
-       "prove",
-       "persuade",
-       "summarize"
-      ]
-     },
-     "evidence": {
-      "type": "string",
-      "enum": [
-       "comparison",
-       "series",
-       "part_whole",
-       "number",
-       "structure",
-       "sequence",
-       "proposition",
-       "none"
-      ]
-     },
-     "composition": {
-      "type": "string",
-      "enum": [
-       "statement",
-       "metric_row",
-       "two_end",
-       "series_chart",
-       "part_whole",
-       "sequence_steps",
-       "structure_map",
-       "editorial_text",
-       "image_narrative"
-      ]
-     },
-     "density": {
-      "type": "string",
-      "enum": [
-       "sparse",
-       "balanced",
-       "dense"
-      ]
-     },
-     "focus": {
-      "type": "string",
-      "enum": [
-       "claim",
-       "metric",
-       "chart",
-       "subject",
-       "step",
-       "decision"
-      ]
-     },
-     "source": {
-      "type": "string"
-     },
-     "unit": {
-      "type": "string"
-     },
-     "period": {
-      "type": "string"
-     },
-     "basis": {
-      "type": "string"
-     },
-     "metrics": {
-      "type": "array",
-      "items": {
-       "type": "object",
-       "required": [
-        "value"
-       ],
-       "additionalProperties": false,
-       "properties": {
-        "value": {
-         "type": [
-          "number",
-          "string"
-         ]
-        },
-        "unit": {
-         "type": "string"
-        },
-        "label": {
-         "type": "string"
-        },
-        "desc": {
-         "type": "string"
-        },
-        "period": {
-         "type": "string"
-        }
-       }
-      }
-     },
-     "chart": {
-      "type": "object",
-      "required": [
-       "kind"
-      ],
-      "additionalProperties": false,
-      "properties": {
-       "kind": {
-        "type": "string",
-        "enum": [
-         "column",
-         "bar",
-         "line",
-         "donut",
-         "progress"
-        ]
-       },
-       "categories": {
-        "type": "array",
-        "items": {
-         "type": "string"
-        }
-       },
-       "series": {
-        "type": "array",
-        "minItems": 1,
-        "items": {
-         "type": "object",
-         "required": [
-          "name",
-          "values"
-         ],
-         "additionalProperties": false,
-         "properties": {
-          "name": {
-           "type": "string"
-          },
-          "values": {
-           "type": "array",
-           "minItems": 1,
-           "items": {
-            "type": "number"
-           }
-          }
-         }
-        }
-       },
-       "takeaway": {
-        "type": "string"
-       }
-      }
-     },
-     "asset": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pvad.local/schema/brief.schema.json",
+  "title": "PVAD design brief (input contract)",
+  "description": "输入契约：作者写给技能包的唯一需求面。字段缺省不猜内容，只记录 open question；类型或枚举错误直接拒绝（不静默忽略）。",
+  "type": "object",
+  "required": [
+    "slides"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "meta": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-       "path"
-      ],
       "properties": {
-       "path": {
-        "type": "string"
-       },
-       "function": {
-        "type": [
-         "string",
-         "null"
-        ]
-       },
-       "reason": {
-        "type": [
-         "string",
-         "null"
-        ]
-       },
-       "fit": {
-        "type": "string",
-        "enum": [
-         "cover",
-         "contain"
-        ]
-       },
-       "safe_area": {
-        "oneOf": [
-         {
-          "type": "array",
-          "minItems": 4,
-          "maxItems": 4,
-          "items": {
-           "type": "number",
-           "minimum": 0,
-           "maximum": 1
+        "title": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "lang": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en",
+            "mixed"
+          ]
+        }
+      }
+    },
+    "audience": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "string"
+    },
+    "tension": {
+      "type": "string"
+    },
+    "visual_world": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string",
+      "description": "全稿默认来源；逐页 source 压过"
+    },
+    "unit": {
+      "type": "string"
+    },
+    "period": {
+      "type": "string"
+    },
+    "basis": {
+      "type": "string"
+    },
+    "brand": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "colors": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
           }
-         },
-         {
+        },
+        "fonts": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-           "x",
-           "y",
-           "width",
-           "height"
-          ],
           "properties": {
-           "x": {
-            "type": "number"
-           },
-           "y": {
-            "type": "number"
-           },
-           "width": {
-            "type": "number"
-           },
-           "height": {
-            "type": "number"
-           }
+            "cn": {
+              "type": "string"
+            },
+            "latin": {
+              "type": "string"
+            }
           }
-         }
-        ]
-       },
-       "text_color": {
-        "type": "string",
-        "enum": [
-         "dark",
-         "light"
-        ]
-       },
-       "subject": {
-        "type": [
-         "string",
-         "null"
-        ]
-       },
-       "avoid": {
-        "type": "array",
-        "items": {
-         "type": "string",
-         "minLength": 1
         }
-       }
       }
-     },
-     "notes": {
-      "type": "string"
-     }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "avoid": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "density": {
+          "type": "string",
+          "enum": [
+            "sparse",
+            "balanced",
+            "dense"
+          ]
+        },
+        "max_slides": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "slides": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "string",
+            "description": "作者显式主张；写了就是主张位，不被正文顶掉"
+          },
+          "insight": {
+            "type": "string",
+            "description": "本页唯一结论（作者判断），压过推导"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "establish",
+              "explain",
+              "compare",
+              "prove",
+              "persuade",
+              "summarize"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "enum": [
+              "comparison",
+              "series",
+              "part_whole",
+              "number",
+              "structure",
+              "sequence",
+              "proposition",
+              "none"
+            ]
+          },
+          "composition": {
+            "type": "string",
+            "enum": [
+              "statement",
+              "metric_row",
+              "two_end",
+              "series_chart",
+              "part_whole",
+              "sequence_steps",
+              "structure_map",
+              "editorial_text",
+              "image_narrative",
+              "image_narrative_left"
+            ]
+          },
+          "density": {
+            "type": "string",
+            "enum": [
+              "sparse",
+              "balanced",
+              "dense"
+            ]
+          },
+          "focus": {
+            "type": "string",
+            "enum": [
+              "claim",
+              "metric",
+              "chart",
+              "subject",
+              "step",
+              "decision"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "value"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "string"
+                  ]
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "desc": {
+                  "type": "string"
+                },
+                "period": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "chart": {
+            "type": "object",
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "column",
+                  "bar",
+                  "line",
+                  "donut",
+                  "progress"
+                ]
+              },
+              "categories": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "series": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "values"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "values": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
+              },
+              "takeaway": {
+                "type": "string"
+              }
+            }
+          },
+          "asset": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "function": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fit": {
+                "type": "string",
+                "enum": [
+                  "cover",
+                  "contain"
+                ]
+              },
+              "safe_area": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "items": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "x",
+                      "y",
+                      "width",
+                      "height"
+                    ],
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      },
+                      "width": {
+                        "type": "number"
+                      },
+                      "height": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                ]
+              },
+              "text_color": {
+                "type": "string",
+                "enum": [
+                  "dark",
+                  "light"
+                ]
+              },
+              "subject": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "avoid": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
     }
-   }
   }
- }
 }

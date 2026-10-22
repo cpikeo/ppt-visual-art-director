@@ -49,6 +49,7 @@ description: >-
 |---|---|---|
 | 从 brief 新建整稿 | 完整 THINK → BUILD → VERIFY | BUILD 前语义闸门、整稿与发布门 |
 | 修改单页或局部改稿 | 读取整稿上下文 → 局部 THINK → BUILD → 影响范围 VERIFY | 受影响页、相邻页、同构图页和全稿硬门 |
+| 修改既有 PPTX | inspect 可观察事实 → 人工补最小交接 → 编辑 → impact → VERIFY | 不从几何恢复主张或意图；目标环境重验 |
 | 替换数据 | 核实单位/期间/口径 → 重建对象 → 三方核对 | 主张—数据、PPTX 对象、实际渲染 |
 | 仅做视觉评审 | 不 BUILD；检查页面、相邻关系和整稿 | 不用自动分数代替人工判断 |
 | 修复排版 | 保留主张和信息结构 → 修 BUILD → 目标环境复核 | 中文断行、字体回退和来源区 |
@@ -244,6 +245,22 @@ VERIFY 分别检查：
 
 内部字体度量只能证明必要条件，不能证明 PowerPoint 中的最终排版。
 
+<a id="visual-order"></a>
+### 4.3 整体视觉秩序
+
+设计执行顺序固定为：**理解内容 → 明确核心信息 → 确立视觉概念 → 建立阅读层级 → 组织构图与排版 → 选择和处理素材 → 检查实际呈现效果。** 禁止从找图、套模板或添加装饰开始。
+
+每页在 BUILD 前必须明确“传达什么、突出什么、如何阅读、为何这样表达、什么可以删除”。多个元素争夺焦点时先删减或重组，不以更多颜色、边框、阴影和字体效果解决。整稿变化必须由页面任务和叙事推进驱动。
+
+冲突按“真实性与合规 → 信息理解与可读性 → 叙事与视觉层级 → 构图与排版 → 整稿一致性与风格 → 装饰丰富度”处理。机器检查只覆盖可客观验证的下限；实际尺寸逐页验收与删减测试仍是人工责任。完整规范见 `references/visual-art-direction.md`。
+
+<a id="editorial-typography"></a>
+### 4.4 文字艺术指导与编辑式构图
+
+文字排版必须遵循 **THINK → COMPOSE → TYPESET → VERIFY**：先编辑内容与职责，再组织焦点和阅读路径，之后才确定字体参数，最后以实际渲染复验。拥挤时按“删除重复 → 合并观点 → 缩短表达 → 调整层级 → 重组构图 → 必要时拆页”处理，不默认缩字或压行距。
+
+六项判断是层级、尺度、断行、空间、对比与删减。最终优先级为：**语义与事实准确 ＞ 阅读清晰 ＞ 信息层级 ＞ 构图与空间 ＞ 视觉表现 ＞ 装饰细节。** 固定字号、网格和参数只可作为策略默认与工程下限，不能冒充编辑判断。完整协议见 `references/typography-editorial-composition.md`。
+
 ---
 
 <a id="asset-direction"></a>
@@ -354,19 +371,30 @@ python scripts/pvad.py check deck.json output.pptx --mode spec
 python scripts/pvad.py check deck.json output.pptx --mode draft
 python scripts/pvad.py check deck.json output.pptx --mode release
 
+# 外部证据模板先从本次 manifest/deck 预填；所有人工门默认 FAIL
+python scripts/pvad.py evidence-init pvad-report/manifest.json --deck deck.json --out release-evidence.yaml
+
 # 外部证据必须绑定本次 PPTX SHA-256；缺证据仍 BLOCK
 python scripts/pvad.py check deck.json output.pptx --mode release --evidence release-evidence.yaml
 
-# 改稿影响范围、素材说明与分阶段交付包
+# 既有 PPTX 只读检查、改稿影响范围、素材说明与分阶段交付包
+python scripts/pvad.py inspect existing.pptx --out inspection.json
 python scripts/pvad.py impact before-deck.json after-deck.json --out impact.json
 python scripts/pvad.py media deck.json --out media-briefs.json
 python scripts/pvad.py package pvad-report/manifest.json --stage review --out review-package
+
+# 迁移旧 inspection；构建确定性 ZIP；一键内部发布预检
+python scripts/migrate.py inspection old-inspection.json --out inspection-v2.json
+python scripts/package_skill.py --out clean-skill-package --zip pvad-skill.zip
+python scripts/release_check.py --out release-preflight
 ```
 
 - `spec`：只检查结构与硬约束，不编译。
 - `draft`：编译、回读并生成内部对照预览；不等于正式发布。
 - `release`：执行全页工程检查并生成质量门；外部强制门缺证据时保持 `BLOCK — Delivery`。
 - brief 或 Policy 改动后必须重跑 plan；build 拒绝指纹不一致的旧判断。
+- `.py` 作者稿是可信代码而非沙箱：Spec/Draft 默认拒绝，确认来源后才可显式使用 `--allow-author-code`；Release 无条件禁止执行作者代码，必须先固化并审阅 JSON。
+- `inspect` 在深解析前执行可配置资源预算，并记录替代文本、Z 序、链接、备注、版式和字体事实；它仍不生成 plan，改稿纪律见 `references/modification-workflow.md`。
 - BLOCK 后按根因分组修复，再重跑受影响路径。
 
 字段、错误码、策略键、阈值、载荷和 manifest 结构分别以 `references/contract.md`、Policy 和 Schema 为准。
@@ -447,6 +475,8 @@ python scripts/pvad.py package pvad-report/manifest.json --stage review --out re
 | 证据等级、质量门、盲评与发布口径 | `references/verification.md` |
 | 权威源与消费者 | `governance/authority-source-registry.yaml` |
 | 目标环境、强制门和抽样政策 | `governance/project-acceptance-profile.yaml` |
+| 既有 PPTX 改稿 | `references/modification-workflow.md`；先 inspect，再补人工交接 |
+| 设计失败对照 | `references/failure-cases.md` |
 | 修改代码 | `scripts/`；随后运行 `tests/` 和相关 `evals/` |
 
 ## 12. 变更纪律

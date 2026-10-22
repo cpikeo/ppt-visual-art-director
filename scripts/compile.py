@@ -239,7 +239,7 @@ def _add_chart(slide, element: dict, dpi: float, colors: dict, fonts: dict) -> N
     chart.font.name = str(fonts.get("latin") or "")
     chart.font.color.rgb = _rgb("muted", colors)
     multi = len(element["series"]) > 1
-    chart.has_legend = multi or kind == "donut"
+    chart.has_legend = multi or (kind == "donut" and element.get("show_legend", True))
     if chart.has_legend:
         chart.legend.position = XL_LEGEND_POSITION.RIGHT if kind == "donut" else XL_LEGEND_POSITION.BOTTOM
         chart.legend.include_in_layout = False
@@ -325,6 +325,10 @@ def _add_image(slide, element: dict, dpi: float, base_dir) -> None:
     picture = slide.shapes.add_picture(str(path), _emu(element["x"], dpi), _emu(element["y"], dpi),
                                        _emu(element["width"], dpi), _emu(element["height"], dpi))
     picture.name = element["id"]
+    if element.get("alt_text"):
+        props = picture._element.xpath(".//p:cNvPr")
+        if props:
+            props[0].set("descr", str(element["alt_text"]))
     crop = element.get("crop") or [0.0, 0.0, 0.0, 0.0]
     if any(crop):
         picture.crop_left, picture.crop_top, picture.crop_right, picture.crop_bottom = (
@@ -411,20 +415,29 @@ def readback(path: str | Path) -> dict:
     slides = []
     for slide in prs.slides:
         shapes = []
-        for shape in slide.shapes:
-            item = {"name": shape.name,
+        for z_order, shape in enumerate(slide.shapes):
+            item = {"name": shape.name, "z_order": z_order,
                     "x": round(shape.left / 914400 * dpi, 2),
                     "y": round(shape.top / 914400 * dpi, 2),
                     "width": round(shape.width / 914400 * dpi, 2),
                     "height": round(shape.height / 914400 * dpi, 2)}
+            try:
+                props = shape._element.xpath(".//p:cNvPr")
+                item["alt_text"] = (props[0].get("descr") or "") if props else ""
+            except (AttributeError, IndexError, TypeError):
+                item["alt_text"] = ""
             if shape.has_text_frame:
                 item["type"] = "text"
                 item["text"] = shape.text_frame.text
-                sizes, colors = [], []
+                sizes, colors, fonts, hyperlinks = [], [], [], []
                 for paragraph in shape.text_frame.paragraphs:
                     for run in paragraph.runs:
+                        if run.hyperlink.address:
+                            hyperlinks.append({"text": run.text, "address": run.hyperlink.address})
                         if run.font.size:
                             sizes.append(round(float(run.font.size.pt) / 72 * 96, 2))
+                        if run.font.name:
+                            fonts.append(str(run.font.name))
                         try:
                             if run.font.color and run.font.color.rgb:
                                 colors.append(str(run.font.color.rgb))
@@ -432,6 +445,8 @@ def readback(path: str | Path) -> dict:
                             pass
                 item["sizes"] = sizes
                 item["colors"] = colors
+                item["fonts"] = sorted(set(fonts))
+                item["hyperlinks"] = hyperlinks
                 item["anchor"] = str(shape.text_frame.vertical_anchor)
             elif getattr(shape, "has_chart", False):
                 chart = shape.chart
@@ -461,8 +476,16 @@ def readback(path: str | Path) -> dict:
                 item["fill"] = fill
                 item["stroke"] = stroke
             shapes.append(item)
+        notes_text = ""
+        try:
+            if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+                notes_text = slide.notes_slide.notes_text_frame.text.strip()
+        except (AttributeError, ValueError):
+            pass
         slides.append({"id": slide.name if hasattr(slide, "name") else "",
                        "background": _background(prs, slide),
+                       "layout": getattr(slide.slide_layout, "name", ""),
+                       "notes_text": notes_text,
                        "shapes": shapes})
     return {"slides": slides,
             "slide_size": [round(prs.slide_width / 914400 * dpi, 2),

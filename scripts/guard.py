@@ -23,9 +23,9 @@ TYPE_FIELDS = {
              "opacity", "uppercase", "text_anchor_v"},
     "shape": {"shape", "fill", "stroke", "stroke_width", "text", "text_size", "text_color",
               "text_bold", "text_align", "radius"},
-    "chart": {"chart_kind", "categories", "series", "show_values", "takeaway", "derived",
+    "chart": {"chart_kind", "categories", "series", "show_values", "show_legend", "takeaway", "derived",
               "value_size", "label_size", "highlight", "target", "target_label", "unit_suffix"},
-    "image": {"source", "fit", "crop", "crop_loss", "overlay", "asset_id", "function", "reason",
+    "image": {"source", "alt_text", "fit", "crop", "crop_loss", "overlay", "asset_id", "function", "reason",
               "safe_area", "text_color", "asset_sha256", "source_px", "format", "layer", "brief"},
 }
 REQUIRED_FIELDS = {
@@ -183,8 +183,9 @@ def _check_slide(slide, deck, policy, rep, mode, fontbook, cw, ch, colors, metri
             max_size, size_owners = _track_focus(size, eid, max_size, size_owners)
             text = str(element.get("text") or "")
             # 眉标是定位符（页序），不是内容：它和正文里的「05」相同不构成重复信息。
-            if str(element.get("role") or "") in LOCATOR_ROLES:
-                pass                              # 定位符不参与重复判定，也不算「数字证据」
+            if (str(element.get("role") or "") in LOCATOR_ROLES
+                    or str(element.get("role") or "").startswith("legend_key")):
+                pass                              # 定位符/色标不参与重复判定，也不算「数字证据」
             else:
                 if text and text in texts:
                     rep.warn("DUPLICATE_TEXT", f"同一页重复出现相同文字：{text[:24]}", **where)
@@ -692,6 +693,8 @@ def _check_text_contrast(slide: dict, elements: list, policy, rep: _Report, colo
     for element in elements:
         if element.get("type") != "text":
             continue
+        if str(element.get("role") or "").startswith("legend_key"):
+            continue  # 色标是非语言图形，不适用正文文本对比阈值
         box = (element["x"], element["y"], element["width"], element["height"])
         if any(_overlaps(box, other) for other in covered):
             continue                                  # 底板不确定，交给像素实测那一层
