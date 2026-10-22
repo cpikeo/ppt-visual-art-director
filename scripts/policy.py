@@ -241,6 +241,23 @@ def validate_semantics(policy: Policy) -> None:
         if not (recipe.get("must_not") or []):
             problems.append(f"composition.{name}.must_not 为空：配方必须写明「这个形状下不该做什么」")
 
+    # 3.6 槽位高度必须装得下它自己声明的行数（几何与排版规则的一致性）
+    from typography import ink_height
+    ch = float(policy.req("canvas.height")) - float(policy.req("canvas.margin.top")) \
+        - float(policy.req("canvas.margin.bottom"))
+    for name, recipe in (policy.composition.get("recipes") or {}).items():
+        for i, slot in enumerate(recipe.get("slots") or []):
+            lines = slot.get("max_lines")
+            key = slot.get("size") or recipe.get("ladder")
+            if not lines or slot.get("type") != "text" or key not in scale:
+                continue
+            needed = ink_height(int(lines), float(scale[key]), float(policy.line_height(key)), policy)
+            have = float(slot["zone"][3]) * ch
+            if have + 1.0 < needed:
+                problems.append(
+                    f"composition.{name}.slots[{i}:{slot.get('role')}] 高度 {have:.0f}px 装不下 "
+                    f"{lines} 行 {key}（需要 {needed:.0f}px）：要么加高槽位，要么减 max_lines")
+
     # 4. 槽位引用：字号档 / 颜色 token / 元素类型 必须存在
     for name, recipe in (policy.composition.get("recipes") or {}).items():
         for i, slot in enumerate(recipe.get("slots") or []):

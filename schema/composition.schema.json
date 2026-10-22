@@ -110,6 +110,12 @@
         },
         "shape": {
          "type": "string"
+        },
+        "max_lines": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 8,
+         "description": "该槽位允许的最大行数。声明了就按它校验槽位高度；不声明按字号档的全局上限。"
         }
        }
       }

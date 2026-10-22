@@ -35,6 +35,8 @@ REQUIRED_FIELDS = {
     "image": {"source"},
 }
 CHART_KINDS = {"column", "bar", "line", "donut", "progress"}
+# 定位类元素：页码/眉标这类文字不承载信息，重复判定要排除它们（案例 B s05：页码 05 与工序 05）
+LOCATOR_ROLES = {"eyebrow"}
 NUMERIC_KINDS = {"column", "bar", "line", "donut"}
 
 FIX_HINTS = {
@@ -46,6 +48,8 @@ FIX_HINTS = {
     "FONT_FAMILIES": "字体家族 ≤2：一个中文族 + 一个拉丁族。",
     "ELEMENT_ID_DUPLICATE": "元素/页面 id 必须唯一，取证与对账都依赖它。",
     "DONUT_NOT_PERCENT": "环图表达占比：合计不是 100 时改用条形图。",
+    "CONTENT_TRUNCATED": "内容放不进构图的列数上限：删条目或换构图，不能静默丢弃。",
+    "EVIDENCE_NOT_LAID_OUT": "作者声明的量化证据没有出现在页面上：换构图或删数据，不能只在 plan 里有。",
     "SOURCE_ZONE_COLLISION": "来源区只放来源/口径文字，其他对象不得侵入。",
     "ASSET_MISSING": "素材文件不存在或未声明：缺图不能静默通过。"
                      "该页若已登记生产说明，用 `pvad.py media deck.json` 取出提示词去生产/委托拍摄；"
@@ -178,10 +182,14 @@ def _check_slide(slide, deck, policy, rep, mode, fontbook, cw, ch, colors, metri
                 accent_count += 1
             max_size, size_owners = _track_focus(size, eid, max_size, size_owners)
             text = str(element.get("text") or "")
-            if text and text in texts:
-                rep.warn("DUPLICATE_TEXT", f"同一页重复出现相同文字：{text[:24]}", **where)
-            texts.add(text)
-            numbers += _count_numbers(text)
+            # 眉标是定位符（页序），不是内容：它和正文里的「05」相同不构成重复信息。
+            if str(element.get("role") or "") in LOCATOR_ROLES:
+                pass                              # 定位符不参与重复判定，也不算「数字证据」
+            else:
+                if text and text in texts:
+                    rep.warn("DUPLICATE_TEXT", f"同一页重复出现相同文字：{text[:24]}", **where)
+                texts.add(text)
+                numbers += _count_numbers(text)
             if element.get("role") in ("source", "note") and identity.get("source"):
                 source_elements.append(element)
         ink = ink_box(element, policy, fontbook)
@@ -196,6 +204,8 @@ def _check_slide(slide, deck, policy, rep, mode, fontbook, cw, ch, colors, metri
     _check_media_contract(slide, deck, elements, boxes, policy, rep)
     _check_text_over_image(slide, deck, elements, boxes, policy, rep)
     _check_text_contrast(slide, elements, policy, rep, colors)
+    _check_content_truncated(slide, rep, sid)
+    _check_evidence_laid_out(slide, rep, sid)
     if accent_count > accent_limit:
         rep.error("ACCENT_OVER_BUDGET",
                   f"本页强调色元素 {accent_count} 个 > 预算 {accent_limit}：处处强调 = 没有强调",
@@ -601,6 +611,39 @@ def _check_media_contract(slide: dict, deck: dict, elements: list, boxes: list, 
         if zone and _intersects(image, zone):
             rep.error("SOURCE_ZONE_COLLISION", "图片覆盖了来源区：出处被遮住等于没有出处",
                       slide=sid, element=image.get("id"))
+
+
+def _check_content_truncated(slide: dict, rep: "_Report", sid: str) -> None:
+    """compose 记账了被丢弃的条目：告警，不静默。
+
+    「一页六道工序」遇到五列上限时，旧实现直接 items[:5]，第六道工序在产物里消失，
+    而 guard 看不见——页面 PASS，内容却少了一条。丢弃数量由 compose 写进 meta，
+    这里只负责把它变成可见的告警。
+    """
+    dropped = int((slide.get("meta") or {}).get("steps_dropped") or 0)
+    if dropped > 0:
+        rep.warn("CONTENT_TRUNCATED",
+                 f"有 {dropped} 个步骤超出列数上限未排版：删条目或改构图（不静默丢弃）",
+                 slide=sid)
+
+
+def _check_evidence_laid_out(slide: dict, rep: "_Report", sid: str) -> None:
+    """作者声明的 metrics 必须在页面上有落位。
+
+    案例 B s04/s10 的回归：作者写了「3 个庄园 / 640 米 / 6 天」，构图选 image_narrative，
+    而该配方当时没有指标槽——数字在 plan.json 和 brief 里都在，成片里一个都没有，guard 却 PASS。
+    静默丢证据比排版难看严重得多：评审看到的是一页没有证据的图片页。
+    """
+    declared = (slide.get("meta") or {}).get("metrics") or []
+    if not declared:
+        return
+    laid_out = [e for e in slide.get("elements") or []
+                if str(e.get("role") or "").startswith(
+                    ("metric_value", "hero_value", "left_value", "right_value"))]
+    if not laid_out:
+        rep.error("EVIDENCE_NOT_LAID_OUT",
+                  f"声明了 {len(declared)} 个指标，页面上没有任何指标元素：换构图或删数据",
+                  slide=sid)
 
 
 def _intersects(element: dict, zone: dict) -> bool:

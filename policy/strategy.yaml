@@ -121,8 +121,12 @@ colors:
     large_min: 3.0
     large_size_px: 32
   pairing:            # 深浅配色对（背景 token → 可用前景 token）
+    # 键是「页面底色是浅还是深」，值是在这种底色上允许出现的前景色 token。
+    # 深底不能只留 surface/hairline：深底稿件的 ink 本身就是浅色（例如案例 B 的 #F2ECE3），
+    # 只用 surface/hairline 会让整页正常文字全部报 TOKEN_PAIRING——那是策略没覆盖深底，
+    # 不是稿件越界。真实可读性由 colors.contrast 的实测对比度单独判，不靠这张表。
     light_background: [ink, muted, primary, accent, negative]
-    dark_background: [surface, hairline]
+    dark_background: [ink, muted, primary, accent, negative, surface, hairline]
 
 enums:
   role: [establish, explain, compare, prove, persuade, summarize]
@@ -156,6 +160,7 @@ thresholds:
   fidelity_pixel_mismatch_max: 0.004   # spec 渲染 vs PPTX 回读渲染的像素差上限
   size_pt_tolerance: 0.75              # 回读字号容差（pt）：半磅/EMU 取整的物理下限
   chart_scale_skew_ratio: 100          # 同一张图里最大/最小序列均值之比：超过说明混了两套量纲
+  max_steps: 6                 # 横向工序/阶段最多几列；超过不静默丢弃，由 guard 报告
   chart_max_categories: 12
   chart_value_label_max: 8
   words_per_second: 6.0       # 讲稿时长估算（presentation budget）
@@ -243,6 +248,7 @@ verification:
   # 漏一个 = 该错误不拦；多一个 = 死配置。加码时同步这里。
   blocking_codes:
     - ACCENT_OVER_BUDGET
+    - EVIDENCE_NOT_LAID_OUT
     - ASSET_BUDGET
     - ASSET_CONTRAST
     - ASSET_CROP

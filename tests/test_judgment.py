@@ -103,6 +103,55 @@ class TestEvidenceShape(unittest.TestCase):
         self.assertEqual(page["understanding"]["evidence"]["value"], "part_whole")
         self.assertEqual(page["decision"]["composition"], "part_whole")
 
+    def test_part_whole_word_without_percent_readings_is_not_part_whole(self):
+        """金额分项 + 作者写了「占比」：文字不构成分母，不能据此画环。
+
+        回归自案例 A（s13 资金用途 1.6/0.9/0.7 亿元）：旧实现凭「占比最高」四个字
+        判成 part_whole，compose 用分项量派生环形图，合计 3.2 ≠ 100，
+        被 guard 的 DONUT_NOT_PERCENT 拦成告警——判断层的词表泄漏成了图形错误。
+        """
+        plan, _ = plan_for("""slides:
+  - id: s01
+    title: 3.2 亿元分成三件事
+    content: |-
+      资金用途按三块分配，其中资产投入不可逆，因此占比最高。
+    metrics:
+      - value: 1.6
+        unit: 亿元
+        label: 葡萄园与酒窖扩张
+      - value: 0.9
+        unit: 亿元
+        label: 陈酿与工艺升级
+      - value: 0.7
+        unit: 亿元
+        label: 全球渠道与品牌
+""")
+        page = plan["pages"][0]
+        self.assertNotEqual(page["understanding"]["evidence"]["value"], "part_whole")
+        self.assertNotEqual(page["decision"]["composition"], "part_whole")
+        self.assertFalse(page["understanding"]["denominator"]["proven"])
+        self.assertIn("没有百分比读数", page["understanding"]["evidence"]["why"])
+
+    def test_author_numbering_alone_is_a_sequence(self):
+        """作者显式编号就是顺序证据，不需要正文再出现「首先/然后」。
+
+        回归自案例 A（s14 四个节点）：内容用 1)/2)/3)/4) 逐行给出，正文没有阶段词，
+        旧实现把它判成 structure，compose 只排出 2 组，两个节点在成片里消失。
+        """
+        plan, _ = plan_for("""slides:
+  - id: s01
+    title: 未来 12 个月只有四个节点
+    content: |-
+      1) 2026 Q4 取证：地理标志批文
+      2) 2027 Q1 扩产：新植合同签署
+      3) 2027 Q2 进场：三家餐饮年度框架
+      4) 2027 Q3 复评：国际评分机构复检
+""")
+        page = plan["pages"][0]
+        self.assertEqual(page["understanding"]["evidence"]["value"], "sequence")
+        self.assertEqual(page["decision"]["composition"], "sequence_steps")
+        self.assertIn("序号", page["understanding"]["evidence"]["why"])
+
     def test_yoy_single_metric_is_not_a_series(self):
         plan, _ = plan_for("""slides:
   - id: s01

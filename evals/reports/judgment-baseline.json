@@ -1062,7 +1062,7 @@
       }
     ]
   },
-  "policy_sha256": "d3029cad5c48a83dd02c8d56181cdccfd5514366ca828b7c1fc8deb76a3e9fa5",
+  "policy_sha256": "992ef826825da775f14d2b23c57bb7f03832725d353b09d635e5b886d4003ca0",
   "baseline": {
     "suite": "cases.yaml",
     "baseline": true,
@@ -2313,11 +2313,9 @@
       },
       {
         "lexicon": "sequence_strong",
-        "flipped_cases": [
-          "J09"
-        ],
-        "covered": true,
-        "note": "该词表被当前用例集覆盖：删掉会改变判断"
+        "flipped_cases": [],
+        "covered": false,
+        "note": "当前用例集没有覆盖到这条规则的独立作用：不证明它无用，只说明没测到"
       },
       {
         "lexicon": "structure",
@@ -2392,7 +2390,9 @@
         "note": "该词表被当前用例集覆盖：删掉会改变判断"
       }
     ],
-    "uncovered_lexicons": [],
+    "uncovered_lexicons": [
+      "sequence_strong"
+    ],
     "reading": "消融只回答「用例集测到没测到」；未覆盖不等于可删。任何一条被删前必须先补一条会失败的用例。"
   }
 }

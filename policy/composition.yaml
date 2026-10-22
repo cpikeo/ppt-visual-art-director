@@ -28,6 +28,7 @@ recipes:
       color: ink
       bold: true
       anchor: top
+      max_lines: 2
     - role: hero_value
       type: text
       zone:
@@ -95,10 +96,11 @@ recipes:
       - 0.0
       - 0.06
       - 0.86
-      - 0.22
+      - 0.24
       size: h1
       color: ink
       bold: true
+      max_lines: 2
     - role: metric_cells
       type: kpi
       zone:
@@ -158,6 +160,7 @@ recipes:
       size: h1
       color: ink
       bold: true
+      max_lines: 2
     - role: left_value
       type: text
       zone:
@@ -259,6 +262,7 @@ recipes:
       size: h2
       color: ink
       bold: true
+      max_lines: 2
     - role: takeaway
       type: text
       zone:
@@ -306,6 +310,7 @@ recipes:
       size: h2
       color: ink
       bold: true
+      max_lines: 2
     - role: chart
       type: chart
       zone:
@@ -371,6 +376,7 @@ recipes:
       size: h2
       color: ink
       bold: true
+      max_lines: 2
     - role: steps
       type: steps
       zone:
@@ -427,6 +433,7 @@ recipes:
       size: h2
       color: ink
       bold: true
+      max_lines: 2
     - role: groups
       type: groups
       zone:
@@ -481,15 +488,26 @@ recipes:
       size: h1
       color: ink
       bold: true
+      max_lines: 3
     - role: lede
       type: text
       zone:
       - 0.0
+      - 0.46
       - 0.5
-      - 0.5
-      - 0.3
+      - 0.18
       size: body
       color: muted
+      optional: true
+    # 大影像旁边可以放一组硬指标：图负责「看见」，数字负责「可核验」。
+    # 缺这一槽时，作者声明的 metrics 会被静默丢掉（案例 B s04/s10 的回归）。
+    - role: metric_cells
+      type: kpi
+      zone:
+      - 0.0
+      - 0.66
+      - 0.5
+      - 0.22
       optional: true
     - role: eyebrow
       type: text
@@ -537,10 +555,11 @@ recipes:
       - 0.0
       - 0.08
       - 0.72
-      - 0.22
+      - 0.24
       size: h1
       color: ink
       bold: true
+      max_lines: 2
     - role: lede
       type: text
       zone:

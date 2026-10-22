@@ -158,6 +158,7 @@ def _compose_slide(slide: dict, page: dict, policy, canvas: dict, theme: dict,
     claim = page["claim"]
     elements: list[dict] = []
     emphasis_notes: list[str] = []
+    dropped_steps = [0]
     accent_used = [0]
     source_text = atoms.get("source") or slide.get("source") or ""
 
@@ -210,11 +211,12 @@ def _compose_slide(slide: dict, page: dict, policy, canvas: dict, theme: dict,
                  "lede" if claim_absent else claim_ladder,
                  "muted" if claim_absent else slots["claim"].get("color", "ink"),
                  bold=not claim_absent, anchor=slots["claim"].get("anchor", "top"),
-                 max_lines=policy.max_lines(claim_ladder if not claim_absent
-                                            else _claim_ladder(composition, policy)))
+                 max_lines=int(slots["claim"].get("max_lines")
+                               or policy.max_lines(claim_ladder if not claim_absent
+                                                   else _claim_ladder(composition, policy))))
 
     media_el = _compose_media(slots, slide, page, frame, policy, elements, base_dir)
-    _fill_body(composition, elements, slots, page, atoms, frame, policy, fontbook, add_text,
+    dropped_steps[0] = _fill_body(composition, elements, slots, page, atoms, frame, policy, fontbook, add_text,
                add_text_box, source_text, accent_used, slide.get("chart"))
 
     # 来源：与数字同页可读；没有来源就不写假出处
@@ -244,6 +246,7 @@ def _compose_slide(slide: dict, page: dict, policy, canvas: dict, theme: dict,
         "metrics": [{"label": m.get("label") or "", "value": m.get("value"), "unit": m.get("unit") or ""}
                     for m in atoms.get("metrics") or []],
         "measured": not fontbook.degraded,
+        "steps_dropped": dropped_steps[0],
     }
     return {"id": slide["id"], "index": page["index"],
             "composition": composition,
@@ -382,10 +385,18 @@ def _fill_body(composition, elements, slots, page, atoms, frame, policy, fontboo
             add_text("note", "\n".join(atoms["body_lines"][:2]), slots["note"]["zone"], "micro", "muted")
 
     elif composition == "sequence_steps":
-        _steps(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent_used)
+        return _steps(elements, slots, atoms, frame, policy, fontbook,
+                      add_text_box, accent_used) or 0
 
     elif composition == "structure_map":
         _groups(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent_used)
+
+    elif composition == "image_narrative":
+        body = "\n".join(atoms["body_lines"] or atoms["sentences"][:2])
+        if "lede" in slots and body:
+            add_text("lede", body, slots["lede"]["zone"], "body", "muted")
+        if metrics and "metric_cells" in slots:
+            _metric_cells(elements, slots, metrics, frame, policy, fontbook, add_text_box, accent_used)
 
     elif composition == "editorial_text":
         body = "\n".join(atoms["body_lines"] or atoms["sentences"])
@@ -394,6 +405,7 @@ def _fill_body(composition, elements, slots, page, atoms, frame, policy, fontboo
         if "side_note" in slots:
             add_text("side_note", "\n".join(atoms["sentences"][-1:]), slots["side_note"]["zone"],
                      "body", "muted")
+    return 0
 
 
 def _compose_media(slots, slide, page, frame, policy, elements, base_dir) -> dict | None:
@@ -513,10 +525,12 @@ def _delta_text(left: dict, right: dict) -> str:
 
 
 def _steps(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent_used):
-    items = atoms.get("steps") or [s for s in atoms["sentences"] if s][:4]
-    items = items[:5]
+    """横向工序。列数上限是策略（thresholds.max_steps），超出部分必须记账而不是消失。"""
+    pool = atoms.get("steps") or [s for s in atoms["sentences"] if s][:4]
+    limit = int(policy.num("thresholds.max_steps"))
+    items = pool[:limit]
     if not items:
-        return
+        return 0
     cells = frame.columns(slots["steps"]["zone"], len(items))
     for i, (cell, item) in enumerate(zip(cells, items)):
         x, y, w, h = cell
@@ -531,6 +545,7 @@ def _steps(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent
                              "width": 0.0, "height": frame.snap(h * 0.8),
                              "fill": {"type": "none"}, "stroke": "hairline", "stroke_width": 1.0,
                              "layout_source": "plan"})
+    return max(0, len(pool) - len(items))
 
 
 def _groups(elements, slots, atoms, frame, policy, fontbook, add_text_box, accent_used):

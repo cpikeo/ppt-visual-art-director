@@ -60,7 +60,8 @@ def page_model_from_spec(deck: dict, slide: dict) -> dict:
                                     for s in (element.get("series") or [])],
                          "show_values": bool(element.get("show_values"))})
         items.append(item)
-    return {"id": slide.get("id"), "width": float(deck["canvas"]["width"]),
+    return {"id": slide.get("id"), "colors": colors,
+            "width": float(deck["canvas"]["width"]),
             "height": float(deck["canvas"]["height"]),
             "background": _hex(slide.get("background") or "background", colors),
             "items": items}
@@ -103,7 +104,7 @@ def page_model_from_readback(deck: dict, rb_slide: dict, spec_slide: dict | None
                          (_hex(spec.get("stroke"), colors) if isinstance(spec.get("stroke"), str) else None),
                          "stroke_width": float(spec.get("stroke_width") or 1.0)})
         items.append(base)
-    return {"id": rb_slide.get("id") or (spec_slide or {}).get("id"),
+    return {"id": rb_slide.get("id") or (spec_slide or {}).get("id"), "colors": colors,
             "width": float(deck["canvas"]["width"]), "height": float(deck["canvas"]["height"]),
             "background": _hex((spec_slide or {}).get("background") or "background", colors),
             "items": items}
@@ -127,8 +128,11 @@ def render_page(model: dict, out_path: str | Path, policy, fontbook: FontBook) -
     h = int(model["height"] * scale)
     image = Image.new("RGB", (w, h), _rgb_tuple(model["background"]))
     draw = ImageDraw.Draw(image)
+    palette = model.get("colors") or {}
     for item in model["items"]:
         kind = item["kind"]
+        if kind == "chart":
+            item = {**item, "colors": palette}
         if kind == "shape":
             _draw_shape(draw, item, scale, fontbook, policy)
         elif kind == "text":
@@ -279,13 +283,27 @@ def _draw_shape(draw, item, scale, fontbook, policy) -> None:
                        outline=_rgb_tuple(stroke) if stroke else None)
 
 
+def _chart_colors(item: dict, policy) -> dict:
+    """图表配色跟主题走，不跟策略默认调色板走。
+
+    为什么：颜色是稿件的品牌决定（brief.brand.colors），策略里的默认色只是没有品牌时的
+    兜底。曾经这里直接读 policy.colors()，于是渲染图上的柱子/扇区永远是策略默认色
+    （例如 #1F4E5A），既不是作者的品牌色，也让「预览与交付一致」的像素对照失去意义
+    ——两条路径都错成一样，差值为 0。缺 token 时才回落，不让缺省静默改写品牌色。
+    """
+    palette = dict(policy.colors())
+    theme = {k: v for k, v in (item.get("colors") or {}).items() if isinstance(v, str)}
+    palette.update(theme)
+    return palette
+
+
 def _draw_chart(draw, item, scale, fontbook: FontBook, policy) -> None:
     kind = item.get("chart_kind") or "column"
     categories = item.get("categories") or []
     series = item.get("series") or []
     if not categories or not series:
         return
-    colors = policy.colors()
+    colors = _chart_colors(item, policy)
     x, y = item["x"] * scale, item["y"] * scale
     w, h = item["w"] * scale, item["h"] * scale
     font = _font(max(10.0, item["size"] if item.get("size") else 13.0), False, scale, fontbook)
@@ -326,6 +344,34 @@ def _draw_chart(draw, item, scale, fontbook: FontBook, policy) -> None:
 
     def ypos(value):
         return y + pad_top + plot_h * (1 - (value - vmin) / span)
+
+    if kind == "bar":
+        # 横向条形：PowerPoint 的 BAR_CLUSTERED 把第一个类别画在最下面（自下而上），
+        # 预览必须跟着一样，否则「预览与交付一致」只是两条路径一起错。
+        n = len(categories)
+        band = plot_h / max(n, 1)
+        pad_left_b = w * 0.24
+        plot_w_b = w - pad_left_b - w * 0.08
+        bar_h = band * 0.58 / max(len(series), 1)
+        draw.line([(x + pad_left_b, y + pad_top), (x + pad_left_b, y + pad_top + plot_h)],
+                  fill=_rgb_tuple(colors["hairline"]), width=max(1, scale))
+        for i, category in enumerate(categories):
+            cy = y + pad_top + plot_h - band * (i + 0.5)
+            draw.text((x + w * 0.02, cy), str(category), font=font, fill=label_color, anchor="lm")
+        for si, s in enumerate(series):
+            color = primary if si == 0 else accent
+            for i, value in enumerate(s["values"]):
+                if value is None:
+                    continue
+                cy = y + pad_top + plot_h - band * (i + 0.5) - bar_h * len(series) / 2 + bar_h * si
+                length = plot_w_b * (value - vmin) / span
+                draw.rectangle([x + pad_left_b, cy, x + pad_left_b + length, cy + bar_h],
+                               fill=color)
+                if item.get("show_values") and len(series) == 1 and len(categories) <= 8:
+                    text = f"{value:g}"
+                    draw.text((x + pad_left_b + length + 6 * scale, cy + bar_h / 2), text,
+                              font=font, fill=ink, anchor="lm")
+        return
 
     if kind in ("column", "bar"):
         n = len(categories)

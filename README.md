@@ -62,7 +62,7 @@ scripts/
   compile.py             确定性 PPTX 编译（含 OOXML 时间戳归零）
   fidelity.py            spec 与 PPTX 回读逐元素对账
   render.py              同一渲染器吃两种真相 + 像素对照 + 拼图
-tests/                   181 个用例：策略 / 输入 / 判断 / 排版 / 素材 / 提示词 / 边界 / 硬门 / 产物 / 端到端
+tests/                   192 个用例：策略 / 输入 / 判断 / 排版 / 素材 / 提示词 / 边界 / 硬门 / 产物 / 端到端
 evals/
   judgment_eval.py       离散判断基准（含无判断基线对照与词表消融）
   typography_eval.py     中文排版对照（朴素实现 vs 本实现）
@@ -70,7 +70,11 @@ evals/
   blind_pack.py          盲评包与计分（未回收就是 NOT RUN）
   cases.yaml             32 个判断用例，每条对应一条协议纪律
   prompt_cases.yaml      8 条素材生产说明用例（拍什么/为什么/让位/交付尺寸）
-examples/                demo.yaml（已有素材）+ needs-image.yaml（待生产）+ 已跑通的产物
+examples/                demo.yaml + needs-image.yaml + case_a_wine/ + case_b_chocolate/（稿件与素材）
+cases/                   两个真实案例的对照记录（红酒 15 页 / 巧克力 12 页）
+  comparison.md          六维对照 + 修复清单 + 未验证项
+  case_a_wine/           plan / deck / pptx / report（30 张逐页渲染 + manifest）
+  case_b_chocolate/      同上（24 张）
 references/              contract / policy / verification（按需读取）
 ```
 
@@ -108,7 +112,7 @@ references/              contract / policy / verification（按需读取）
 ## 测试与评测
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py"     # 181 用例，约 47s
+python -m unittest discover -s tests -p "test_*.py"     # 192 用例，约 47s
 python evals/judgment_eval.py --baseline --ablate       # 判断基准 + 基线 + 消融
 python evals/typography_eval.py                         # 中文排版对照
 python evals/prompt_eval.py                             # 提示词说明完备性对照

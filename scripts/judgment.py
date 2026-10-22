@@ -483,8 +483,14 @@ def _judge_evidence(slide, atoms, claim, lex, non_year, trace, probes) -> dict:
     # 而不是只靠「占比」两个字出现没出现。
     share_values = _share_values(metrics)
     sums_to_100 = bool(share_values) and len(share_values) >= 2 and abs(sum(share_values) - 100) <= 0.6
-    share_candidate = (share_values and len(share_values) >= 2 and (part_cue or sums_to_100)) \
-        or (part_cue and len(metrics) >= 2)
+    # 占比形状只认数值证据：分项必须是百分比读数。
+    # 「占比」两个字不构成分母——金额/数量分项即使作者写了「占比最高」，
+    # 也不能据此画环（合计 3.2 亿元不是 100%，读者会误读为份额）。
+    share_candidate = bool(share_values) and len(share_values) >= 2 and (part_cue or sums_to_100)
+    part_note = ""
+    if part_cue and metrics and not share_candidate:
+        part_note = (f"；{part_cue[:2]}只是文字，没有百分比读数："
+                     f"不按占比画图，按并排的分项量呈现（口径仍须作者确认）")
     if share_candidate:
         if denom_risk:
             return {"value": "comparison", "source": "rule:part-whole-demoted",
@@ -507,7 +513,7 @@ def _judge_evidence(slide, atoms, claim, lex, non_year, trace, probes) -> dict:
         same = len(units) <= 1
         return {"value": "comparison", "source": "rule:comparison-two-end",
                 "why": f"命中比较（{comp_cue[:2]}）且文中存在 {len(metrics)} 个可并置的量"
-                       + ("、同一单位：差值成立" if same else "、单位不同：只能并排，不能相减"),
+                       + ("、同一单位：差值成立" if same else "、单位不同：只能并排，不能相减") + part_note,
                 "spans": comp_cue[:2], "delta": same and len(metrics) == 2, "ends": len(metrics),
                 "same_unit": same,
                 "denominator": {"proven": False, "why": "比较页不涉及整体分母"}}
@@ -527,11 +533,22 @@ def _judge_evidence(slide, atoms, claim, lex, non_year, trace, probes) -> dict:
                 "same_unit": True, "denominator": {"proven": False, "why": "不涉及整体分母"}}
 
     # ④ 先后顺序
-    if seq_cue and (atoms["steps"] or len(metrics) >= 2):
+    # 两种证据各自成立：作者用 1)/2)/3) 显式编号（结构证据），或正文出现阶段词（语义证据）。
+    # 只认阶段词会让「四个节点」这种作者已经编号的页掉进结构图——顺序是作者给的，
+    # 不该因为少了一个「首先」就丢掉（案例 A s14 的回归）。
+    # 用 order_marked（对原文跑正则）而不是 ordered_marked（解析出的 ordered 列表）：
+    # 「1) xxx」会先被 _BULLET 收进 bullets，ordered 列表反而是空的。
+    numbered = bool(atoms.get("order_marked")) and len(atoms.get("steps") or []) >= 3
+    if (seq_cue or numbered) and (atoms["steps"] or len(metrics) >= 2):
         strong = bool(atoms["steps"]) and atoms["ordered_marked"] if "ordered_marked" in atoms else bool(atoms["steps"])
-        return {"value": "sequence", "source": "rule:sequence-strong" if strong else "rule:sequence-weak",
-                "why": (f"有序条目 + 阶段词（{seq_cue[:2]}）：顺序由文字明确给出" if strong else
-                        f"命中阶段词（{seq_cue[:2]}）但条目没有编号：按阶段处理，但不得自造序号"),
+        if numbered and not seq_cue:
+            why = "作者用序号（1/2/3）逐条给出先后：顺序由作者给出，不另判"
+        elif strong:
+            why = f"有序条目 + 阶段词（{seq_cue[:2]}）：顺序由文字明确给出"
+        else:
+            why = f"命中阶段词（{seq_cue[:2]}）但条目没有编号：按阶段处理，但不得自造序号"
+        return {"value": "sequence", "source": "rule:sequence-strong" if (strong or numbered) else "rule:sequence-weak",
+                "why": why,
                 "spans": seq_cue[:2], "delta": False,
                 "ends": len(atoms["steps"]) or len(metrics), "same_unit": False,
                 "denominator": {"proven": False, "why": "不涉及整体分母"},
@@ -547,7 +564,7 @@ def _judge_evidence(slide, atoms, claim, lex, non_year, trace, probes) -> dict:
     # ⑥ 并排指标（多指标、无差值）
     if len(metrics) >= 2:
         return {"value": "comparison", "source": "rule:metric-row",
-                "why": "多个量并排但没有可相减的两端：只并排，不造差值轴",
+                "why": "多个量并排但没有可相减的两端：只并排，不造差值轴" + part_note,
                 "spans": [], "delta": False, "ends": len(metrics), "same_unit": len(units) <= 1,
                 "denominator": {"proven": False, "why": "不涉及整体分母"}}
 

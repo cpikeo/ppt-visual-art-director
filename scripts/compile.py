@@ -252,6 +252,12 @@ def _add_chart(slide, element: dict, dpi: float, colors: dict, fonts: dict) -> N
         else:
             series.format.fill.solid()
             series.format.fill.fore_color.rgb = _rgb(token, colors)
+    if kind == "donut":
+        # 环图分片逐点上色：单序列的 donut 若只给 series 上色，PowerPoint 会用主题 accent
+        # 系列自动铺色，成片就出现品牌色之外的颜色（案例 A 实测：出现 #1F4E5A 等默认色）。
+        for i, point in enumerate(chart.plots[0].series[0].points):
+            point.format.fill.solid()
+            point.format.fill.fore_color.rgb = _rgb(palette[i % len(palette)], colors)
     plot = chart.plots[0]
     plot.gap_width = 60
     plot.has_data_labels = bool(element.get("show_values"))

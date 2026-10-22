@@ -7,8 +7,10 @@
 """
 import copy
 import hashlib
+import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 
 import support
 from support import ROOT, tmpdir
@@ -166,6 +168,66 @@ class TestRenderComparison(unittest.TestCase):
         b = render_page(model2, tmp / "y.png", POLICY, FONTS)
         diff = pixel_diff(a, b, POLICY)
         self.assertGreater(diff["mismatch_ratio"], 0.0)
+
+    def test_charts_use_the_deck_palette_not_the_policy_default(self):
+        """图表配色跟稿件主题走。
+
+        回归自案例 A：渲染器直接读 policy.colors()，成片里的柱子与扇区永远是策略默认
+        色（#1F4E5A/#B4522A），brief 声明的四个主导色根本没进入图表；而 spec 与
+        readback 两条路径都错成一样，像素差 0，于是「预览与交付一致」掩盖了颜色错。
+        """
+        from PIL import Image
+        deck, tmp = make()
+        deck["theme"]["colors"].update({"primary": "#5A1F2A", "accent": "#8C6B3F"})
+        chart_slide = [s for s in deck["slides"] if any(e["type"] == "chart" for e in s["elements"])][0]
+        path = render_page(page_model_from_spec(deck, chart_slide), tmp / "chart.png", POLICY, FONTS)
+        image = Image.open(path).convert("RGB")
+
+        def near(target, tolerance=16):
+            return any(all(abs(pixel[i] - target[i]) <= tolerance for i in range(3))
+                       for _, pixel in image.getcolors(maxcolors=1 << 24))
+
+        self.assertTrue(near((0x5A, 0x1F, 0x2A)), "主题主色没有出现在图表里")
+        self.assertFalse(near((0x1F, 0x4E, 0x5A)), "图表仍在用策略默认色 #1F4E5A")
+
+    def test_bar_chart_is_horizontal_and_reads_bottom_up(self):
+        """横向条形自下而上画——PowerPoint 的 BAR_CLUSTERED 就是这样排类的。
+
+        这条契约曾经缺失：render 把 bar 当 column 画成竖柱，而编译出的 PPTX 是横向
+        条形图，预览与交付根本不是同一张图（像素对照仍是 0，因为两条路径共用同一个错）。
+        """
+        from PIL import Image
+        deck = {
+            "canvas": {"width": 1280, "height": 720},
+            "theme": {"colors": {"background": "#FFFFFF", "ink": "#000000", "muted": "#666666",
+                                 "hairline": "#CCCCCC"}},
+            "slides": [{"id": "s01", "background": "background", "elements": [
+                {"id": "s01.chart", "type": "chart", "chart_kind": "bar", "x": 80, "y": 120,
+                 "width": 720, "height": 420, "categories": ["A", "B", "C"],
+                 "series": [{"name": "v", "values": [50, 150, 100]}], "show_values": False}]}],
+        }
+        tmp = Path(tempfile.mkdtemp())
+        path = render_page(page_model_from_spec(deck, deck["slides"][0]), tmp / "bar.png", POLICY, FONTS)
+        image = Image.open(path).convert("RGB")
+        primary = POLICY.colors()["primary"].lstrip("#")
+        colour = tuple(int(primary[i:i + 2], 16) for i in (0, 2, 4))
+        width, _ = image.size
+        runs = {}
+        for y in range(image.size[1]):
+            xs = [x for x in range(width) if image.getpixel((x, y)) == colour]
+            if xs:
+                runs[y] = max(xs)
+        bands = []
+        for y in sorted(runs):
+            if bands and y - bands[-1][-1] <= 2:
+                bands[-1].append(y)
+            else:
+                bands.append([y])
+        widths = [max(runs[y] for y in band) for band in bands]
+        self.assertEqual(len(widths), 3, "三个类别应各有一条横向条带")
+        # 取值 50 / 150 / 100：自下而上，中间那条最长，最下面那条最短
+        self.assertLess(widths[0], widths[1])
+        self.assertLess(widths[2], widths[1])
 
     def test_renderer_output_size_matches_canvas(self):
         from PIL import Image

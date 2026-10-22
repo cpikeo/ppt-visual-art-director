@@ -428,6 +428,7 @@
     "min_gap_px",
     "fidelity_pixel_mismatch_max",
     "chart_max_categories",
+    "max_steps",
     "chart_value_label_max",
     "words_per_second"
    ],
@@ -483,6 +484,12 @@
     "chart_max_categories": {
      "type": "integer",
      "minimum": 1
+    },
+    "max_steps": {
+     "type": "integer",
+     "minimum": 2,
+     "maximum": 8,
+     "description": "横向工序/阶段的列数上限：超过的部分由 compose 记账、guard 告警，不静默丢弃"
     },
     "chart_value_label_max": {
      "type": "integer",
