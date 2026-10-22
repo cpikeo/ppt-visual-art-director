@@ -6,7 +6,6 @@
 所有断言都落在真实 .pptx 产物或其回读事实上。
 """
 import copy
-import hashlib
 import tempfile
 import unittest
 import zipfile

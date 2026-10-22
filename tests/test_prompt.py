@@ -12,8 +12,7 @@ import copy
 import json
 import unittest
 
-import support
-from support import ROOT, tmpdir, write, write_brief
+from support import ROOT, tmpdir, write_brief
 
 from PIL import Image
 
@@ -197,7 +196,7 @@ class TestBuild(unittest.TestCase):
 
 
 class TestPolicyLayer(unittest.TestCase):
-    """四层边界：语言在策略里，代码里不许再写一份。"""
+    """五层边界：语言在策略里，代码里不许再写一份。"""
 
     def test_prompts_are_loaded_and_fingerprinted(self):
         self.assertTrue(POLICY.prompts)

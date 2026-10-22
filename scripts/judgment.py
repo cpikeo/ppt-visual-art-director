@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from assets import resolve_source
 
@@ -79,7 +78,6 @@ def numerals(text: str) -> list[dict]:
         value = float(raw.replace(",", ""))
         tail = text[m.end(): m.end() + 6]
         unit = ""
-        pm = _PERCENT.match(raw)  # 已在 _NUM 之外单独处理百分号
         um = re.match(r"\s*(%|％|‰|亿元|万元|亿美元|万美元|元|美元|公里|千米|米|吨|公斤|千克|平方米|立方米|小时|分钟|秒|天|周|个月|年|倍|个百分点|台|人|户|家|件|次)", tail)
         if um:
             unit = um.group(1)
@@ -190,9 +188,9 @@ def parse_atoms(slide: dict, policy) -> dict:
         key = _metric_key(declared)
         if key in index_by_key:
             merged = dict(metrics[index_by_key[key]])
-            for field in ("label", "unit", "desc", "period"):
-                if declared[field]:
-                    merged[field] = declared[field]
+            for name in ("label", "unit", "desc", "period"):
+                if declared[name]:
+                    merged[name] = declared[name]
             metrics[index_by_key[key]] = merged
         else:
             index_by_key[key] = len(metrics)
@@ -344,7 +342,6 @@ def _judge_page(slide: dict, brief: dict, policy, lex: dict, probes: dict,
                 index: int, total: int, base_dir=None) -> dict:
     trace = Trace()
     atoms = parse_atoms(slide, policy)
-    text_all = "\n".join([slide["title"], slide["content"] or ""])
     density = numeric_density(slide["content"] or "")
     nums = numerals(slide["content"] or "")
     non_year = [n for n in nums if not n["year"]]

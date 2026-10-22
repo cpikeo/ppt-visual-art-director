@@ -4,7 +4,7 @@ project:
   project_id: "ppt-visual-art-director-skill"
   project_name: "PPT Visual Art Director Skill"
   owner: null
-  repository_revision: "9c9165662e9428018737835c1183ca7d4ef74e34 + uncommitted audited worktree"
+  repository_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (skill-packaging audit, 2026-10-22)"
 
 target_environment:
   application: "Microsoft PowerPoint"

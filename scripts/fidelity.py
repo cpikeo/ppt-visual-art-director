@@ -12,14 +12,13 @@
 """
 from __future__ import annotations
 
-POSITION_TOL = ("thresholds.position_drift_px", 1.5)
-SIZE_TOL = ("thresholds.size_drift_px", 1.5)
-SIZE_PT_TOL = 0.75          # 兜底：调用方没给策略时的字号容差（生产路径读 thresholds.size_pt_tolerance）
+POSITION_TOL = "thresholds.position_drift_px"
+SIZE_TOL = "thresholds.size_drift_px"
 
 
 def compare(deck: dict, readback: dict, policy) -> dict:
-    pos_tol = float(policy.num(POSITION_TOL[0]))
-    size_tol = float(policy.num(SIZE_TOL[0]))
+    pos_tol = float(policy.num(POSITION_TOL))
+    size_tol = float(policy.num(SIZE_TOL))
     size_pt_tol = float(policy.num("thresholds.size_pt_tolerance"))
     theme_colors = (deck.get("theme") or {}).get("colors") or {}
     mismatches: list[dict] = []
@@ -93,6 +92,11 @@ def _check_payload(mismatches, sid, eid, element, shape, size_pt_tol, theme_colo
                                "expected": expected_color, "actual": colors[0],
                                "detail": "文字颜色被改写（token 解析失败会静默回落）"})
     elif etype == "chart":
+        expected_unit = str(element.get("unit_suffix") or "")
+        if expected_unit and str(shape.get("unit_suffix") or "") != expected_unit:
+            mismatches.append({"kind": "payload", "slide": sid, "element": eid, "field": "unit_suffix",
+                               "expected": expected_unit, "actual": shape.get("unit_suffix"),
+                               "detail": "图表单位在编译/回读中丢失：51 会被读成 51 而不是 51%"})
         if shape.get("kind") and element.get("chart_kind") and shape["kind"] != element["chart_kind"]:
             mismatches.append({"kind": "payload", "slide": sid, "element": eid, "field": "chart_kind",
                                "expected": element["chart_kind"], "actual": shape["kind"],

@@ -128,6 +128,7 @@ def main(argv=None) -> int:
         print("警告：没有可用字体文件，本对照结果不可采信", file=sys.stderr)
         return 2
     report = run(policy, fontbook)
+    report["policy_sha256"] = policy.sha256
     print(json.dumps(report, ensure_ascii=False, indent=2))
     out = ROOT / "evals" / "reports" / "typography-baseline.json"
     out.parent.mkdir(parents=True, exist_ok=True)

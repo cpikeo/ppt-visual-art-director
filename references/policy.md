@@ -53,10 +53,12 @@ scripts/policy.py::validate_semantics  跨字段关系（Schema 管不到的部�
 | 图表类别上限 | `thresholds.chart_max_categories` | 超过应改表格或拆分 |
 | 高潮页更强调 | `typography.emphasis_ladder_boost.lead` | 1 档太大时，宁可改内容也不要缩字 |
 | 断行更保守 | `typography.line_break.min_line_fill` | 调到 0.7 会让行更短、断点更多 |
+| 更早发现「词被拆开」 | `typography.orphan.min_lead_chars` | 只告警不阻断；判定看续行首段汉字数 |
+| sparse 页数字上限 | `thresholds.sparse_max_numbers` | guard 只用它比对判断出的 density，不改判断 |
 | 混量纲图更早拦下 | `thresholds.chart_scale_skew_ratio` | 100 倍是告警线；`CHART_MIXED_UNITS` 是硬错误 |
 | 哪个错误码才阻断 | `verification.blocking_codes` | 必须与 guard 实际抛出的码一一对应（测试守） |
 | 图片解码预算 | `assets.pixels.max_decode` | 1GB 内存下的物理边界，不是审美 |
-| 提示词更克制 | `prompts.phrases`、`prompts.limits.max_chars` | 改短语要跑 `make eval`（提示词对照会立刻反映） |
+| 提示词更克制 | `prompts.phrases`、`prompts.limits.max_chars` | 改短语要跑 `python evals/prompt_eval.py`（提示词对照会立刻反映） |
 | 画幅吸附更宽/更紧 | `prompts.ratio.tolerance` | 太宽会把 0.9 的图位说成 1:1，导致出图被裁 |
 | 交付像素更保守 | `assets.oversample`、`assets.min_long_side_px` | 同步看 `ASSET_RESOLUTION` 的用例 |
 | 换字体 | `typography.families` + `typography.font_files` | 家族数 ≤ 2；`font_files` 要含 ttc index |

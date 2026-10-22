@@ -19,7 +19,7 @@ from pathlib import Path
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.util import Emu, Pt
@@ -268,6 +268,9 @@ def _add_chart(slide, element: dict, dpi: float, colors: dict, fonts: dict) -> N
         labels.font.color.rgb = _rgb("ink", colors)
         labels.number_format_is_linked = False
         labels.number_format = _number_format(element)
+        if kind in ("column", "bar"):
+            # 标签压在柱顶会被填充色吃掉：柱形/条形一律放到数据点外侧。
+            labels.position = XL_LABEL_POSITION.OUTSIDE_END
     if kind == "donut":
         _donut_hole(chart)
     _hide_axes(chart)
@@ -457,6 +460,7 @@ def readback(path: str | Path) -> dict:
                 item["series"] = [{"name": s.name,
                                    "values": [float(v) if v is not None else None for v in s.values]}
                                   for s in chart.series]
+                item["unit_suffix"] = _readback_unit_suffix(chart)
             elif _is_picture(shape):
                 item["type"] = "image"
                 try:
@@ -525,6 +529,19 @@ def _shape_paint(shape):
     except (AttributeError, TypeError, ValueError):
         stroke = None
     return fill, stroke
+
+
+def _readback_unit_suffix(chart) -> str:
+    """从数据标签的数字格式里取单位后缀（`#,##0.##"%"` → `%`）。
+
+    单位是语义的一部分：丢了它，图上的 51 会被读成「51」而不是「51%」。
+    """
+    try:
+        fmt = str(chart.plots[0].data_labels.number_format or "")
+    except (AttributeError, ValueError, IndexError):
+        return ""
+    match = re.search(r'"([^"]*)"\s*$', fmt)
+    return match.group(1) if match else ""
 
 
 def _chart_kind_name(chart_type: str) -> str:

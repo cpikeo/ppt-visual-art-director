@@ -32,5 +32,6 @@
     "forbidden_start": -0.1201,
     "char_wrap": -0.1516
   },
-  "note": "度量模型结果，不等于目标 PowerPoint 的真实断行；见 SKILL「中文排版」「证据层级」。"
+  "note": "度量模型结果，不等于目标 PowerPoint 的真实断行；见 SKILL「中文排版」「证据层级」。",
+  "policy_sha256": "5417d67033de90b7ccde50b2f49655767da089c85ddc162fa32545db89c088ab"
 }

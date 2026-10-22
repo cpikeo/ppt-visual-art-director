@@ -88,6 +88,7 @@ typography:
   ink_height_floor: 1.2   # 无字体度量时末行字形高 = size × max(line_height, 本值)
   orphan:
     min_last_line_chars: 2      # 末行 ≤1 字即孤字
+    min_lead_chars: 2           # 续行以 <2 个汉字开头后接数字/外文 = 紧密词组被拆开（告警）
     forbidden_line_start: ["，", "。", "、", "；", "：", "？", "！", "）", "」", "』", "】", "》", "%", "％", "‰"]
     forbidden_line_end: ["（", "「", "『", "【", "《"]
   # 强调档（judgment 给高潮页 emphasis=lead）→ 主张字号档上移几级。
@@ -153,8 +154,9 @@ thresholds:
   ink_overlap_px: 1.0         # 墨迹相交判据（px）
   frame_overlap_ratio: 0.98   # 容器包含关系：子框面积 ≥ 父框此比例视为包裹，不算冲突
   safe_area_ratio: 0.92       # 内容须落在画布安全区内
-  numeric_density_high: 3.2   # 每 100 字的数字出现次数
+  numeric_density_high: 3.2   # 每 100 字的数字出现次数（judgment 用来分档）
   numeric_density_low: 0.8
+  sparse_max_numbers: 6       # 判断为 sparse 的页面允许出现的数字个数上限（guard 告警用）
   line_width_ratio: 0.86      # 文本可用宽度 = 框宽 × 该值（预留右侧呼吸）
   min_gap_px: 16              # 任意两元素之间最小呼吸间距
   fidelity_pixel_mismatch_max: 0.004   # spec 渲染 vs PPTX 回读渲染的像素差上限

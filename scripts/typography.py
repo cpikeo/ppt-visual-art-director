@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -80,7 +80,6 @@ class FontBook:
     @lru_cache(maxsize=256)
     def _font(self, role: str, size: int, bold: bool):
         from PIL import ImageFont
-        key = "cn_bold" if (bold and self.resolved["cn_bold"]) else ("cn" if _HAS_CJK.match("中") else role)
         if role == "latin" and not bold:
             path = self.resolved["latin"] or self.resolved["cn"]
             index = 0
@@ -350,11 +349,22 @@ def orphan_issues(metrics: Metrics, policy) -> list[WrapIssue]:
                                 f"末行只有 {len(metrics.lines[-1].strip())} 字：删字或改写，不靠缩字号", "warn"))
     starts = set(policy.req("typography.orphan.forbidden_line_start") or [])
     ends = set(policy.req("typography.orphan.forbidden_line_end") or [])
+    min_lead = int(policy.req("typography.orphan.min_lead_chars"))
     for i, line in enumerate(metrics.lines):
         if i and line and line[0] in starts:
             issues.append(WrapIssue("forbidden_line_start", i, f"行首出现禁则字符「{line[0]}」", "warn"))
         if line and line[-1] in ends:
             issues.append(WrapIssue("forbidden_line_end", i, f"行尾出现禁则字符「{line[-1]}」", "warn"))
+        # 续行只带 1 个汉字再接数字/外文：说明紧密词组（如「门店」）被断行拆开了。
+        if i:
+            stripped = line.strip()
+            lead = 0
+            while lead < len(stripped) and _HAS_CJK.match(stripped[lead]):
+                lead += 1
+            if 0 < lead < min_lead and lead < len(stripped) and not _HAS_CJK.match(stripped[lead]):
+                issues.append(WrapIssue("lead_fragment", i,
+                                        f"续行以「{stripped[:lead]}」开头后接「{stripped[lead]}」："
+                                        f"紧密词组被拆开，改写或加宽框", "warn"))
     return issues
 
 

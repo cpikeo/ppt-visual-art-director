@@ -3,9 +3,11 @@
 import hashlib
 import json
 import unittest
+from pathlib import Path
+
+from support import tmpdir  # 先导入 support：它把 scripts/ 放进 sys.path
 
 from package_skill import PackageSkillError, build_deterministic_zip, build_package
-from support import tmpdir
 
 
 class TestSkillPackage(unittest.TestCase):
@@ -21,7 +23,9 @@ class TestSkillPackage(unittest.TestCase):
                          "scripts/pvad.py", "schema/manifest.schema.json"):
             self.assertTrue((output / required).is_file(), required)
         manifest = json.loads((output / "PACKAGE-MANIFEST.json").read_text())
-        self.assertEqual(manifest["version"], "2.0.0")
+        self.assertEqual(manifest["version"], (Path(__file__).resolve().parent.parent / "VERSION")
+                         .read_text(encoding="utf-8").strip(),
+                         "包内版本必须等于 VERSION：版本号只能有一个真值")
         for item in manifest["files"]:
             path = output / item["path"]
             self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), item["sha256"])

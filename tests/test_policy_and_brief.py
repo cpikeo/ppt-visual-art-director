@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """策略与输入契约：形状、引用完整性、拒绝而非静默降级。"""
-import copy
 import unittest
 
 import support
-from support import ROOT, tmpdir, write, write_brief
+from support import ROOT, tmpdir, write_brief
 
 from policy import PolicyError, load as load_policy
 from brief import BriefError, load as load_brief

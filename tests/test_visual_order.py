@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 import unittest
 
-import support  # adds scripts/ to sys.path for direct module tests
+import support  # 导入即把 scripts/ 放进 sys.path（直接运行本模块时需要）
+
 from compose import Frame, _groups
 from policy import load
 
@@ -38,3 +39,8 @@ class TestVisualOrderComposition(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestEnvironment(unittest.TestCase):
+    def test_support_points_at_this_repository(self):
+        self.assertTrue((support.ROOT / "policy" / "composition.yaml").is_file())

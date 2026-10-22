@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """policy.py · 结构化策略的唯一入口（读 + 校验 + 访问）。
 
-设计约束（对应 SKILL「四层架构与权威源」）：
+设计约束（对应 SKILL「五层架构与权威源」）：
   * 本模块不含业务阈值。所有数值来自 policy/strategy.yaml 与 policy/composition.yaml；
     访问不存在的键必须显式给默认值，否则抛 PolicyError —— 不允许隐式默认值藏在代码里。
   * 加载即校验：JSON Schema 管形状，validate_semantics 管引用完整性。

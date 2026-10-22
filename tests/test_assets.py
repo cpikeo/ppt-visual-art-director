@@ -12,8 +12,7 @@ import unittest
 
 from PIL import Image
 
-import support
-from support import ROOT, tmpdir, write, write_brief
+from support import ROOT, tmpdir, write_brief
 
 from policy import load as load_policy
 from brief import load as load_brief

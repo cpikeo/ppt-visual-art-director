@@ -232,3 +232,91 @@ slides:
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestChartUnitIsNotLost(unittest.TestCase):
+    """图表单位必须一路传到产物：标签是「51」还是「51%」，决定这张图能不能被读。"""
+
+    BRIEF = """\
+audience: 管理层
+decision: 批准渠道预算
+tension: 占比在变
+source: 渠道月度结算表
+unit: 万元
+period: 2026 Q1–Q3
+basis: 已开票收入
+slides:
+  - id: s01
+    title: 经销渠道收入占比逐季抬升
+    content: 占比从 34% 升到 51%。
+    chart:
+      kind: column
+      unit: "%"
+      categories: [Q1, Q2, Q3]
+      series:
+        - name: 经销渠道收入占比
+          values: [34, 43, 51]
+  - id: s02
+    title: 各渠道收入
+    content: 经销 4.6 万元，直营 1.9 万元。
+    chart:
+      kind: column
+      categories: [经销, 直营]
+      series:
+        - name: 单店月均产出
+          values: [4.6, 1.9]
+"""
+
+    def test_declared_chart_unit_reaches_element_and_page_meta(self):
+        deck = deck_for(self.BRIEF)
+        chart = next(e for e in deck["slides"][0]["elements"] if e["type"] == "chart")
+        self.assertEqual(chart.get("unit_suffix"), "%")
+        self.assertEqual(deck["slides"][0]["meta"]["unit"], "%",
+                         "图表单位 % 不能被页级/整稿的 万元 覆盖")
+
+    def test_chart_without_unit_still_falls_back(self):
+        deck = deck_for(self.BRIEF)
+        chart = next(e for e in deck["slides"][1]["elements"] if e["type"] == "chart")
+        self.assertEqual(chart.get("unit_suffix"), "")
+        self.assertEqual(deck["slides"][1]["meta"]["unit"], "万元")
+
+
+class TestChartLabelsSurviveCompile(unittest.TestCase):
+    """编译层也属于「判断传递」：单位与标签落位不能只停留在 deck.json。"""
+
+    BRIEF = TestChartUnitIsNotLost.BRIEF
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        from pathlib import Path
+        from compile import compile_deck, readback
+        cls.deck = deck_for(cls.BRIEF)
+        cls.tmp = Path(tempfile.mkdtemp(prefix="pvad-unit-"))
+        cls.pptx = cls.tmp / "unit.pptx"
+        compile_deck(cls.deck, cls.pptx)
+        cls.readback = readback(cls.pptx)
+
+    def test_unit_suffix_reaches_the_pptx_readback(self):
+        chart_shape = next(s for s in self.readback["slides"][0]["shapes"] if s.get("type") == "chart")
+        self.assertEqual(chart_shape.get("unit_suffix"), "%")
+
+    def test_column_labels_are_placed_outside_the_bar(self):
+        import zipfile
+        with zipfile.ZipFile(self.pptx) as package:
+            name = next(n for n in package.namelist() if n.startswith("ppt/charts/chart"))
+            xml = package.read(name).decode("utf-8")
+        self.assertIn('<c:dLblPos val="outEnd"/>', xml,
+                      "柱形数据标签必须放在柱外：压柱顶会被填充色吃掉")
+
+    def test_fidelity_flags_a_lost_unit(self):
+        from copy import deepcopy
+        from fidelity import compare
+        broken = deepcopy(self.readback)
+        for shape in broken["slides"][0]["shapes"]:
+            if shape.get("type") == "chart":
+                shape["unit_suffix"] = ""
+        result = compare(self.deck, broken, POLICY)
+        fields = {m.get("field") for m in result["mismatches"]}
+        self.assertIn("unit_suffix", fields)
+        self.assertEqual(result["status"], "MISMATCH")

@@ -2,7 +2,7 @@ registry_version: "1.0"
 status: "REVIEWED"
 project:
   repository_name: "cpikeo/ppt-visual-art-director"
-  repository_revision: "9c9165662e9428018737835c1183ca7d4ef74e34 + uncommitted audited worktree"
+  repository_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (skill-packaging audit, 2026-10-22)"
 
 # REVIEWED 表示路径、消费者和命令已在本次工作区核验；维护责任人尚未由项目方具名，故不得设为 ACTIVE。
 authority_sources:
@@ -17,7 +17,7 @@ authority_sources:
       command: "python -m unittest discover -s tests -p 'test_boundaries.py' && python -m unittest discover -s tests -p 'test_judgment.py'"
       expected_result: "all tests pass"
     owner: "Visual Art Director / protocol maintainer (unassigned)"
-    last_verified_revision: "worktree audit 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-POLICY-001"
@@ -31,7 +31,7 @@ authority_sources:
       command: "python -m unittest discover -s tests -p 'test_policy_and_brief.py' && python -m unittest discover -s tests -p 'test_boundaries.py'"
       expected_result: "all tests pass; no dead numeric policy leaf"
     owner: "engineering maintainer (unassigned)"
-    last_verified_revision: "worktree audit 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-POLICY-002"
@@ -45,7 +45,7 @@ authority_sources:
       command: "python -m unittest discover -s tests -p 'test_boundaries.py' && python -m unittest discover -s tests -p 'test_semantic_loss.py'"
       expected_result: "all tests pass"
     owner: "Visual Art Director / engineering maintainer (unassigned)"
-    last_verified_revision: "worktree audit 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-POLICY-003"
@@ -59,7 +59,7 @@ authority_sources:
       command: "python evals/prompt_eval.py"
       expected_result: "all prompt cases pass"
     owner: "asset direction maintainer (unassigned)"
-    last_verified_revision: "worktree audit 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-SCHEMA-001"
@@ -73,7 +73,7 @@ authority_sources:
       command: "python -m unittest discover -s tests -p 'test_policy_and_brief.py' && python -m unittest discover -s tests -p 'test_pipeline.py'"
       expected_result: "all tests pass"
     owner: "engineering maintainer (unassigned)"
-    last_verified_revision: "worktree audit 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-EXEC-001"
@@ -87,7 +87,7 @@ authority_sources:
       command: "python -m unittest discover -s tests"
       expected_result: "all tests pass"
     owner: "engineering maintainer (unassigned)"
-    last_verified_revision: "worktree audit 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-TESTS-001"
@@ -101,7 +101,7 @@ authority_sources:
       command: "python -m unittest discover -s tests"
       expected_result: "all tests pass; external gates remain explicitly unverified"
     owner: "QA / engineering maintainer (unassigned)"
-    last_verified_revision: "worktree audit 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-GOV-001"
@@ -115,7 +115,7 @@ authority_sources:
       command: "python -m unittest discover -s tests -p 'test_release.py'"
       expected_result: "evidence is schema-valid, artifact-bound, and incomplete records never pass"
     owner: "release owner / reviewers (unassigned)"
-    last_verified_revision: "worktree implementation 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"
 
   - authority_id: "SRC-RELEASE-001"
@@ -129,5 +129,5 @@ authority_sources:
       command: "python -m unittest discover -s tests -p 'test_skill_package.py' && python -m unittest discover -s tests -p 'test_productization.py'"
       expected_result: "clean package smoke passes; audit/cache absent; version and migrations match"
     owner: "release engineering maintainer (unassigned)"
-    last_verified_revision: "worktree implementation 2026-10-22"
+    last_verified_revision: "cc03e00f8e6815b386695481fb771cb17d9c95f0 (audited 2026-10-22, baseline 6c22ba5)"
     status: "UNVERIFIED_OWNER"

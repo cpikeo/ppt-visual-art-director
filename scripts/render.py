@@ -58,7 +58,8 @@ def page_model_from_spec(deck: dict, slide: dict) -> dict:
                          "categories": list(element.get("categories") or []),
                          "series": [{"name": s.get("name"), "values": list(s.get("values") or [])}
                                     for s in (element.get("series") or [])],
-                         "show_values": bool(element.get("show_values"))})
+                         "show_values": bool(element.get("show_values")),
+                         "unit_suffix": str(element.get("unit_suffix") or "")})
         items.append(item)
     return {"id": slide.get("id"), "colors": colors,
             "width": float(deck["canvas"]["width"]),
@@ -96,7 +97,8 @@ def page_model_from_readback(deck: dict, rb_slide: dict, spec_slide: dict | None
             base.update({"kind": "chart", "chart_kind": shape.get("kind") or spec.get("chart_kind"),
                          "categories": shape.get("categories") or [],
                          "series": [{"name": s["name"], "values": s["values"]} for s in shape.get("series") or []],
-                         "show_values": bool(spec.get("show_values"))})
+                         "show_values": bool(spec.get("show_values")),
+                         "unit_suffix": str(shape.get("unit_suffix") or spec.get("unit_suffix") or "")})
         else:
             fill = shape.get("fill")
             base.update({"kind": "shape", "shape": shape.get("shape_kind") or spec.get("shape"),
@@ -396,8 +398,8 @@ def _draw_chart(draw, item, scale, fontbook: FontBook, policy) -> None:
         for i, value in enumerate(series[0]["values"]):
             cx = x + pad_left + (plot_w / max(len(categories), 1)) * (i + 0.5) if kind in ("column", "bar") \
                 else x + pad_left + (plot_w / max(len(categories) - 1, 1)) * i
-            text = f"{value:g}"
-            draw.text((cx - font.getlength(text) / 2, ypos(value) - 14 * scale), text, font=font, fill=ink)
+            text = f"{value:g}{item.get('unit_suffix') or ''}"
+            draw.text((cx - font.getlength(text) / 2, ypos(value) - 16 * scale), text, font=font, fill=ink)
 
 
 def _ladder(policy, size: float) -> str:

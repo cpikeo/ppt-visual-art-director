@@ -148,6 +148,7 @@ def _clean_chart(chart: dict) -> dict:
         "series": [{"name": _clean(s.get("name")), "values": [float(v) for v in (s.get("values") or [])]}
                    for s in (chart.get("series") or [])],
         "takeaway": _clean(chart.get("takeaway")),
+        "unit": _clean(chart.get("unit")),
     }
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import copy
 
-from typography import FontBook, NBSP, bind_units, ink_height, wrap
+from typography import FontBook, NBSP, ink_height, wrap
 
 DECK_SCHEMA = "pvad-deck-v1"
 
@@ -206,7 +206,7 @@ def _compose_slide(slide: dict, page: dict, policy, canvas: dict, theme: dict,
                                or policy.max_lines(claim_ladder if not claim_absent
                                                    else _claim_ladder(composition, policy))))
 
-    media_el = _compose_media(slots, slide, page, frame, policy, elements, base_dir)
+    _compose_media(slots, slide, page, frame, policy, elements, base_dir)
     dropped_steps[0] = _fill_body(composition, elements, slots, page, atoms, frame, policy, fontbook, add_text,
                add_text_box, source_text, accent_used, slide.get("chart"))
 
@@ -268,12 +268,15 @@ def _media_brief(element: dict, media: dict, policy) -> dict:
 
 
 def _page_unit(slide: dict, atoms: dict, brief: dict | None) -> str:
-    """页级单位：作者声明优先；否则只在「全页指标同单位且都有单位」时取该单位。
+    """页级单位：作者声明优先；图表单位次之；否则只在「全页指标同单位且都有单位」时取该单位。
 
     不做「deck 级单位兜底」：把 万元 套到「门店数量」上就是口径事故。
     """
     if slide.get("unit"):
         return slide["unit"]
+    chart_unit = (slide.get("chart") or {}).get("unit")
+    if chart_unit:
+        return str(chart_unit)
     metrics = [m for m in (atoms.get("metrics") or []) if str(m.get("value", "")).strip() != ""]
     if metrics:
         units = {m.get("unit") or "" for m in metrics}
@@ -631,6 +634,7 @@ def _chart_el(eid: str, role: str, box, chart: dict, policy) -> dict:
             "x": x, "y": y, "width": w, "height": h,
             "categories": categories, "series": series,
             "show_values": len(series) == 1 and len(categories) <= int(policy.num("thresholds.chart_value_label_max")),
+            "unit_suffix": str(chart.get("unit") or ""),
             "takeaway": chart.get("takeaway") or "",
             "derived": chart.get("derived", "author"),
             "layout_source": "plan"}

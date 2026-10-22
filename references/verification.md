@@ -1,6 +1,10 @@
 # 证据与验收（怎么诚实地说「做完了」）
 
-## 1. 六个层次，结论分开写
+**权威范围**：证据分层、评测口径、盲评纪律、发布结论模板、报告必须写清的边界。
+**不负责**：设计判断本身（见 `SKILL.md` 与 `visual-art-direction.md`）、字段与错误码（见 `contract.md`）、
+阈值与门配置（见 `policy/strategy.yaml` 与 `governance/`）。
+
+## 1. 七层证据，结论分开写（与 SKILL「证据层级」同一份清单）
 
 | # | 层 | 命令 / 工具 | 能证明 | 不能证明 |
 |---|---|---|---|---|
@@ -9,9 +13,11 @@
 | 3 | 产物 | `check --mode draft` | 编译成功、原生文本与图表 | 打开后长什么样 |
 | 4 | 回读对账 | `fidelity.compare` | 判断被完整写进 PPTX（几何/字/色/数据/字体角色） | 目视质量 |
 | 5 | 渲染对照 | `render.pixel_diff` | 预览与回读的一致（同一渲染器、同一字体度量） | 目标 PowerPoint 的排版 |
-| 6 | 人工盲评 | `evals/blind_pack.py` | 焦点/层级/构图/排版/可信度/节奏 | —（未跑就写未跑） |
+| 6 | 整稿人工复核 | 人工逐页 + 整稿 | 焦点/构图/节奏/素材职责是否成立 | 目标环境与未检查页面 |
+| 7 | 目标环境 / 独立盲评 | 指定 PowerPoint + `evals/blind_pack.py` | 该环境下字体、断行、播放成立；盲评组间差异 | 其他环境；不等于质量结论 |
 
-前五层是机器证据，第六层只能由人给。任何一层都不能替另一层签字。
+第 1–5 层是机器证据，第 6 层只能由人给，第 7 层只能由指定环境或独立评审给。
+任何一层都不能替另一层签字；未执行的层写 NOT RUN / NOT VERIFIED，不写成 PASS。
 
 ## 2. 为什么渲染对照是「同一渲染器吃两种真相」
 
@@ -99,6 +105,13 @@ NOT RUN — Independent Visual Review
 - Review 包用于整稿、目标环境与合规复核，必须保留 `REVIEW_REQUIRED.md`；
 - Release 包只有在六门均 PASS、`delivery_status=READY TO RELEASE` 时才允许生成；
 - 三类包都由 manifest 派生并带文件散列，禁止手工复制后沿用旧证据。
+
+## 8.1 内部预检（`scripts/release_check.py`）
+
+- 同一个 `--out` 可反复执行：开跑前只清理本工具自己的产物（`package/`、`pvad-skill.zip`、`manifest.json`、各阶段日志），目录里其他文件不动，上一轮日志也不会被当成本轮证据。
+- `manifest.json` 绑定本次运行的三件事：`git.commit` / `git.dirty`（开跑前采集，避免把输出目录算成未提交改动）、`package_zip_sha256`、各阶段退出码与日志。
+- 打包阶段即使退出码为 0，只要没有产物 `pvad-skill.zip`，整次预检判 FAIL——退出码不能替代产物。
+- 预检 PASS 只代表内部工程链通过；`external_gates` 三项恒为 `NOT VERIFIED` / `NOT RUN`，`delivery_status` 不会因此变成可发布。
 
 ## 9. CI、压力测试与独立基准边界
 

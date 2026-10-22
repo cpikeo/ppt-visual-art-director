@@ -3,7 +3,6 @@
 """Active protocol references must use stable semantic anchors, not section numbers."""
 import re
 import unittest
-from pathlib import Path
 
 import support
 from support import ROOT, tmpdir, write_brief
@@ -46,9 +45,85 @@ class TestProtocolReferences(unittest.TestCase):
                     text = path.read_text(encoding="utf-8")
                 except UnicodeDecodeError:
                     continue
-                names.update(re.findall(r"SKILL(?:\.md)?「([^」]+)」", text))
+                # 一段引用可能连写多个书名号名字，全部都要能在 SKILL 里找到同名标题
+                for chain in re.findall(r"SKILL(?:\.md)?((?:「[^」]+」)+)", text):
+                    names.update(re.findall(r"「([^」]+)」", chain))
         missing = sorted(name for name in names if name not in headings)
         self.assertEqual(missing, [])
+
+
+class TestDocumentationMatchesCode(unittest.TestCase):
+    """文档说的和代码做的必须是同一件事：错误码、路径、命令都不能只在一边存在。"""
+
+    def test_every_guard_error_code_is_documented(self):
+        scripts = "\n".join(path.read_text(encoding="utf-8")
+                            for path in sorted((ROOT / "scripts").glob("*.py")))
+        emitted = set(re.findall(r'rep\.(?:error|warn)\(\s*"([A-Z_]+)"', scripts))
+        # 动态码：orphan_issues 的 kind 会以大写形式进入报告（ORPHAN_LINE / LEAD_FRAGMENT …）
+        typography = (ROOT / "scripts" / "typography.py").read_text(encoding="utf-8")
+        emitted |= {kind.upper() for kind in re.findall(r'WrapIssue\("([a-z_]+)"', typography)}
+        contract = (ROOT / "references" / "contract.md").read_text(encoding="utf-8")
+        undocumented = sorted(code for code in emitted if code not in contract)
+        self.assertEqual(undocumented, [], f"guard 会报这些码，但 contract.md 没有登记：{undocumented}")
+
+    # 运行期生成的产物不在仓库里，文档提到它们是正常的。
+    GENERATED = {"plan.json", "deck.json", "manifest.json", "brief.yaml", "inspection.json",
+                 "impact.json", "media_briefs.json", "release-evidence.yaml",
+                 "delivery-summary.md", "REVIEW_REQUIRED.md", "SHA256SUMS.txt"}
+
+    @staticmethod
+    def _repo_index() -> tuple[set, set]:
+        paths, basenames = set(), set()
+        for path in ROOT.rglob("*"):
+            if not path.is_file() or ".git" in path.parts or "__pycache__" in path.parts:
+                continue
+            relative = path.relative_to(ROOT).as_posix()
+            paths.add(relative)
+            basenames.add(path.name)
+        return paths, basenames
+
+    def test_referenced_files_exist(self):
+        """失效引用是交付缺陷：文档里以代码格式写出的仓库文件必须真实存在。"""
+        paths, basenames = self._repo_index()
+        missing = []
+        sources = [ROOT / "SKILL.md"] + sorted((ROOT / "references").glob("*.md"))
+        for source in sources:
+            text = source.read_text(encoding="utf-8")
+            for name in re.findall(r'`([A-Za-z0-9_./-]+\.(?:md|json|yaml|yml|py|txt))`', text):
+                if name.startswith("http") or name in self.GENERATED:
+                    continue
+                # 生成物（每次评测/每份 deck 重新产出）不是仓库文件；文档提到它们是正常的。
+                if name.startswith("evals/reports/"):
+                    continue
+                # 运行包有意不带 tests/ 与 evals/：只有在开发工作区才检查它们的引用。
+                top = name.split("/", 1)[0]
+                if top in {"tests", "evals"} and not (ROOT / top).is_dir():
+                    continue
+                if name in paths or name.lstrip("./") in paths:
+                    continue
+                # 允许省略目录的简写（如 `render.py`、`strategy.yaml`），但必须在仓库里唯一存在
+                if name.rsplit("/", 1)[-1] in basenames:
+                    continue
+                missing.append(f"{source.name}: {name}")
+        self.assertEqual(sorted(set(missing)), [])
+
+    def test_documented_commands_have_entrypoints(self):
+        """文档里写 `make xxx` 之类的命令，必须有对应的可执行入口。"""
+        offenders = []
+        for source in [ROOT / "SKILL.md"] + sorted((ROOT / "references").glob("*.md")):
+            text = source.read_text(encoding="utf-8")
+            for command in re.findall(r'`make ([a-z][a-z0-9_-]*)', text):
+                if not (ROOT / "Makefile").exists():
+                    offenders.append(f"{source.name}: make {command}")
+        self.assertEqual(offenders, [], "文档引用了不存在的构建入口")
+
+    def test_pipeline_help_lists_every_documented_subcommand(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        documented = set(re.findall(r'python scripts/pvad\.py ([a-z-]+)', skill))
+        result = support.run_cli("--help")
+        usage = result.stdout + result.stderr
+        missing = sorted(name for name in documented if name not in usage)
+        self.assertEqual(missing, [], f"SKILL.md 写了这些子命令，但 CLI 没有：{missing}")
 
 
 class TestDesignGuidance(unittest.TestCase):

@@ -18,6 +18,8 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 PVAD = ROOT / "scripts" / "pvad.py"
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def _slide(index: int) -> dict:
@@ -113,9 +115,11 @@ def main(argv=None) -> int:
     parser.add_argument("--sizes", default="20,50")
     args = parser.parse_args(argv)
     sizes = [int(item) for item in args.sizes.split(",") if item.strip()]
+    from policy import load as load_policy
     report = {
         "schema": "pvad-stress-report-v1",
         "note": "合成工程压力测试；不代表视觉质量、真实业务内容或目标 PowerPoint 性能。",
+        "policy_sha256": load_policy().sha256,
         "environment": {"python": sys.version.split()[0], "platform": sys.platform},
         "runs": [evaluate(size) for size in sizes],
     }

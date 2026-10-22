@@ -283,6 +283,10 @@
               },
               "takeaway": {
                 "type": "string"
+              },
+              "unit": {
+                "type": "string",
+                "description": "图表自身的单位（如 % / 家 / 万元）。缺省时退回页级 unit；图表单位与页级单位不同时必须写这里。"
               }
             }
           },

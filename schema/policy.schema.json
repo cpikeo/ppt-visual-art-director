@@ -189,11 +189,16 @@
      "additionalProperties": false,
      "required": [
       "min_last_line_chars",
+      "min_lead_chars",
       "forbidden_line_start",
       "forbidden_line_end"
      ],
      "properties": {
       "min_last_line_chars": {
+       "type": "integer",
+       "minimum": 1
+      },
+      "min_lead_chars": {
        "type": "integer",
        "minimum": 1
       },
@@ -425,13 +430,16 @@
     "safe_area_ratio",
     "numeric_density_high",
     "numeric_density_low",
+    "sparse_max_numbers",
     "line_width_ratio",
     "min_gap_px",
     "fidelity_pixel_mismatch_max",
     "chart_max_categories",
     "max_steps",
     "chart_value_label_max",
-    "words_per_second"
+    "words_per_second",
+    "size_pt_tolerance",
+    "chart_scale_skew_ratio"
    ],
    "properties": {
     "snap": {
@@ -467,6 +475,10 @@
     "numeric_density_low": {
      "type": "number",
      "minimum": 0
+    },
+    "sparse_max_numbers": {
+     "type": "integer",
+     "minimum": 1
     },
     "line_width_ratio": {
      "type": "number",

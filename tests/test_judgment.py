@@ -7,7 +7,6 @@
 """
 import unittest
 
-import support
 from support import ROOT, tmpdir, write_brief
 
 from policy import load as load_policy

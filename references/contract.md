@@ -51,7 +51,7 @@
 |---|---|
 | `text` | `text` `size` `color` `bold` `italic` `align` `anchor` `line_height` `tracking` `max_lines` `wrap` `font` |
 | `shape` | `shape`(rect/rounded_rect/ellipse/triangle/diamond/line/arrow) `fill` `stroke` `stroke_width` `text` `text_size` `text_color` |
-| `chart` | `chart_kind`(column/bar/line/donut/progress) `categories` `series[].name/.values` `show_values` `value_size` `label_size` `unit_suffix` |
+| `chart` | `chart_kind`(column/bar/line/donut/progress) `categories` `series[].name/.values` `show_values` `value_size` `label_size` `unit_suffix` `takeaway` |
 | `image` | `source`（相对 brief 目录或绝对路径）`fit`(cover/contain) `function`(hero/context/proof/emotion/frame) `reason` `safe_area` `text_color`(dark/light) `overlay`(0–1) `crop`/`crop_loss`（build 自动算）`asset_sha256` `source_px` `format` |
 
 - 坐标是**画布 px**（96dpi 基准），pt = px × 72 / 96。
@@ -63,6 +63,9 @@
 
 - `chart_kind` 与数据形状必须匹配：环图只接受单序列、非负、总和 > 0；
   序列长度必须等于类别数；非有限值一律拦。
+- **图表单位**：brief 的 `chart.unit`（如 `%`、`家`）决定数据标签后缀与页级 `meta.unit`；
+  不写就退回页级/整稿单位，但**占比图不写 `unit: "%"` 就会被「万元」覆盖**——那是口径事故。
+  编译后单位写进 `unit_suffix`，回读比对时单位丢失判 MISMATCH。
 - 环图合计不是 100 时告警 `DONUT_NOT_PERCENT`：量不该画环。
 - 没有时间读数却声明 `series_chart`，`build` 会降级成 `metric_row` 并在
   `composition_downgraded` 写清理由——**不画空轴**。
@@ -97,12 +100,31 @@
 | `ASSET_BUDGET` | 单页图片超上限 | 图片不靠数量建立氛围 |
 | `ASSET_DECLARATION` | 图片与页面判断的职责不一致 / text_color 非法 | 补职责或删图 |
 | `CHART_MIXED_UNITS` | 同一张图混了两种单位（家 / %） | 拆图或改成两个指标块：不可换算的量不能共用一根轴 |
+| `EVIDENCE_NOT_LAID_OUT` | 作者声明了指标，页面上却没有任何指标元素、图表数值或分项承载 | 换构图或删数据：证据不能只留在 plan 里 |
+| `SOURCE_ZONE_COLLISION` | 图片或其他对象侵入来源区 | 给来源区让出位置：出处被遮住等于没有出处 |
 
-告警（不拦，但必须读）：`FOCUS_COMPETITION`、`DUPLICATE_TEXT`、`SAFE_AREA`、
-`DONUT_NOT_PERCENT`、`CHART_SINGLE_CATEGORY`、`ORPHAN_LINE`、`FORBIDDEN_LINE_START/END`、
-`DENSITY_OVER_TARGET`、`MEASUREMENT_DEGRADED`、`ASSET_TEXTURE`、`ASSET_OUTSIDE_PROJECT`。
+告警（不拦，但必须读）：
 
-## 5.0 素材入参（brief.asset）
+| 告警 | 含义 |
+|---|---|
+| `FOCUS_COMPETITION` | 同页多个元素同为最大字号，没有唯一主角 |
+| `DUPLICATE_TEXT` | 两处正文重复表达同一信息（定位符除外） |
+| `SAFE_AREA` | 元素贴近或越出内容安全区 |
+| `DONUT_NOT_PERCENT` | 环图合计不是 100，量不该画环 |
+| `CHART_SINGLE_CATEGORY` | 单类别图没有比较对象 |
+| `CHART_SCALE_SKEW` | 同图序列均值相差过大，小的会被压平 |
+| `CONTENT_TRUNCATED` | 步骤/条目超列数上限，未排版的条目已记账（不静默丢弃） |
+| `ORPHAN_LINE` / `FORBIDDEN_LINE_START` / `FORBIDDEN_LINE_END` | 孤字与中文禁则 |
+| `LEAD_FRAGMENT` | 续行以单个汉字开头后接数字/外文：紧密词组被拆开 |
+| `DENSITY_OVER_TARGET` | 数字密度与页面判断的 density 不一致 |
+| `MEASUREMENT_DEGRADED` | 没有真实字体度量，数字是估算 |
+| `TEXT_CONTRAST_LOW` | token 在页面底色上的实测对比度低于下限（不阻断，需人工判定） |
+| `TOKEN_PAIRING` | 前景 token 不在该底色允许的配对表里 |
+| `FIELD_UNDECLARED` | 出现未登记字段（按作者注解忽略） |
+| `ASSET_TEXTURE` / `ASSET_QUIET_AREA` | 压字区域纹理过密 / 不够平坦，字会陷进背景 |
+| `ASSET_OUTSIDE_PROJECT` | 素材位于项目目录之外 |
+
+## 5.1 素材入参（brief.asset）
 
 | 字段 | 必填 | 作用 | 缺了会怎样 |
 |---|---|---|---|
@@ -115,7 +137,7 @@
 | `safe_area` | — | 文字压图的安全区（比例坐标；数组或对象都行） | 文字压图时 `ASSET_SAFE_AREA` |
 | `text_color` | — | `dark`/`light`：压在图上的字用深还是浅 | 生产说明不发调子句；交付时 `ASSET_CONTRAST` |
 
-## 5.1 素材契约（图片）
+## 5.2 素材契约（图片）
 
 ```jsonc
 { "id": "s01.media", "type": "image", "role": "media",

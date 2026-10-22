@@ -6,7 +6,7 @@
 """
 import unittest
 
-import support
+import support  # 导入即把 scripts/ 放进 sys.path（直接运行本模块时需要）
 from policy import load as load_policy
 from typography import (FontBook, bind_units, ink_height, ink_top, orphan_issues, reading_seconds,
                         tokenize, wrap)
@@ -107,3 +107,27 @@ class TestDegradation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestLeadFragment(unittest.TestCase):
+    """续行只带一个汉字再接数字/外文：这是断行把紧密词组拆开，机器必须能说出来。"""
+
+    def test_single_char_lead_followed_by_number_is_reported(self):
+        metrics = wrap("经销渠道的单店产出高出直营门店 2.4 倍", 1000, 60,
+                       policy=POLICY, fontbook=FONTS, bold=True)
+        kinds = {issue.kind for issue in orphan_issues(metrics, POLICY)}
+        self.assertIn("lead_fragment", kinds, metrics.lines)
+
+    def test_no_lead_fragment_when_the_phrase_survives(self):
+        metrics = wrap("经销渠道的单店产出高出直营门店 2.4 倍", 1100, 60,
+                       policy=POLICY, fontbook=FONTS, bold=True)
+        kinds = {issue.kind for issue in orphan_issues(metrics, POLICY)}
+        self.assertNotIn("lead_fragment", kinds, metrics.lines)
+
+
+class TestEnvironment(unittest.TestCase):
+    """度量依赖真实字体文件与真实脚本：夹具必须指向仓库本体，不是随机临时目录。"""
+
+    def test_support_points_at_this_repository(self):
+        self.assertTrue((support.ROOT / "scripts" / "typography.py").is_file())
+        self.assertTrue((support.ROOT / "policy" / "strategy.yaml").is_file())

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""四层边界的机械检查：越界不需要吵架，让它变成会失败的测试。
+"""五层边界的机械检查：越界不需要吵架，让它变成会失败的测试。
 
 这一组只回答「职责有没有串层」，不回答「设计好不好」：
   1. 策略里的配置必须有人消费（死配置 = 写了却没生效）；
@@ -10,15 +10,14 @@
   5. 判断字段必须进入执行流程，否则它是装饰；
   6. 词表命中不得改变几何（否则就是「行业词表造成同质化」）。
 """
+import ast
 import copy
 import json
 import pathlib
 import re
-import sys
 import unittest
 import unittest.mock
 
-import support
 from support import ROOT, tmpdir, write_brief
 
 from policy import load as load_policy
@@ -104,11 +103,84 @@ class TestNoDeadPolicy(unittest.TestCase):
                                  f"禁令文案出现在代码里（{name}）：它属于 composition.yaml")
 
 
+def _dead_policy_reads(path: pathlib.Path) -> list[str]:
+    """找出「读了策略却从没用过」的赋值：`x = policy.num(...)` 之后 x 从未被读取。
+
+    这是死配置的另一半：字符串扫描只能证明键被提到过，不能证明结果被用于判断。
+    """
+    import ast
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    offenders: list[str] = []
+    for func in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        loaded = {n.id for n in ast.walk(func) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name):
+                continue
+            calls = [n for n in ast.walk(node.value) if isinstance(n, ast.Call)]
+            reads_policy = any(isinstance(c.func, ast.Attribute) and c.func.attr in {"num", "req", "opt"}
+                               and isinstance(c.func.value, ast.Name) and c.func.value.id == "policy"
+                               for c in calls)
+            if reads_policy and target.id not in loaded:
+                offenders.append(f"{path.name}:{node.lineno} {target.id}")
+    return offenders
+
+
+class TestNoDeadPolicyRead(unittest.TestCase):
+    def test_policy_values_are_actually_used_after_being_read(self):
+        offenders = []
+        for script in sorted((ROOT / "scripts").glob("*.py")):
+            offenders.extend(_dead_policy_reads(script))
+        self.assertEqual(offenders, [], "读了策略值却没有使用：判断被写成了装饰")
+
+
+def _carries_number(node) -> bool:
+    """常量里是否夹了一个数值默认值（字符串路径常量不算：那是键名，不是阈值）。"""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, (int, float)) and not isinstance(node.value, bool)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return any(_carries_number(elt) for elt in node.elts)
+    return False
+
+
+class TestPolicySchemaCoversConsumers(unittest.TestCase):
+    """Schema 是策略的 I/O 权威：代码硬要求的阈值，不能是 Schema 里的可选项。
+
+    否则一份缺键的策略能通过校验，却在运行时抛 PolicyError —— 校验形同虚设。
+    """
+
+    def test_every_threshold_read_as_required_is_required_in_schema(self):
+        schema = json.loads((SCHEMA_DIR / "policy.schema.json").read_text(encoding="utf-8"))
+        thresholds = schema["properties"]["thresholds"]
+        required = set(thresholds.get("required") or ())
+        declared = set(thresholds.get("properties") or {})
+        used = set(re.findall(r"thresholds\.([a-z0-9_]+)", SCRIPTS_TEXT))
+        self.assertTrue(used, "没有在 scripts/ 中找到阈值键，检查本身失效了")
+        self.assertEqual(used - declared, set(), "代码读了 Schema 未声明的阈值键")
+        self.assertEqual(used - required, set(),
+                         "代码按必填读取，但 Schema 允许缺省：" + "、".join(sorted(used - required)))
+
+    def test_python_does_not_shadow_thresholds_with_its_own_defaults(self):
+        """阈值只能有一份定义（Policy）。Python 里的兜底常量会让两处说法漂移。"""
+        offenders = []
+        for script in sorted((ROOT / "scripts").glob("*.py")):
+            tree = ast.parse(script.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    name = node.targets[0].id
+                    if "TOL" not in name.upper() and "THRESHOLD" not in name.upper():
+                        continue
+                    if _carries_number(node.value):
+                        offenders.append(f"{script.name}:{node.lineno} {name}")
+        self.assertEqual(offenders, [], "阈值在 Python 里另立了默认值：" + "、".join(offenders))
+
+
 class TestEnumSingleSource(unittest.TestCase):
     def test_strategy_enums_match_plan_schema(self):
         schema = json.loads((SCHEMA_DIR / "plan.schema.json").read_text(encoding="utf-8"))
         decision = schema["properties"]["pages"]["items"]["properties"]["decision"]["properties"]
-        production = schema["properties"]["pages"]["items"]["properties"]["production"]["properties"]
         pairs = [("role", decision["role"]["enum"]),
                  ("composition", decision["composition"]["enum"]),
                  ("density", decision["density"]["enum"]),
