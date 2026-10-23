@@ -209,6 +209,124 @@ def test_chart_missing_data_is_hard_error():
     assert any("chart" in e.location for e in hard), "图表缺少 data 应产生 E004 硬错误"
 
 
+# ---------------------------------------------------------------------------
+# 页面比例：4:3 边界校验使用实际尺寸（非 16:9 硬编码）
+# ---------------------------------------------------------------------------
+
+
+def test_4_3_boundary_uses_actual_dimensions():
+    """4:3 页面宽 10 英寸，x=9,w=2（x2=11）在 16:9 下合法，在 4:3 下应阻断。"""
+    plan_43 = json.loads(json.dumps(VALID_PLAN))
+    plan_43["aspect_ratio"] = "4:3"
+    el = plan_43["pages"][0]["elements"][0]
+    el["x"] = 9.0
+    el["w"] = 2.0  # x2 = 11.0 > 10.0
+    errors = validate_plan(plan_43, slide_w_in=10.0, slide_h_in=7.5)
+    hard = [e for e in errors if e.level == ErrorLevel.HARD and e.code == "E002"]
+    assert any("E002" in e.code for e in hard), "4:3 页面元素超出 10 英寸宽度应产生 E002"
+
+
+def test_16_9_boundary_allows_wider_elements():
+    """16:9 页面宽 13.333 英寸，x=9,w=2（x2=11）应合法。"""
+    plan_169 = json.loads(json.dumps(VALID_PLAN))
+    el = plan_169["pages"][0]["elements"][0]
+    el["x"] = 9.0
+    el["w"] = 2.0  # x2 = 11.0 < 13.333
+    errors = validate_plan(plan_169, slide_w_in=13.333, slide_h_in=7.5)
+    hard = [e for e in errors if e.level == ErrorLevel.HARD and e.code == "E002"]
+    assert not hard, "16:9 页面元素在 13.333 英寸宽度内应合法"
+
+
+# ---------------------------------------------------------------------------
+# 合法重叠：overlap_allowed=true 视为设计授权图层融合，不应阻断
+# ---------------------------------------------------------------------------
+
+
+def test_overlap_allowed_is_permitted():
+    plan = json.loads(json.dumps(VALID_PLAN))
+    page = plan["pages"][0]
+    page["elements"] = [
+        {"id": "bg", "type": "shape", "content": "", "x": 0, "y": 0, "w": 13.333, "h": 7.5,
+         "color": "#F5F1EA", "z_index": 0, "overlap_allowed": True},
+        {"id": "fg", "type": "body", "content": "文字叠图", "x": 2, "y": 2, "w": 6, "h": 3,
+         "font_size": 20, "color": "#000000", "z_index": 1, "overlap_allowed": True},
+    ]
+    errors = validate_plan(plan)
+    hard = [e for e in errors if e.level == ErrorLevel.HARD and e.code == "E002"]
+    assert not hard, "overlap_allowed=true 的图层融合不应产生 E002"
+
+
+def test_overlap_without_allowance_is_hard_error():
+    plan = json.loads(json.dumps(VALID_PLAN))
+    page = plan["pages"][0]
+    page["elements"] = [
+        {"id": "a", "type": "body", "content": "A", "x": 0, "y": 0, "w": 5, "h": 5,
+         "font_size": 20, "color": "#000000"},
+        {"id": "b", "type": "body", "content": "B", "x": 2, "y": 2, "w": 5, "h": 5,
+         "font_size": 20, "color": "#000000"},
+    ]
+    errors = validate_plan(plan)
+    hard = [e for e in errors if e.level == ErrorLevel.HARD and e.code == "E002"]
+    assert any("overlap" in e.location for e in hard), "未设置 overlap_allowed 的实质重叠应产生 E002"
+
+
+# ---------------------------------------------------------------------------
+# 图表渲染失败：E007 并阻断
+# ---------------------------------------------------------------------------
+
+
+def test_chart_render_failure_records_e007(tmp_path, monkeypatch):
+    """_add_chart 返回 False 时，应产生 E007 并阻断编译。"""
+    import scripts.compile_pptx as m
+
+    def _fake_add_chart(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(m, "_add_chart", _fake_add_chart)
+
+    plan = json.loads(json.dumps(VALID_PLAN))
+    plan["pages"][0]["elements"] = [
+        {"id": "c1", "type": "chart", "x": 0, "y": 0, "w": 5, "h": 3,
+         "chart": {"kind": "bar", "data": {"categories": ["A"], "series": [{"name": "S", "values": [1, 2, 3]}]}}}
+    ]
+    out_path = str(tmp_path / "chart_fail.pptx")
+    success, errors = compile_plan(plan, out_path, asset_root=str(tmp_path), strict=False)
+    hard = [e for e in errors if e.level == ErrorLevel.HARD and e.code == "E007"]
+    assert not success, "图表渲染失败应阻断编译"
+    assert any("E007" in e.code for e in hard), "图表渲染失败应产生 E007"
+
+
+# ---------------------------------------------------------------------------
+# 素材缺失：E003 并阻断（编译阶段）
+# ---------------------------------------------------------------------------
+
+
+def test_missing_image_asset_records_e003(tmp_path):
+    plan = json.loads(json.dumps(VALID_PLAN))
+    plan["pages"][0]["elements"] = [
+        {"id": "img1", "type": "image", "image_id": "nonexistent_asset", "x": 0, "y": 0, "w": 3, "h": 2}
+    ]
+    out_path = str(tmp_path / "img_fail.pptx")
+    success, errors = compile_plan(plan, out_path, asset_root=str(tmp_path), strict=False)
+    hard = [e for e in errors if e.level == ErrorLevel.HARD and e.code == "E003"]
+    assert not success, "素材缺失应阻断编译"
+    assert any("E003" in e.code for e in hard), "素材缺失应产生 E003"
+
+
+# ---------------------------------------------------------------------------
+# 错误状态：success 正确反映硬错误
+# ---------------------------------------------------------------------------
+
+
+def test_success_reflects_hard_errors(tmp_path):
+    plan = json.loads(json.dumps(VALID_PLAN))
+    plan["pages"][0]["elements"][0]["x"] = 100  # 超出边界
+    out_path = str(tmp_path / "fail.pptx")
+    success, errors = compile_plan(plan, out_path, asset_root=str(tmp_path), strict=False)
+    assert not success, "存在硬错误时 success 应为 False"
+    assert any(e.level == ErrorLevel.HARD for e in errors), "应有硬错误记录"
+
+
 if __name__ == "__main__":
     # 允许直接 python dev/tests/test_compile.py 快速自检
     import pytest

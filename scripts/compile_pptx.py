@@ -66,8 +66,10 @@ class CompileError:
 # 常量与契约默认值
 # ---------------------------------------------------------------------------
 
-SLIDE_W_IN = 13.333  # 16:9
-SLIDE_H_IN = 7.5
+SLIDE_W_IN_16_9 = 13.333
+SLIDE_H_IN_16_9 = 7.5
+SLIDE_W_IN_4_3 = 10.0
+SLIDE_H_IN_4_3 = 7.5
 IN_TO_EMU = 914400
 
 DEFAULT_FONTS = {"heading": "微软雅黑", "body": "微软雅黑"}
@@ -88,6 +90,13 @@ VALID_ELEMENT_TYPES = {
     "shape", "divider", "caption", "footer",
 }
 VALID_CHART_KINDS = {"bar", "line", "pie", "donut", "table"}
+
+
+def _slide_dimensions(aspect_ratio: Optional[str]) -> Tuple[float, float]:
+    """返回实际幻灯片尺寸（英寸），避免 4:3 页面被 16:9 硬编码误判。"""
+    if aspect_ratio == "4:3":
+        return SLIDE_W_IN_4_3, SLIDE_H_IN_4_3
+    return SLIDE_W_IN_16_9, SLIDE_H_IN_16_9
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +127,8 @@ def load_plan(path: str) -> Tuple[Optional[Dict[str, Any]], List[CompileError]]:
     return plan, errors
 
 
-def validate_plan(plan: Dict[str, Any]) -> List[CompileError]:
+def validate_plan(plan: Dict[str, Any], slide_w_in: float = SLIDE_W_IN_16_9,
+                  slide_h_in: float = SLIDE_H_IN_16_9) -> List[CompileError]:
     errors: List[CompileError] = []
 
     # 顶层必填
@@ -196,15 +206,17 @@ def validate_plan(plan: Dict[str, Any]) -> List[CompileError]:
                 "页面过于拥挤，建议删减元素",
             ))
 
-        _validate_elements(page, errors)
+        _validate_elements(page, errors, slide_w_in, slide_h_in)
 
     return errors
 
 
-def _validate_elements(page: Dict[str, Any], errors: List[CompileError]) -> None:
+def _validate_elements(page: Dict[str, Any], errors: List[CompileError],
+                       slide_w_in: float = SLIDE_W_IN_16_9,
+                       slide_h_in: float = SLIDE_H_IN_16_9) -> None:
     pid = page.get("id", "?")
     elements = page.get("elements") or []
-    rects: List[Tuple[str, float, float, float, float]] = []  # (id, x, y, x2, y2)
+    rects: List[Tuple[str, float, float, float, float, bool]] = []  # (id, x, y, x2, y2, overlap_allowed)
 
     for ei, el in enumerate(elements):
         loc = f"page[{pid}].element[{ei}]"
@@ -240,16 +252,17 @@ def _validate_elements(page: Dict[str, Any], errors: List[CompileError]) -> None
         h = _num(el.get("h"), loc)
 
         if None not in (x, y, w, h):
-            # 边界检查
-            if x < 0 or y < 0 or x + w > SLIDE_W_IN or y + h > SLIDE_H_IN:
+            # 边界检查（使用实际页面尺寸，避免 4:3 被 16:9 硬编码误判）
+            if x < 0 or y < 0 or x + w > slide_w_in or y + h > slide_h_in:
                 errors.append(CompileError(
                     "E002", ErrorLevel.HARD, f"{loc}.{eid}",
                     "元素在幻灯片边界内",
-                    f"({x:.2f},{y:.2f},{w:.2f}x{h:.2f}) 超出边界 {SLIDE_W_IN}x{SLIDE_H_IN}",
+                    f"({x:.2f},{y:.2f},{w:.2f}x{h:.2f}) 超出边界 {slide_w_in}x{slide_h_in}",
                     "元素超出幻灯片可绘制区域，阻断编译",
                 ))
             else:
-                rects.append((str(eid), x, y, x + w, y + h))
+                overlap_allowed = bool(el.get("overlap_allowed", False))
+                rects.append((str(eid), x, y, x + w, y + h, overlap_allowed))
 
         # 字号可读性（中文）
         if etype in {"title", "body", "text", "number", "caption", "footer"}:
@@ -291,18 +304,36 @@ def _validate_elements(page: Dict[str, Any], errors: List[CompileError]) -> None
             ))
 
     # 重叠检查（仅对通过边界检查的元素）
-    for i in range(len(rects)):
-        for j in range(i + 1, len(rects)):
-            id_a, ax1, ay1, ax2, ay2 = rects[i]
-            id_b, bx1, by1, bx2, by2 = rects[j]
+    # 排除全屏背景（覆盖整页）与显式设置 z_index <= 0 的底层元素，它们应承载前景内容，
+    # 不应与前景元素判定意外重叠；同时设置实质重叠面积阈值，忽略边缘微接触。
+    # 未显式设置 z_index 的元素正常参与重叠检查。若任一重叠元素显式设置 overlap_allowed=true，
+    # 视为设计授权的图层融合（如文字叠图、半透明遮罩），不拦截。
+    OVERLAP_AREA_THRESHOLD = 0.5  # sq in
+    foreground_rects = []
+    for (eid, x, y, x2, y2, overlap_allowed) in rects:
+        el = next((e for e in elements if str(e.get("id")) == eid), None)
+        if el is None:
+            continue
+        is_full_bg = (x <= 0.01 and y <= 0.01 and x2 >= slide_w_in - 0.01 and y2 >= slide_h_in - 0.01)
+        z_index = el.get("z_index")
+        is_bottom = (z_index is not None and z_index <= 0)
+        if is_full_bg or is_bottom:
+            continue
+        foreground_rects.append((eid, x, y, x2, y2, overlap_allowed))
+
+    for i in range(len(foreground_rects)):
+        for j in range(i + 1, len(foreground_rects)):
+            id_a, ax1, ay1, ax2, ay2, a_allowed = foreground_rects[i]
+            id_b, bx1, by1, bx2, by2, b_allowed = foreground_rects[j]
             ox = max(0, min(ax2, bx2) - max(ax1, bx1))
             oy = max(0, min(ay2, by2) - max(ay1, by1))
-            if ox > 0 and oy > 0:
+            area = ox * oy
+            if area > OVERLAP_AREA_THRESHOLD and not (a_allowed or b_allowed):
                 errors.append(CompileError(
                     "E002", ErrorLevel.HARD, f"page[{pid}].overlap",
-                    "页面内元素不得实质重叠",
-                    f"{id_a} 与 {id_b} 重叠面积约 {ox * oy:.2f} sq in",
-                    "相邻元素重叠会破坏阅读顺序与视觉层级",
+                    "页面内元素不得实质重叠（未设置 overlap_allowed）",
+                    f"{id_a} 与 {id_b} 重叠面积约 {area:.2f} sq in",
+                    "相邻元素重叠会破坏阅读顺序与视觉层级；如为设计授权图层融合，请在元素中设置 overlap_allowed=true",
                 ))
 
 
@@ -369,7 +400,6 @@ def _add_shape(slide, x: float, y: float, w: float, h: float,
         "rect": MSO_SHAPE.RECTANGLE,
         "round_rect": MSO_SHAPE.ROUNDED_RECTANGLE,
         "oval": MSO_SHAPE.OVAL,
-        "line": MSO_SHAPE.LINE,
     }
     shape_type = shape_map.get(shape_kind, MSO_SHAPE.RECTANGLE)
     sp = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
@@ -436,7 +466,11 @@ def _add_chart(slide, x: float, y: float, w: float, h: float,
 def compile_plan(plan: Dict[str, Any], out_path: str, asset_root: str = ".",
                  strict: bool = False) -> Tuple[bool, List[CompileError]]:
     """返回 (是否成功, 错误列表)。strict=True 时 SOFT 也视为阻断。"""
-    errors = validate_plan(plan)
+    # 先确定实际页面尺寸，供边界检查与渲染使用（避免 4:3 被 16:9 硬编码误判）
+    ar = plan.get("aspect_ratio", "16:9")
+    slide_w_in, slide_h_in = _slide_dimensions(ar)
+
+    errors = validate_plan(plan, slide_w_in, slide_h_in)
     hard_errors = [e for e in errors if e.level == ErrorLevel.HARD]
     if hard_errors:
         for e in hard_errors:
@@ -450,13 +484,12 @@ def compile_plan(plan: Dict[str, Any], out_path: str, asset_root: str = ".",
 
     # 幻灯片尺寸
     prs = Presentation()
-    ar = plan.get("aspect_ratio", "16:9")
     if ar == "4:3":
-        prs.slide_width = Inches(10)
-        prs.slide_height = Inches(7.5)
+        prs.slide_width = Inches(SLIDE_W_IN_4_3)
+        prs.slide_height = Inches(SLIDE_H_IN_4_3)
     else:
-        prs.slide_width = Inches(SLIDE_W_IN)
-        prs.slide_height = Inches(SLIDE_H_IN)
+        prs.slide_width = Inches(SLIDE_W_IN_16_9)
+        prs.slide_height = Inches(SLIDE_H_IN_16_9)
 
     blank_layout = prs.slide_layouts[6]
 
@@ -504,6 +537,12 @@ def compile_plan(plan: Dict[str, Any], out_path: str, asset_root: str = ".",
                     _add_textbox(slide, x + 0.1, y + 0.1, w - 0.2, h - 0.2,
                                  "[图表渲染失败：数据或类型非法]", 12, "#999999", "left",
                                  heading_font, body_font)
+                    errors.append(CompileError(
+                        "E007", ErrorLevel.HARD, f"page[{pid}].element.chart",
+                        f"图表 {el.get('id')} 渲染成功",
+                        "数据或类型非法，渲染失败",
+                        "图表元素渲染失败，已绘制占位框，需作者核查数据与类型",
+                    ))
             elif etype in {"shape", "divider"}:
                 _add_shape(slide, x, y, w, h, color, el.get("shape_kind", "rect"))
             else:
