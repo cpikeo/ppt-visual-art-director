@@ -1,16 +1,34 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ppt-visual-art-director"
-version = "0.1.0"
+version = "0.2.0"
 description = "Visual Art Director 设计判断技能包：内容 → 逐页判断 → 原生可编辑 PPTX"
+readme = "SKILL.md"
 requires-python = ">=3.10"
 dependencies = [
     "python-pptx>=1.0.2",
 ]
 
+[project.optional-dependencies]
+# 仅在本地做真实渲染回归时需要（dev/tests/test_render.py 会自动 skip 缺失的环境）
+render = ["pillow>=10"]
+
 [project.scripts]
 ppt-vad = "scripts.compile_pptx:main"
+
+# 仓库是扁平技能包（SKILL.md + references/ + scripts/ + dev/），
+# 打包只发布编译器模块，开发与参考资料随源码分发，不进 wheel 之外的运行上下文。
+[tool.setuptools]
+packages = ["scripts"]
+include-package-data = false
 
 [tool.pytest.ini_options]
 testpaths = ["dev/tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
+markers = [
+    "render: 需要 LibreOffice + poppler 的真实渲染回归（缺失时自动 skip）",
+]

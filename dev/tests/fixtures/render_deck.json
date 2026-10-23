@@ -1,0 +1,268 @@
+{
+  "deck_id": "render-regression-001",
+  "title": "渲染回归固定案例",
+  "audience": "开发与评审者",
+  "goal": "在一致环境下复查真实渲染质量，而不是只看编译是否成功",
+  "core_claim": "同一份 plan 在固定环境下应稳定产出可读、无溢出、无缺字的中文 PPTX",
+  "visual_concept": "深色开场 → 浅色数据 → 原生三线表 → 图文裁切，验证四种典型页面构造",
+  "palette": [
+    "#B08968",
+    "#111827",
+    "#8C8278",
+    "#E5E7EB"
+  ],
+  "fonts": {
+    "heading": "Noto Serif CJK SC",
+    "body": "Noto Sans CJK SC"
+  },
+  "aspect_ratio": "16:9",
+  "pages": [
+    {
+      "id": "cover",
+      "role": "open",
+      "claim": "验证真实渲染，而不只验证编译通过",
+      "layout": "large_white",
+      "density": "sparse",
+      "emphasis": "high",
+      "background": "#14110F",
+      "elements": [
+        {
+          "id": "title",
+          "type": "title",
+          "content": "验证真实渲染\n而非只看编译通过",
+          "x": 1.1,
+          "y": 2.1,
+          "w": 8.6,
+          "h": 1.7,
+          "font_size": 40,
+          "color": "#F5F1EA",
+          "align": "left"
+        },
+        {
+          "id": "rule",
+          "type": "divider",
+          "x": 1.15,
+          "y": 4.15,
+          "w": 2.6,
+          "h": 0.03,
+          "color": "#B08968",
+          "shape_kind": "rect"
+        },
+        {
+          "id": "sub",
+          "type": "body",
+          "content": "同一份 plan、同一渲染环境、同一组客观检查",
+          "x": 1.1,
+          "y": 4.45,
+          "w": 8.6,
+          "h": 0.6,
+          "font_size": 20,
+          "color": "#D6CEC4",
+          "align": "left"
+        },
+        {
+          "id": "foot",
+          "type": "footer",
+          "content": "内部回归案例 · 不代表对外交付",
+          "x": 1.1,
+          "y": 6.55,
+          "w": 6.0,
+          "h": 0.35,
+          "font_size": 13,
+          "color": "#8C8278",
+          "align": "left"
+        }
+      ]
+    },
+    {
+      "id": "chart_bar",
+      "role": "build",
+      "claim": "26Q3 收入 1.2 亿元，连续六个季度增长",
+      "layout": "data_field",
+      "density": "moderate",
+      "emphasis": "medium",
+      "background": "#FFFFFF",
+      "elements": [
+        {
+          "id": "chart_title",
+          "type": "title",
+          "content": "季度收入逐季走高",
+          "x": 1.1,
+          "y": 0.65,
+          "w": 9.0,
+          "h": 0.9,
+          "font_size": 32,
+          "color": "#111827",
+          "align": "left"
+        },
+        {
+          "id": "bar",
+          "type": "chart",
+          "x": 1.1,
+          "y": 1.85,
+          "w": 11.1,
+          "h": 4.3,
+          "chart": {
+            "kind": "bar",
+            "title": "季度收入",
+            "unit": "亿元",
+            "period": "2025 Q2–2026 Q3",
+            "data": {
+              "categories": [
+                "25Q2",
+                "25Q3",
+                "25Q4",
+                "26Q1",
+                "26Q2",
+                "26Q3"
+              ],
+              "series": [
+                {
+                  "name": "收入",
+                  "values": [
+                    0.52,
+                    0.61,
+                    0.68,
+                    0.74,
+                    0.83,
+                    1.2
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "note",
+          "type": "caption",
+          "content": "数据来源：财务系统 2025 Q2–2026 Q3。",
+          "x": 1.1,
+          "y": 6.35,
+          "w": 11.1,
+          "h": 0.4,
+          "font_size": 13,
+          "color": "#6B7280",
+          "align": "left"
+        }
+      ]
+    },
+    {
+      "id": "table_mixed",
+      "role": "build",
+      "claim": "营收 1.2 亿元、复购率 42%、交付周期 6.5 天，三项口径不同不可共轴",
+      "layout": "editorial",
+      "density": "moderate",
+      "emphasis": "medium",
+      "background": "#F7F5F2",
+      "elements": [
+        {
+          "id": "tbl_title",
+          "type": "title",
+          "content": "异单位指标用原生表格而非单轴图表",
+          "x": 1.1,
+          "y": 0.65,
+          "w": 11.1,
+          "h": 0.9,
+          "font_size": 30,
+          "color": "#111827",
+          "align": "left"
+        },
+        {
+          "id": "tbl",
+          "type": "chart",
+          "x": 1.1,
+          "y": 1.9,
+          "w": 11.1,
+          "h": 3.6,
+          "chart": {
+            "kind": "table",
+            "title": "关键运营指标",
+            "unit": "多口径",
+            "period": "2026 Q3",
+            "data": {
+              "headers": [
+                "指标",
+                "数值",
+                "同比"
+              ],
+              "rows": [
+                [
+                  "季度营收",
+                  "1.2 亿元",
+                  "+25%"
+                ],
+                [
+                  "客户复购率",
+                  "42%",
+                  "+6 个百分点"
+                ],
+                [
+                  "平均交付周期",
+                  "6.5 天",
+                  "-1.5 天"
+                ]
+              ]
+            }
+          }
+        },
+        {
+          "id": "tbl_note",
+          "type": "caption",
+          "content": "单位与统计期间已逐列标注，避免把不同口径塞进同一数值轴。",
+          "x": 1.1,
+          "y": 5.75,
+          "w": 11.1,
+          "h": 0.5,
+          "font_size": 13,
+          "color": "#6B7280",
+          "align": "left"
+        }
+      ]
+    },
+    {
+      "id": "image_crop",
+      "role": "close",
+      "claim": "素材必须等比裁切，绝不横向压扁",
+      "layout": "image_story",
+      "density": "sparse",
+      "emphasis": "high",
+      "background": "#FFFFFF",
+      "elements": [
+        {
+          "id": "photo",
+          "type": "image",
+          "image_id": "render_fixture.png",
+          "asset_reason": "竖框裁切验证：源图为 16:9，目标框为接近 4:5",
+          "x": 8.3,
+          "y": 0.0,
+          "w": 5.033,
+          "h": 7.5
+        },
+        {
+          "id": "img_title",
+          "type": "title",
+          "content": "裁切不失真\n构图仍成立",
+          "x": 0.9,
+          "y": 2.5,
+          "w": 6.6,
+          "h": 1.7,
+          "font_size": 36,
+          "color": "#111827",
+          "align": "left"
+        },
+        {
+          "id": "img_note",
+          "type": "caption",
+          "content": "源图 1600×900，等比居中等比裁切至 5.03×7.5 英寸。",
+          "x": 0.9,
+          "y": 4.45,
+          "w": 6.6,
+          "h": 0.8,
+          "font_size": 14,
+          "color": "#4B5563",
+          "align": "left"
+        }
+      ]
+    }
+  ]
+}

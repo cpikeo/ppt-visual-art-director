@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # 最小依赖：只在纯 Python 环境跑契约/语义/安装测试，不需要图形栈。
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - name: 安装技能包（同时验证 pyproject 可构建）
+        run: python -m pip install . pillow pytest
+      - name: 契约与语义回归（纯 Python，不含渲染）
+        run: python -m pytest dev/tests -q --ignore=dev/tests/test_render.py -p no:cacheprovider
+      - name: 安装与 CLI 入口验证
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.10" ]; then python -m pip install tomli; fi
+          python -m pytest dev/tests/test_install.py -q -p no:cacheprovider
+
+  # 真实渲染回归：需要 CJK 字体与 LibreOffice/poppler，失败即阻断，不允许静默跳过。
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装渲染链与中文字体
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-impress poppler-utils fonts-noto-cjk
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install . pillow pytest
+      - name: 固定案例渲染回归
+        run: python -m pytest dev/tests/test_render.py -q -p no:cacheprovider
+      - name: 保留渲染产物供人工复核
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-artifacts
+          path: |
+            /tmp/pytest-*/render*/**/*.png
+            /tmp/pytest-*/render*/**/*.pdf
+          if-no-files-found: warn
