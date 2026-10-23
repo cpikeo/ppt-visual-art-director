@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -108,6 +109,32 @@ def _num(value: Any, where: str) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _extract_numbers(text: str) -> List[float]:
+    """从中文/英文文本中提取数字（含百分号、单位前的数值）。"""
+    if not isinstance(text, str):
+        return []
+    # 匹配数字，包括小数、百分号前的数字
+    pattern = r"(\d+(?:\.\d+)?)\s*%?\s*(?:万|亿|千|百|十|元|美元|人|个|台|%)?"
+    return [float(m.group(1)) for m in re.finditer(pattern, text)]
+
+
+def _chart_data_numbers(chart: Optional[Dict[str, Any]]) -> List[float]:
+    """从 chart.data 中提取所有数值。"""
+    if not isinstance(chart, dict):
+        return []
+    data = chart.get("data")
+    if not isinstance(data, dict):
+        return []
+    nums: List[float] = []
+    for series in data.get("series", []) or []:
+        for v in series.get("values", []) or []:
+            try:
+                nums.append(float(v))
+            except (TypeError, ValueError):
+                continue
+    return nums
 
 
 def load_plan(path: str) -> Tuple[Optional[Dict[str, Any]], List[CompileError]]:
@@ -283,7 +310,9 @@ def _validate_elements(page: Dict[str, Any], errors: List[CompileError],
                         "文字过小，中文在投影下不可读",
                     ))
 
-        # 图表数据与主张一致性（轻度客观检查：数据非空、数字存在）
+        # 图表数据结构性检查（E004：data 缺失或结构非法）
+        # 语义一致性（数字/单位/口径与主张是否冲突）无法由程序完全判定，
+        # 仅在明显数值不一致时输出 SOFT 警告，建议 AI 或人工复核。
         if etype == "chart":
             chart = el.get("chart")
             if not isinstance(chart, dict) or not chart.get("data"):
@@ -291,8 +320,22 @@ def _validate_elements(page: Dict[str, Any], errors: List[CompileError],
                     "E004", ErrorLevel.HARD, f"{loc}.{eid}.chart",
                     "图表 chart.data 非空",
                     "chart.data 缺失或为空",
-                    "图表元素必须携带数据",
+                    "图表元素必须携带数据；语义一致性需人工或 AI 复核",
                 ))
+            else:
+                # 软检查：chart 数据中的关键数值与页面 claim 中的数字是否存在明显冲突
+                claim = page.get("claim", "") or ""
+                claim_nums = set(_extract_numbers(claim))
+                chart_nums = set(_chart_data_numbers(chart))
+                if claim_nums and chart_nums:
+                    # 若 claim 中的数字在 chart 数据中完全找不到任何匹配，提示复核
+                    if not any(abs(c - ch) < 1e-6 for c in claim_nums for ch in chart_nums):
+                        errors.append(CompileError(
+                            "E008", ErrorLevel.SOFT, f"{loc}.{eid}.chart",
+                            "图表数值与页面主张可能存在语义不一致",
+                            f"claim 数字：{sorted(claim_nums)}；chart 数值：{sorted(chart_nums)}",
+                            "图表数据与页面主张的数字未建立可验证的对应关系，建议 AI 或人工复核语义一致性",
+                        ))
 
         # 图片资源存在性由编译阶段再检查（需文件系统），这里只记录
         if etype == "image" and not el.get("image_id"):
