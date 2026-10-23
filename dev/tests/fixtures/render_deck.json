@@ -1,4 +1,5 @@
 {
+  "schema_version": "2.0",
   "deck_id": "render-regression-001",
   "title": "渲染回归固定案例",
   "audience": "开发与评审者",
@@ -21,6 +22,9 @@
       "id": "cover",
       "role": "open",
       "claim": "验证真实渲染，而不只验证编译通过",
+      "evidence_status": "supported",
+      "focus": "左侧两行标题「验证真实渲染」",
+      "composition_rationale": "深色场中以大标题建立第一入口，发丝线与正文依次降级",
       "layout": "large_white",
       "density": "sparse",
       "emphasis": "high",
@@ -78,6 +82,9 @@
       "id": "chart_bar",
       "role": "build",
       "claim": "26Q3 收入 1.2 亿元，连续六个季度增长",
+      "evidence_status": "supported",
+      "focus": "26Q3 柱形及其连续六季度序列",
+      "composition_rationale": "图表占据主区，标题与来源形成主张—证据—出处阅读路径",
       "layout": "data_field",
       "density": "moderate",
       "emphasis": "medium",
@@ -150,6 +157,9 @@
       "id": "table_mixed",
       "role": "build",
       "claim": "营收 1.2 亿元、复购率 42%、交付周期 6.5 天，三项口径不同不可共轴",
+      "evidence_status": "supported",
+      "focus": "三项异单位指标的原生三线表",
+      "composition_rationale": "以列对齐与水平发丝线比较不同口径，避免虚假共轴",
       "layout": "editorial",
       "density": "moderate",
       "emphasis": "medium",
@@ -223,6 +233,9 @@
       "id": "image_crop",
       "role": "close",
       "claim": "素材必须等比裁切，绝不横向压扁",
+      "evidence_status": "supported",
+      "focus": "左侧裁切主张与右侧正圆主体",
+      "composition_rationale": "左右分区同时检查文字层级和等比裁切，保留圆形作为失真参照",
       "layout": "image_story",
       "density": "sparse",
       "emphasis": "high",
@@ -264,5 +277,16 @@
         }
       ]
     }
-  ]
+  ],
+  "assets": {
+    "render_fixture.png": {
+      "source": "dev/tests/test_render.py 本地确定性绘制",
+      "generated": true,
+      "used_as_evidence": false,
+      "license_status": "cleared",
+      "privacy_status": "cleared",
+      "reference": "dev/tests/test_render.py#rendered",
+      "notes": "仅用于裁切回归，不冒充事实照片"
+    }
+  }
 }

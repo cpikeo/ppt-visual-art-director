@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ppt-visual-art-director"
-version = "0.2.0"
+version = "0.3.0"
 description = "Visual Art Director 设计判断技能包：内容 → 逐页判断 → 原生可编辑 PPTX"
 readme = "SKILL.md"
 requires-python = ">=3.10"
 dependencies = [
     "python-pptx>=1.0.2",
+    "jsonschema>=4.23",
 ]
 
 [project.optional-dependencies]
@@ -18,12 +19,16 @@ render = ["pillow>=10"]
 
 [project.scripts]
 ppt-vad = "scripts.compile_pptx:main"
+ppt-vad-verify = "scripts.verify_delivery:main"
 
-# 仓库是扁平技能包（SKILL.md + references/ + scripts/ + dev/），
-# 打包只发布编译器模块，开发与参考资料随源码分发，不进 wheel 之外的运行上下文。
+# 仓库是扁平技能包（SKILL.md + references/ + scripts/ + dev/）。
+# wheel 只发布执行模块与 JSON 契约；开发测试、评测和参考资料随源码分发。
 [tool.setuptools]
 packages = ["scripts"]
 include-package-data = false
+
+[tool.setuptools.package-data]
+scripts = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["dev/tests"]

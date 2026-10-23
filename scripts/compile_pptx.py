@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -38,6 +39,30 @@ try:
 except ImportError as exc:  # pragma: no cover - 依赖缺失时给出清晰提示
     print(f"[FATAL] 缺少依赖 python-pptx：{exc}\n        请先安装：pip install python-pptx", file=sys.stderr)
     sys.exit(2)
+
+try:
+    from jsonschema import Draft202012Validator
+except ImportError as exc:  # pragma: no cover
+    print(f"[FATAL] 缺少依赖 jsonschema：{exc}\n        请先安装：pip install jsonschema", file=sys.stderr)
+    sys.exit(2)
+
+
+def _load_authority(filename: str) -> Dict[str, Any]:
+    """读取随包分发的唯一机器权威源；缺失或损坏时不得静默回退。"""
+    path = Path(__file__).resolve().with_name(filename)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:  # pragma: no cover - 安装损坏
+        raise RuntimeError(f"机器权威源不可读：{path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(f"机器权威源顶层必须是对象：{path}")
+    return data
+
+
+PLAN_SCHEMA = _load_authority("plan.schema.json")
+POLICY = _load_authority("policy.json")
+Draft202012Validator.check_schema(PLAN_SCHEMA)
+PLAN_VALIDATOR = Draft202012Validator(PLAN_SCHEMA)
 
 
 # ---------------------------------------------------------------------------
@@ -66,42 +91,47 @@ class CompileError:
 
 
 # ---------------------------------------------------------------------------
-# 常量与契约默认值（唯一对应 references/contract.md）
+# 机器契约与策略视图
+# Schema 管字段/枚举；policy.json 管默认值/阈值。这里只派生只读视图，不另存副本。
 # ---------------------------------------------------------------------------
 
-SLIDE_W_IN_16_9 = 13.333
-SLIDE_H_IN_16_9 = 7.5
-SLIDE_W_IN_4_3 = 10.0
-SLIDE_H_IN_4_3 = 7.5
-BOUND_TOL_IN = 0.01
+_CANVAS = POLICY["canvas"]
+SLIDE_W_IN_16_9, SLIDE_H_IN_16_9 = _CANVAS["dimensions_in"]["16:9"]
+SLIDE_W_IN_4_3, SLIDE_H_IN_4_3 = _CANVAS["dimensions_in"]["4:3"]
+BOUND_TOL_IN = _CANVAS["bound_tolerance_in"]
 
-DEFAULT_FONTS = {"heading": "微软雅黑", "body": "微软雅黑"}
-MIN_TITLE_PT = 28
-MIN_BODY_PT = 18
-MIN_CAPTION_PT = 12
-DEFAULT_NUMBER_PT = 40
-DEFAULT_CAPTION_PT = 13
-MAX_ELEMENTS_PER_PAGE = 12
+DEFAULT_FONTS = POLICY["defaults"]["fonts"]
+MIN_TITLE_PT = POLICY["typography"]["min_pt"]["title"]
+MIN_BODY_PT = POLICY["typography"]["min_pt"]["body"]
+MIN_CAPTION_PT = POLICY["typography"]["min_pt"]["caption"]
+DEFAULT_NUMBER_PT = POLICY["typography"]["default_pt"]["number"]
+DEFAULT_CAPTION_PT = POLICY["typography"]["default_pt"]["caption"]
+MAX_ELEMENTS_PER_PAGE = POLICY["typography"]["max_elements_per_page"]
 
-REQUIRED_DECK_FIELDS = ["deck_id", "title", "audience", "goal", "core_claim", "pages"]
-REQUIRED_PAGE_FIELDS = ["id", "role", "claim", "elements"]
-REQUIRED_ELEMENT_FIELDS = ["id", "type", "x", "y", "w", "h"]
+_DECK_SCHEMA = PLAN_SCHEMA
+_PAGE_SCHEMA = PLAN_SCHEMA["$defs"]["page"]
+_ELEMENT_SCHEMA = PLAN_SCHEMA["$defs"]["element"]
+_CHART_SCHEMA = PLAN_SCHEMA["$defs"]["chart"]
+REQUIRED_DECK_FIELDS = list(_DECK_SCHEMA["required"])
+REQUIRED_PAGE_FIELDS = list(_PAGE_SCHEMA["required"])
+REQUIRED_ELEMENT_FIELDS = list(_ELEMENT_SCHEMA["required"])
 
-VALID_ASPECT_RATIOS = {"16:9", "4:3"}
-VALID_ROLES = {"open", "build", "breathe", "turn", "hold", "close"}
-VALID_LAYOUTS = {"large_white", "editorial", "data_field", "image_story", "linear", "asymmetric"}
-VALID_DENSITIES = {"sparse", "moderate", "dense"}
-VALID_EMPHASES = {"low", "medium", "high"}
-TEXT_ELEMENT_TYPES = {"title", "body", "text", "number", "caption", "footer"}
-VALID_ELEMENT_TYPES = TEXT_ELEMENT_TYPES | {"image", "chart", "shape", "divider"}
-VALID_CHART_KINDS = {"bar", "line", "pie", "donut", "table"}
+VALID_ASPECT_RATIOS = set(_DECK_SCHEMA["properties"]["aspect_ratio"]["enum"])
+VALID_ROLES = set(_PAGE_SCHEMA["properties"]["role"]["enum"])
+VALID_LAYOUTS = set(_PAGE_SCHEMA["properties"]["layout"]["enum"])
+VALID_DENSITIES = set(_PAGE_SCHEMA["properties"]["density"]["enum"])
+VALID_EMPHASES = set(_PAGE_SCHEMA["properties"]["emphasis"]["enum"])
+TEXT_ELEMENT_TYPES = set(PLAN_SCHEMA["$defs"]["textElementType"]["enum"])
+VALID_ELEMENT_TYPES = set(_ELEMENT_SCHEMA["properties"]["type"]["enum"])
+VALID_CHART_KINDS = set(_CHART_SCHEMA["properties"]["kind"]["enum"])
 
 
 def _slide_dimensions(aspect_ratio: Optional[str]) -> Tuple[float, float]:
-    """返回实际幻灯片尺寸（英寸），避免 4:3 页面被 16:9 尺寸误判。"""
-    if aspect_ratio == "4:3":
-        return SLIDE_W_IN_4_3, SLIDE_H_IN_4_3
-    return SLIDE_W_IN_16_9, SLIDE_H_IN_16_9
+    """只接受 Schema 已声明的画幅；缺省值显式来自 policy。"""
+    selected = aspect_ratio or _CANVAS["default_aspect_ratio"]
+    if selected not in VALID_ASPECT_RATIOS:
+        raise ValueError(f"未定义的画幅：{selected!r}")
+    return tuple(_CANVAS["dimensions_in"][selected])
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +139,14 @@ def _slide_dimensions(aspect_ratio: Optional[str]) -> Tuple[float, float]:
 # ---------------------------------------------------------------------------
 
 def _num(value: Any, where: Optional[str] = None) -> Optional[float]:
+    """只接受有限数值；bool、NaN 与 Infinity 都不是合法几何或图表数值。"""
     if isinstance(value, bool) or value is None:
         return None
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return None
+    return result if math.isfinite(result) else None
 
 
 _NUM_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9#])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
@@ -234,6 +266,8 @@ class Quantity:
     comparative: bool = False  # 同比 / 环比等比较口径
     pair_role: str = ""       # source | target（从…到…结构）
     span: Tuple[int, int] = (0, 0)  # 在主张文本中的字符区间
+    source: str = "claim"     # claim 或实际可见元素 title:<id>
+    source_text: str = ""     # 该定量表述所属的完整可见文本
 
 
 def _parse_cell_quantity(text: str, default_unit: str = "") -> List[Quantity]:
@@ -332,11 +366,10 @@ def _parse_claim_quantities(claim: str) -> List[Quantity]:
     if not isinstance(claim, str) or not claim.strip():
         return []
     quantities: List[Quantity] = []
-    clause_start = 0
     for m in _NUM_TOKEN_RE.finditer(claim):
         start, end = m.start(), m.end()
-        while clause_start < len(claim) and claim[clause_start] in "，,。；;、":
-            clause_start += 1
+        # 每个数字只属于最近标点后的当前小句，避免前一句的同比/期间泄漏到后一句。
+        clause_start = max(claim.rfind(mark, 0, start) for mark in "，,。；;、") + 1
         clause = claim[clause_start:start]
         prefix = claim[max(clause_start, start - 16):start]
         value = float(m.group(0).replace(",", ""))
@@ -398,12 +431,10 @@ def _collect_data_quantities(chart: Dict[str, Any]) -> Tuple[List[Quantity], Lis
 
     chart_periods = sorted(_extract_periods(str(chart.get("period") or "")))
     chart_period = chart_periods[0] if chart_periods else ""
-    if kind == "table":
-        rows = data.get("rows") or []
-        headers = data.get("headers") or []
+    if kind == "table" and "headers" in data:
+        rows = data["rows"]
+        headers = data["headers"]
         for ri, row in enumerate(rows):
-            if not isinstance(row, list):
-                continue
             row_label = str(row[0]) if row and not _extract_numbers(str(row[0])) else ""
             for ci, cell in enumerate(row):
                 qs = _parse_cell_quantity(str(cell), default_unit)
@@ -415,6 +446,22 @@ def _collect_data_quantities(chart: Dict[str, Any]) -> Tuple[List[Quantity], Lis
                     q.period = period
                     q.note = f"表格第{ri + 1}行" + (f"·{row_label}" if row_label else "")
                     out.append(q)
+        return out, traces
+    if kind == "table":
+        # categories/series 表格只展开实际单元格；不得把行序自动解释成趋势。
+        categories = [str(c) for c in data["categories"]]
+        for si, series in enumerate(data["series"]):
+            name = str(series["name"])
+            unit = str(series.get("unit", default_unit) or "")
+            for ci, value in enumerate(series["values"]):
+                category = categories[ci]
+                periods = _extract_periods(category)
+                out.append(Quantity(
+                    value=float(value), kind="percent" if _split_unit(unit)[1] == "%" else "level",
+                    unit=unit, origin="cell", label=name,
+                    period=sorted(periods)[0] if periods else chart_period,
+                    note=f"表格 {name}@{category or ci + 1}",
+                ))
         return out, traces
 
     categories = data.get("categories") if isinstance(data.get("categories"), list) else []
@@ -630,10 +677,22 @@ def _match_quantity(q: Quantity, data: List[Quantity]) -> QuantityVerdict:
 
 
 def verify_page_claim(page: Dict[str, Any]) -> List[QuantityVerdict]:
-    """核对页面主张与全部图表/表格元素的数据一致性（对每条定量表述独立判定）。"""
+    """分别核对 page.claim 与可见标题；任一文本正确都不能替另一文本免责。"""
+    all_elements = [el for el in (page.get("elements") or []) if isinstance(el, dict)]
+    elements = [el for el in all_elements if el.get("type") == "chart"]
     claim = page.get("claim") or ""
-    quantities = _parse_claim_quantities(claim)
-    elements = [el for el in (page.get("elements") or []) if isinstance(el, dict) and el.get("type") == "chart"]
+    claim_texts: List[Tuple[str, str]] = [("claim", claim)]
+    for el in all_elements:
+        if el.get("type") != "title":
+            continue
+        text = str(el.get("content") or "")
+        if text.strip() and text.strip() != claim.strip():
+            claim_texts.append((f"title:{el.get('id')}", text))
+    quantities: List[Quantity] = []
+    for source, text in claim_texts:
+        for q in _parse_claim_quantities(text):
+            q.source, q.source_text = source, text
+            quantities.append(q)
     if not quantities or not elements:
         return []
 
@@ -669,7 +728,7 @@ def verify_page_claim(page: Dict[str, Any]) -> List[QuantityVerdict]:
         # 期间交叉核对：图表有期间信息且主张期间不在其间 → 冲突；主张有期间而图表完全没有 → 不臆断
         claim_periods: Set[str] = set()
         if v.status != "verified" and v.mode == "no_candidate":
-            claim_periods = _extract_periods(claim)
+            claim_periods = _extract_periods(q.source_text)
             missing = claim_periods - data_periods if (claim_periods and data_periods) else set()
             if missing:
                 v = QuantityVerdict(q, "conflict", "period",
@@ -700,6 +759,8 @@ def verify_page_claim(page: Dict[str, Any]) -> List[QuantityVerdict]:
     targets = [v for v in verdicts if v.quantity.pair_role == "target"]
     for s in sources:
         for t in targets:
+            if s.quantity.source != t.quantity.source:
+                continue
             for name, cats, vals in traces:
                 try:
                     i = next(k for k, x in enumerate(vals) if abs(x - s.quantity.value) <= 1e-2)
@@ -736,15 +797,16 @@ def _validate_claim_evidence(page: Dict[str, Any], errors: List[CompileError]) -
         q = v.quantity
         kind_txt = {"percent": "百分比", "pct_points": "百分点", "level": "数值"}[q.kind]
         token = q.token or f"{q.value:g}"
-        return f"[{ '冲突' if v.status == 'conflict' else '复核' }/{v.mode}] {token}（{kind_txt}）：{v.detail}"
+        source = "" if q.source == "claim" else f"{q.source}·"
+        return f"[{ '冲突' if v.status == 'conflict' else '复核' }/{v.mode}] {source}{token}（{kind_txt}）：{v.detail}"
 
     total, ok = len(verdicts), len(verdicts) - len(bad)
-    lines = [f"主张 {total} 项定量表述：可核对 {ok} 项，待核 {len(bad)} 项"]
+    lines = [f"页面 {total} 项定量表述：可核对 {ok} 项，待核 {len(bad)} 项"]
     lines.extend("  - " + _fmt(v) for v in bad)
     lines.append("  （数值一致性筛查不等于语义事实成立；方向/单位/期间/同值异指标仍需 AI 或人工判断）")
     errors.append(CompileError(
-        "E008", ErrorLevel.SOFT, f"page[{page.get('id', '?')}].claim",
-        "claim 定量表述须与图表/表格数据在数值、方向、单位、期间上对应",
+        "E008", ErrorLevel.SOFT, f"page[{page.get('id', '?')}].visible_text",
+        "claim 与可见标题的定量表述须分别与图表/表格数据在数值、方向、单位、期间上对应",
         "\n".join(lines),
         "图表数据与页面主张未完全建立可验证对应关系，请复核数字、单位、期间或比较对象",
     ))
@@ -758,8 +820,8 @@ def _validate_claim_evidence(page: Dict[str, Any], errors: List[CompileError]) -
 # 不修改文案、不自动缩字号。真实结论以渲染 PNG 的墨迹包围盒为准（dev/tests/test_render.py）。
 # ---------------------------------------------------------------------------
 
-TEXT_MARGIN_X_IN = 0.05 * 2
-TEXT_MARGIN_Y_IN = 0.03 * 2
+TEXT_MARGIN_X_IN = POLICY["typography"]["margin_in"]["x"] * 2
+TEXT_MARGIN_Y_IN = POLICY["typography"]["margin_in"]["y"] * 2
 
 
 def _char_em(ch: str) -> float:
@@ -813,7 +875,7 @@ def text_fit_risk(el: Dict[str, Any]) -> Optional[str]:
     spacing = 1.15 if etype in {"title", "number"} else 1.3
     lines = estimate_text_lines(content, w, font_pt)
     needed_in = lines * font_pt * spacing / 72.0 + TEXT_MARGIN_Y_IN
-    if needed_in <= h * 1.05:
+    if needed_in <= h * POLICY["typography"]["text_fit_tolerance"]:
         return None
     return (
         f"估算需 {lines} 行、约 {needed_in:.2f} in 高，文本框仅 {h:.2f} in"
@@ -825,15 +887,19 @@ def text_fit_risk(el: Dict[str, Any]) -> Optional[str]:
 # 解析与校验
 # ---------------------------------------------------------------------------
 
+def _reject_nonstandard_json_number(token: str) -> None:
+    raise ValueError(f"JSON 不允许非有限数值：{token}")
+
+
 def load_plan(path: str) -> Tuple[Optional[Dict[str, Any]], List[CompileError]]:
     errors: List[CompileError] = []
     try:
         with open(path, "r", encoding="utf-8") as f:
-            plan = json.load(f)
+            plan = json.load(f, parse_constant=_reject_nonstandard_json_number)
     except FileNotFoundError:
         errors.append(CompileError("E001", ErrorLevel.HARD, path, "plan 文件存在", "文件不存在", "无法读取 plan 文件"))
         return None, errors
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, ValueError) as exc:
         errors.append(CompileError("E001", ErrorLevel.HARD, path, "plan 为合法 JSON", f"JSON 解析失败：{exc}", "plan 格式非法"))
         return None, errors
     if not isinstance(plan, dict):
@@ -842,114 +908,252 @@ def load_plan(path: str) -> Tuple[Optional[Dict[str, Any]], List[CompileError]]:
     return plan, errors
 
 
+def _schema_location(path) -> str:
+    parts = list(path)
+    if not parts:
+        return "$"
+    out = "$"
+    for part in parts:
+        out += f"[{part}]" if isinstance(part, int) else f".{part}"
+    return out
+
+
+def _nonfinite_errors(value: Any, path: str = "$") -> List[CompileError]:
+    """jsonschema 的 number 会接受 Python float('nan')；JSON/PPTX 不接受。"""
+    errors: List[CompileError] = []
+    if isinstance(value, float) and not math.isfinite(value):
+        errors.append(CompileError(
+            "E001", ErrorLevel.HARD, path, "所有数值均为有限 JSON number", repr(value),
+            "NaN/Infinity 不得进入几何、图表或编译载荷",
+        ))
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            errors.extend(_nonfinite_errors(item, f"{path}.{key}"))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            errors.extend(_nonfinite_errors(item, f"{path}[{index}]"))
+    return errors
+
+
+def _validate_schema(plan: Dict[str, Any]) -> List[CompileError]:
+    errors = _nonfinite_errors(plan)
+    raw_schema_errors = list(PLAN_VALIDATOR.iter_errors(plan))
+    schema_errors = []
+    for candidate in raw_schema_errors:
+        path = list(candidate.absolute_path)
+        has_more_specific = any(
+            other is not candidate
+            and len(other.absolute_path) > len(path)
+            and list(other.absolute_path)[:len(path)] == path
+            for other in raw_schema_errors
+        )
+        if candidate.validator in {"oneOf", "anyOf"} and has_more_specific:
+            continue
+        schema_errors.append(candidate)
+    schema_errors.sort(key=lambda e: (-len(e.absolute_path), tuple(str(p) for p in e.absolute_path), e.message))
+    for error in schema_errors:
+        path = list(error.absolute_path)
+        location = _schema_location(error.absolute_path)
+        missing = None
+        if error.validator == "required":
+            match = re.match(r"'([^']+)' is a required property", error.message)
+            if match:
+                missing = match.group(1)
+                location += f".{missing}"
+        code = "E001"
+        if missing in {"chart", "data"} and ("chart" in path or missing == "chart"):
+            code = "E004"
+        elif "chart" in path:
+            code = "E007"
+        elif path and path[-1] in {"x", "y", "w", "h"} and error.validator in {"minimum", "exclusiveMinimum"}:
+            code = "E002"
+        actual = error.message
+        if path and path[-1] == "kind" and "chart" in path:
+            actual = f"kind={error.instance!r}：{actual}"
+        elif "values" in path and error.validator == "type":
+            actual = f"系列含不可解析数值 {error.instance!r}：{actual}"
+        if error.context:
+            actual += "；候选约束：" + " / ".join(e.message for e in error.context[:2])
+        errors.append(CompileError(
+            code, ErrorLevel.HARD, location,
+            "plan 必须符合 scripts/plan.schema.json", actual,
+            "结构契约失败；修正字段、类型、枚举或跨字段条件后再进入 BUILD",
+        ))
+    return errors
+
+
+def _validate_handoff(plan: Dict[str, Any], errors: List[CompileError]) -> None:
+    for field in ("deck_id", "title", "audience", "goal", "core_claim"):
+        if not str(plan.get(field, "")).strip():
+            errors.append(CompileError(
+                "E001", ErrorLevel.HARD, f"deck.{field}", "必填字符串不得为空白",
+                repr(plan.get(field)), "THINK 交接缺少有效内容",
+            ))
+    for pi, page in enumerate(plan["pages"]):
+        loc = f"page[{pi}]({page['id']})"
+        for field in ("id", "focus", "composition_rationale"):
+            if not str(page.get(field, "")).strip():
+                errors.append(CompileError(
+                    "E001", ErrorLevel.HARD, f"{loc}.{field}", "THINK 关键交接不得为空白",
+                    repr(page.get(field)), "先补齐焦点或构图理由，再进入 BUILD",
+                ))
+        if not page["claim"].strip():
+            has_note = bool(str(page.get("notes", "")).strip())
+            has_open = any(str(q).strip() for q in page.get("open_questions", []))
+            if not (has_note or has_open):
+                errors.append(CompileError(
+                    "E001", ErrorLevel.HARD, f"{loc}.claim", "空 claim 必须有未决说明",
+                    "claim/notes/open_questions 均无有效内容", "不得静默填补未决主张",
+                ))
+        if page["evidence_status"] == "partial":
+            if not any(str(q).strip() for q in page.get("open_questions", [])):
+                errors.append(CompileError(
+                    "E001", ErrorLevel.HARD, f"{loc}.open_questions",
+                    "evidence_status=partial 必须列出未决事项", "无有效未决事项",
+                    "证据缺口不得只写状态而没有后续处置",
+                ))
+        if page["evidence_status"] == "unsupported" and page["claim"].strip():
+            errors.append(CompileError(
+                "E001", ErrorLevel.HARD, f"{loc}.claim", "unsupported 不得把未证主张写成结论",
+                page["claim"], "清空 claim 或补齐证据并更新 evidence_status",
+            ))
+
+
+def _validate_chart_contract(el: Dict[str, Any], loc: str, errors: List[CompileError]) -> None:
+    chart = el["chart"]
+    kind = chart["kind"]
+    data = chart["data"]
+
+    if "headers" in data:
+        headers = data["headers"]
+        for ri, row in enumerate(data["rows"]):
+            if len(row) != len(headers):
+                errors.append(CompileError(
+                    "E007", ErrorLevel.HARD, f"{loc}.chart.data.rows[{ri}]",
+                    "表格每行单元格数必须等于 headers", f"实际 {len(row)}，headers {len(headers)}",
+                    "表格载荷不完整，禁止截断或补造单元格",
+                ))
+        return
+
+    categories = data["categories"]
+    series_list = data["series"]
+    labels = [str(c) for c in categories]
+    if any(not label.strip() for label in labels) or len(set(labels)) != len(labels):
+        errors.append(CompileError(
+            "E007", ErrorLevel.HARD, f"{loc}.chart.data.categories",
+            "类别标签非空且字符串化后唯一", repr(categories),
+            "类别身份不清会导致数值错配",
+        ))
+
+    for si, series in enumerate(series_list):
+        values = series["values"]
+        if len(values) != len(categories):
+            errors.append(CompileError(
+                "E007", ErrorLevel.HARD, f"{loc}.chart.data.series[{si}].values",
+                "系列长度必须等于类别数", f"长度 {len(values)}，类别数 {len(categories)}",
+                "禁止丢弃、插值或补造数据点",
+            ))
+        if kind in {"pie", "donut"}:
+            if any(v < 0 for v in values):
+                errors.append(CompileError(
+                    "E007", ErrorLevel.HARD, f"{loc}.chart.data.series[{si}].values",
+                    "饼/环图值必须非负", repr(values), "负值不能表达扇区占比",
+                ))
+            if sum(values) <= 0:
+                errors.append(CompileError(
+                    "E007", ErrorLevel.HARD, f"{loc}.chart.data.series[{si}].values",
+                    "饼/环图必须具有正的有效总量", repr(values), "零总量无法计算占比",
+                ))
+
+    if kind in {"pie", "donut"} and len(series_list) != 1:
+        errors.append(CompileError(
+            "E007", ErrorLevel.HARD, f"{loc}.chart.data.series",
+            "pie/donut 必须且只能有一个系列", f"实际 {len(series_list)} 个系列",
+            "多系列饼/环会在 PPTX 中丢失后续系列；请拆图或改用可比较的图表/表格",
+        ))
+
+    if len(series_list) > 1 and kind != "table":
+        if chart.get("shared_basis") is not True:
+            level = ErrorLevel.HARD if chart.get("shared_basis") is False else ErrorLevel.SOFT
+            errors.append(CompileError(
+                "E008", level, f"{loc}.chart.shared_basis",
+                "多系列共轴前必须显式确认 shared_basis=true",
+                repr(chart.get("shared_basis")),
+                "不同或未知统计口径不得仅因可绘制就自动共轴；请确认口径、分拆或改用表格",
+            ))
+        normalized_units = {
+            _split_unit(str(s.get("unit", chart.get("unit", ""))))
+            for s in series_list
+        }
+        if len(normalized_units) > 1:
+            errors.append(CompileError(
+                "E008", ErrorLevel.HARD, f"{loc}.chart.data.series",
+                "共轴系列必须具有相同规范化单位与数量级",
+                repr(sorted(normalized_units)),
+                "不得静默换算或混合单位；请先明确转换并保留依据，或分拆呈现",
+            ))
+        declared_basis = {str(s.get("basis", chart.get("basis", ""))).strip() for s in series_list}
+        if chart.get("shared_basis") is True and len(declared_basis) > 1:
+            errors.append(CompileError(
+                "E008", ErrorLevel.HARD, f"{loc}.chart.shared_basis",
+                "shared_basis=true 与各系列 basis 声明一致", repr(sorted(declared_basis)),
+                "权威声明互相冲突；确认统计口径后再编译",
+            ))
+
+
+def _validate_asset(el: Dict[str, Any], assets: Dict[str, Any], loc: str, errors: List[CompileError]) -> None:
+    image_id = el["image_id"]
+    record = assets.get(image_id)
+    if record is None:
+        errors.append(CompileError(
+            "E011", ErrorLevel.HARD, f"{loc}.image_id",
+            "图片必须引用 deck.assets 中同名的素材记录", image_id,
+            "素材来源、授权、隐私与生成属性未交接，G-COMPLY 不得推定通过",
+        ))
+        return
+    for field in ("license_status", "privacy_status"):
+        status = record[field]
+        if status != "cleared":
+            errors.append(CompileError(
+                "E011", ErrorLevel.HARD if status == "blocked" else ErrorLevel.SOFT,
+                f"deck.assets[{image_id}].{field}", "素材授权/隐私必须为 cleared 才可交付",
+                status, "待确认项为 NOT VERIFIED；blocked 为硬阻断，均不得由风险批准绕过",
+            ))
+
+
 def validate_plan(
     plan: Dict[str, Any],
     slide_w_in: Optional[float] = None,
     slide_h_in: Optional[float] = None,
 ) -> List[CompileError]:
-    errors: List[CompileError] = []
+    errors = _validate_schema(plan)
+    if errors:
+        return errors
 
-    ar = plan.get("aspect_ratio")
-    if ar is not None and ar not in VALID_ASPECT_RATIOS:
-        errors.append(CompileError(
-            "E001", ErrorLevel.SOFT, "deck.aspect_ratio",
-            f"aspect_ratio ∈ {sorted(VALID_ASPECT_RATIOS)}",
-            f"实际：{ar!r}",
-            "画幅比例非法，将按默认 16:9 处理",
-        ))
+    _validate_handoff(plan, errors)
+    ar = plan.get("aspect_ratio") or _CANVAS["default_aspect_ratio"]
     default_w, default_h = _slide_dimensions(ar)
     w_limit = default_w if slide_w_in is None else slide_w_in
     h_limit = default_h if slide_h_in is None else slide_h_in
 
-    for field in REQUIRED_DECK_FIELDS:
-        if field not in plan or plan[field] in (None, ""):
+    seen_page_ids: Set[str] = set()
+    for pi, page in enumerate(plan["pages"]):
+        pid = page["id"]
+        if pid in seen_page_ids:
             errors.append(CompileError(
-                "E001", ErrorLevel.HARD, f"deck.{field}",
-                "顶层必填字段非空",
-                f"字段 {field} 缺失或为空",
-                "演示缺少必要身份信息，无法编译",
+                "E001", ErrorLevel.HARD, f"page[{pi}].id", "页面 id 整稿唯一", pid,
+                "重复页面身份会破坏对象追溯",
             ))
-
-    pages = plan.get("pages")
-    if not isinstance(pages, list) or len(pages) == 0:
-        errors.append(CompileError(
-            "E001", ErrorLevel.HARD, "deck.pages",
-            "pages 为非空数组",
-            f"实际：{pages!r}",
-            "演示至少需要一页",
-        ))
-        return errors
-
-    seen_page_ids: set = set()
-    for pi, page in enumerate(pages):
-        loc = f"page[{pi}]"
-        if not isinstance(page, dict):
-            errors.append(CompileError("E001", ErrorLevel.HARD, loc, "页面为对象", f"实际类型：{type(page).__name__}", "页面条目必须是对象"))
-            continue
-
-        pid = page.get("id")
-        if not pid:
-            errors.append(CompileError("E001", ErrorLevel.HARD, loc, "页面 id 非空", "缺失 id", "页面必须有唯一标识"))
-        elif pid in seen_page_ids:
-            errors.append(CompileError("E001", ErrorLevel.HARD, loc, "页面 id 唯一", f"重复 id：{pid}", "页面 id 不得重复"))
-        else:
-            seen_page_ids.add(pid)
-
-        for field in REQUIRED_PAGE_FIELDS:
-            if field == "claim":
-                if "claim" not in page or page["claim"] is None or not isinstance(page["claim"], str):
-                    errors.append(CompileError(
-                        "E001", ErrorLevel.HARD, f"{loc}.claim",
-                        "页面 claim 字段存在且为字符串",
-                        f"字段 claim 缺失或类型非法：{page.get('claim')!r}",
-                        f"页面 {pid or loc} 缺少 claim 字段",
-                    ))
-                elif page["claim"].strip() == "" and not str(page.get("notes") or "").strip():
-                    errors.append(CompileError(
-                        "E001", ErrorLevel.SOFT, f"{loc}.claim",
-                        "claim 留空时在 notes 记录 open question 或留空依据",
-                        "claim 与 notes 均为空",
-                        f"页面 {pid or loc} 未立主张且未在 notes 说明原因",
-                    ))
-            elif field not in page or page[field] in (None, ""):
-                errors.append(CompileError(
-                    "E001", ErrorLevel.HARD, f"{loc}.{field}",
-                    "页面必填字段非空",
-                    f"字段 {field} 缺失或为空",
-                    f"页面 {pid or loc} 缺少必要字段 {field}",
-                ))
-
-        for enum_field, valid_set, desc in (
-            ("role", VALID_ROLES, "页面职责"),
-            ("layout", VALID_LAYOUTS, "构图方向"),
-            ("density", VALID_DENSITIES, "信息密度"),
-            ("emphasis", VALID_EMPHASES, "视觉分量"),
-        ):
-            val = page.get(enum_field)
-            if val and val not in valid_set:
-                errors.append(CompileError(
-                    "E001", ErrorLevel.SOFT, f"{loc}.{enum_field}",
-                    f"{enum_field} ∈ {sorted(valid_set)}",
-                    f"实际：{val!r}",
-                    f"{desc}使用未定义枚举值",
-                ))
-
-        elements = page.get("elements")
-        if not isinstance(elements, list):
-            errors.append(CompileError("E001", ErrorLevel.HARD, f"{loc}.elements", "elements 为数组", f"实际：{type(elements).__name__}", "页面必须有元素列表"))
-            continue
-
+        seen_page_ids.add(pid)
+        elements = page["elements"]
         if len(elements) > MAX_ELEMENTS_PER_PAGE:
             errors.append(CompileError(
-                "E006", ErrorLevel.SOFT, f"{loc}.elements",
-                f"元素数量 ≤ {MAX_ELEMENTS_PER_PAGE}",
-                f"实际：{len(elements)}",
+                "E006", ErrorLevel.SOFT, f"page[{pid}].elements",
+                f"元素数量 ≤ {MAX_ELEMENTS_PER_PAGE}", f"实际：{len(elements)}",
                 "页面元素较多，请核查是否存在可合并或删减的碎片容器",
             ))
-
-        _validate_elements(page, errors, w_limit, h_limit)
+        _validate_elements(page, errors, w_limit, h_limit, plan.get("assets", {}))
         _validate_claim_evidence(page, errors)
-
     return errors
 
 
@@ -958,197 +1162,113 @@ def _validate_elements(
     errors: List[CompileError],
     slide_w_in: float = SLIDE_W_IN_16_9,
     slide_h_in: float = SLIDE_H_IN_16_9,
+    assets: Optional[Dict[str, Any]] = None,
 ) -> None:
-    pid = page.get("id", "?")
-    elements = page.get("elements") or []
-    rects: List[Tuple[str, float, float, float, float, bool]] = []
+    pid = page["id"]
+    elements = page["elements"]
+    assets = assets or {}
+    rects: List[Tuple[str, float, float, float, float, float, bool]] = []
+    seen_element_ids: Set[str] = set()
 
     for ei, el in enumerate(elements):
-        loc = f"page[{pid}].element[{ei}]"
-        if not isinstance(el, dict):
-            errors.append(CompileError("E001", ErrorLevel.HARD, loc, "元素为对象", f"实际类型：{type(el).__name__}", "元素条目必须是对象"))
-            continue
-
-        eid = el.get("id")
-        if not eid:
-            errors.append(CompileError("E001", ErrorLevel.HARD, loc, "元素 id 非空", "缺失 id", "元素必须有唯一标识"))
-
-        for field in REQUIRED_ELEMENT_FIELDS:
-            if field not in el or el[field] in (None, ""):
-                errors.append(CompileError(
-                    "E001", ErrorLevel.HARD, f"{loc}.{field}",
-                    "元素必填字段非空",
-                    f"字段 {field} 缺失或为空",
-                    f"元素 {eid or loc} 缺少必要字段 {field}",
-                ))
-
-        etype = el.get("type")
-        if etype and etype not in VALID_ELEMENT_TYPES:
+        eid = el["id"]
+        loc = f"page[{pid}].element[{ei}]({eid})"
+        if eid in seen_element_ids:
             errors.append(CompileError(
-                "E001", ErrorLevel.SOFT, f"{loc}.type",
-                f"type ∈ {sorted(VALID_ELEMENT_TYPES)}",
-                f"实际：{etype!r}",
-                "元素类型未定义，将退回文本框渲染",
+                "E001", ErrorLevel.HARD, f"{loc}.id", "元素 id 页内唯一", eid,
+                "重复元素身份会破坏 plan→PPTX 对象追溯",
             ))
+        seen_element_ids.add(eid)
 
-        if etype in TEXT_ELEMENT_TYPES:
-            if "content" not in el or el.get("content") is None or not isinstance(el.get("content"), str):
-                errors.append(CompileError(
-                    "E001", ErrorLevel.HARD, f"{loc}.{eid}.content",
-                    "文本类元素 content 为字符串",
-                    f"实际：{el.get('content')!r}",
-                    "文本元素缺少 content 字段",
-                ))
-
-        x = _num(el.get("x"), loc)
-        y = _num(el.get("y"), loc)
-        w = _num(el.get("w"), loc)
-        h = _num(el.get("h"), loc)
-
-        if None not in (x, y, w, h):
-            if w <= 0 or h <= 0:
-                errors.append(CompileError(
-                    "E002", ErrorLevel.HARD, f"{loc}.{eid}",
-                    "元素宽高均大于 0",
-                    f"({x:.2f},{y:.2f},{w:.2f}x{h:.2f})",
-                    "元素尺寸非法（宽或高 ≤ 0），阻断编译",
-                ))
-            elif (
-                x < -BOUND_TOL_IN
-                or y < -BOUND_TOL_IN
-                or x + w > slide_w_in + BOUND_TOL_IN
-                or y + h > slide_h_in + BOUND_TOL_IN
-            ):
-                errors.append(CompileError(
-                    "E002", ErrorLevel.HARD, f"{loc}.{eid}",
-                    "元素在幻灯片边界内",
-                    f"({x:.2f},{y:.2f},{w:.2f}x{h:.2f}) 超出边界 {slide_w_in}x{slide_h_in}",
-                    "元素超出幻灯片可绘制区域，阻断编译",
-                ))
-            else:
-                overlap_allowed = bool(el.get("overlap_allowed", False))
-                rects.append((str(eid), x, y, x + w, y + h, overlap_allowed))
+        etype = el["type"]
+        x, y, w, h = (float(el[k]) for k in ("x", "y", "w", "h"))
+        if x + w > slide_w_in + BOUND_TOL_IN or y + h > slide_h_in + BOUND_TOL_IN:
+            errors.append(CompileError(
+                "E002", ErrorLevel.HARD, loc, "元素在幻灯片边界内",
+                f"({x:.2f},{y:.2f},{w:.2f}x{h:.2f}) 超出边界 {slide_w_in}x{slide_h_in}",
+                "元素超出幻灯片可绘制区域，阻断编译",
+            ))
+        else:
+            rects.append((eid, x, y, x + w, y + h, float(el.get("z_index", 0)), bool(el.get("overlap_allowed", False))))
 
         if etype in TEXT_ELEMENT_TYPES:
             risk = text_fit_risk(el)
             if risk:
                 errors.append(CompileError(
-                    "E010", ErrorLevel.SOFT, f"{loc}.{eid}.content",
-                    "文本应能装入声明的文本框（不靠缩字号硬塞）",
-                    risk,
+                    "E010", ErrorLevel.SOFT, f"{loc}.content",
+                    "文本应能装入声明的文本框（不靠缩字号硬塞）", risk,
                     "文本可能溢出文本框：优先编辑删减、调整断行或放大框体，勿压缩字号与行距",
                 ))
-            fs = _num(el.get("font_size"), loc)
+            fs = el.get("font_size")
             if fs is not None:
                 if etype == "title" and fs < MIN_TITLE_PT:
-                    errors.append(CompileError(
-                        "E005", ErrorLevel.SOFT, f"{loc}.{eid}.font_size",
-                        f"标题字号 ≥ {MIN_TITLE_PT}pt",
-                        f"实际：{fs:.0f}pt",
-                        "标题过小，影响可读性与视觉层级",
-                    ))
+                    errors.append(CompileError("E005", ErrorLevel.SOFT, f"{loc}.font_size", f"标题字号 ≥ {MIN_TITLE_PT}pt", f"实际：{fs:.0f}pt", "标题过小，影响可读性与视觉层级"))
                 elif etype in {"body", "text", "number"} and fs < MIN_BODY_PT:
-                    errors.append(CompileError(
-                        "E005", ErrorLevel.SOFT, f"{loc}.{eid}.font_size",
-                        f"正文/数字字号 ≥ {MIN_BODY_PT}pt",
-                        f"实际：{fs:.0f}pt",
-                        "正文或数字过小，中文在投影下难以辨认",
-                    ))
+                    errors.append(CompileError("E005", ErrorLevel.SOFT, f"{loc}.font_size", f"正文/数字字号 ≥ {MIN_BODY_PT}pt", f"实际：{fs:.0f}pt", "正文或数字过小，中文在投影下难以辨认"))
                 elif etype in {"caption", "footer"} and fs < MIN_CAPTION_PT:
-                    errors.append(CompileError(
-                        "E005", ErrorLevel.SOFT, f"{loc}.{eid}.font_size",
-                        f"辅助注释/页脚字号 ≥ {MIN_CAPTION_PT}pt",
-                        f"实际：{fs:.0f}pt",
-                        "注释或页脚字号过小，无法辨识",
-                    ))
+                    errors.append(CompileError("E005", ErrorLevel.SOFT, f"{loc}.font_size", f"辅助注释/页脚字号 ≥ {MIN_CAPTION_PT}pt", f"实际：{fs:.0f}pt", "注释或页脚字号过小，无法辨识"))
 
         if etype == "chart":
-            chart = el.get("chart")
-            if not isinstance(chart, dict) or not chart.get("data"):
-                errors.append(CompileError(
-                    "E004", ErrorLevel.HARD, f"{loc}.{eid}.chart",
-                    "图表 chart.data 非空",
-                    "chart.data 缺失或为空",
-                    "图表元素必须携带数据；语义一致性需人工或 AI 复核",
-                ))
+            _validate_chart_contract(el, loc, errors)
+        elif etype == "image":
+            _validate_asset(el, assets, loc, errors)
 
-        if etype == "image" and not el.get("image_id"):
-            errors.append(CompileError(
-                "E003", ErrorLevel.HARD, f"{loc}.{eid}.image_id",
-                "图片元素 image_id 非空",
-                "image_id 缺失",
-                "图片元素未指定资产 ID",
-            ))
-
-    # 重叠检查：仅全屏背景自动承载前景；其余元素未显式授权 overlap_allowed=true 时拦截实质重叠
-    OVERLAP_AREA_THRESHOLD = 0.5  # sq in
-    OVERLAP_MIN_EDGE = 0.05       # in，忽略纯边缘微接触
-    OVERLAP_RATIO_THRESHOLD = 0.25
-
-    foreground_rects = []
-    for (eid, x, y, x2, y2, overlap_allowed) in rects:
-        is_full_bg = (
-            x <= 0.02
-            and y <= 0.02
-            and x2 >= slide_w_in - 0.02
-            and y2 >= slide_h_in - 0.02
-        )
-        if is_full_bg:
-            continue
-        foreground_rects.append((eid, x, y, x2, y2, overlap_allowed))
-
-    for i in range(len(foreground_rects)):
-        for j in range(i + 1, len(foreground_rects)):
-            id_a, ax1, ay1, ax2, ay2, a_allowed = foreground_rects[i]
-            id_b, bx1, by1, bx2, by2, b_allowed = foreground_rects[j]
-            if a_allowed or b_allowed:
-                continue
+    geometry = POLICY["geometry"]
+    for i, a in enumerate(rects):
+        for b in rects[i + 1:]:
+            id_a, ax1, ay1, ax2, ay2, az, a_allowed = a
+            id_b, bx1, by1, bx2, by2, bz, b_allowed = b
             ox = max(0.0, min(ax2, bx2) - max(ax1, bx1))
             oy = max(0.0, min(ay2, by2) - max(ay1, by1))
-            if ox <= OVERLAP_MIN_EDGE or oy <= OVERLAP_MIN_EDGE:
+            if ox <= geometry["overlap_min_edge_in"] or oy <= geometry["overlap_min_edge_in"]:
                 continue
             area = ox * oy
             min_area = min((ax2 - ax1) * (ay2 - ay1), (bx2 - bx1) * (by2 - by1))
-            if area > OVERLAP_AREA_THRESHOLD or (min_area > 0 and area / min_area > OVERLAP_RATIO_THRESHOLD):
-                errors.append(CompileError(
-                    "E002", ErrorLevel.HARD, f"page[{pid}].overlap",
-                    "页面内元素不得实质重叠（未设置 overlap_allowed）",
-                    f"{id_a} 与 {id_b} 重叠面积约 {area:.2f} sq in",
-                    "相邻元素实质重叠会破坏阅读顺序；如属设计授权图层融合，请在承载层设置 overlap_allowed=true",
-                ))
+            substantive = area > geometry["overlap_area_sq_in"] or (
+                min_area > 0 and area / min_area > geometry["overlap_ratio"]
+            )
+            if not substantive:
+                continue
+            # z_index 相同则按元素声明顺序叠放；只有实际下层可以授权承载上层。
+            lower_allowed = a_allowed if az <= bz else b_allowed
+            if lower_allowed:
+                continue
+            errors.append(CompileError(
+                "E002", ErrorLevel.HARD, f"page[{pid}].overlap",
+                "实质重叠必须由下层承载元素显式 overlap_allowed=true",
+                f"{id_a} 与 {id_b} 重叠面积约 {area:.2f} sq in",
+                "不得按全屏面积推断背景，也不得由上层元素自行豁免；请修正几何或明确图层关系",
+            ))
 
 
 # ---------------------------------------------------------------------------
 # PPTX 渲染
 # ---------------------------------------------------------------------------
 
-def _hex_to_rgb(hex_color: Optional[str], fallback: Tuple[int, int, int] = (0x26, 0x26, 0x26)) -> RGBColor:
-    if not hex_color or not isinstance(hex_color, str):
-        return RGBColor(*fallback)
-    h = hex_color.strip().lstrip("#")
-    if len(h) != 6:
-        return RGBColor(*fallback)
-    try:
-        return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-    except ValueError:
-        return RGBColor(*fallback)
+def _hex_to_rgb(hex_color: Optional[str], fallback: Optional[Tuple[int, int, int]] = None) -> RGBColor:
+    """缺省色只能来自 policy；非法颜色明确报错，不得改成另一种颜色继续交付。"""
+    if hex_color is None:
+        if fallback is not None:
+            return RGBColor(*fallback)
+        hex_color = POLICY["defaults"]["text_color"]
+    if not isinstance(hex_color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", hex_color):
+        raise ValueError(f"非法颜色：{hex_color!r}；应为 #RRGGBB")
+    h = hex_color[1:]
+    return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
 def _rel_luminance(hex_color: Optional[str], default: float = 1.0) -> float:
     """计算 HEX 颜色的 WCAG 相对亮度（0.0=纯黑，1.0=纯白）。"""
-    if not hex_color or not isinstance(hex_color, str):
+    if hex_color is None:
         return default
-    h = hex_color.strip().lstrip("#")
-    if len(h) != 6:
-        return default
-    try:
-        chans = []
-        for idx in (0, 2, 4):
-            s = int(h[idx:idx + 2], 16) / 255.0
-            chans.append(s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4)
-        return 0.2126 * chans[0] + 0.7152 * chans[1] + 0.0722 * chans[2]
-    except ValueError:
-        return default
+    if not isinstance(hex_color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", hex_color):
+        raise ValueError(f"非法颜色：{hex_color!r}；应为 #RRGGBB")
+    h = hex_color[1:]
+    chans = []
+    for idx in (0, 2, 4):
+        s = int(h[idx:idx + 2], 16) / 255.0
+        chans.append(s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * chans[0] + 0.7152 * chans[1] + 0.0722 * chans[2]
 
 
 def _set_cell_hairlines(
@@ -1226,14 +1346,17 @@ def _add_textbox(
     body_font: str,
     etype: str = "body",
     bold: Optional[bool] = None,
-) -> None:
+    object_name: Optional[str] = None,
+):
     tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    if object_name:
+        tb.name = object_name
     tf = tb.text_frame
     tf.word_wrap = True
-    tf.margin_left = Inches(0.05)
-    tf.margin_right = Inches(0.05)
-    tf.margin_top = Inches(0.03)
-    tf.margin_bottom = Inches(0.03)
+    tf.margin_left = Inches(POLICY["typography"]["margin_in"]["x"])
+    tf.margin_right = Inches(POLICY["typography"]["margin_in"]["x"])
+    tf.margin_top = Inches(POLICY["typography"]["margin_in"]["y"])
+    tf.margin_bottom = Inches(POLICY["typography"]["margin_in"]["y"])
     tf.vertical_anchor = MSO_ANCHOR.TOP
 
     is_display = etype in {"title", "number"}
@@ -1243,10 +1366,13 @@ def _add_textbox(
         else DEFAULT_CAPTION_PT if etype in {"caption", "footer"}
         else MIN_BODY_PT
     )
-    size = font_size or default_pt
-    use_bold = is_display if bold is None else bool(bold)
+    size = default_pt if font_size is None else font_size
+    use_bold = is_display if bold is None else bold
     font_name = heading_font if is_display else body_font
-    line_spacing = 1.15 if is_display else 1.3
+    line_spacing = (
+        POLICY["typography"]["line_spacing"]["display"]
+        if is_display else POLICY["typography"]["line_spacing"]["body"]
+    )
 
     lines = str(content).split("\n")
     for li, line in enumerate(lines):
@@ -1258,21 +1384,23 @@ def _add_textbox(
                 "center": PP_ALIGN.CENTER,
                 "right": PP_ALIGN.RIGHT,
                 "justify": PP_ALIGN.JUSTIFY,
-            }.get(align, PP_ALIGN.LEFT)
+            }[align]
         run = p.add_run()
         run.text = line
         _apply_run_font(run, font_name, size, color, bold=use_bold)
 
 
 def _add_shape(slide, x: float, y: float, w: float, h: float,
-               color: Optional[str], shape_kind: str) -> None:
+               color: Optional[str], shape_kind: str,
+               object_name: Optional[str] = None):
     shape_map = {
         "rect": MSO_SHAPE.RECTANGLE,
         "round_rect": MSO_SHAPE.ROUNDED_RECTANGLE,
         "oval": MSO_SHAPE.OVAL,
     }
-    shape_type = shape_map.get(shape_kind, MSO_SHAPE.RECTANGLE)
-    sp = slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h))
+    sp = slide.shapes.add_shape(shape_map[shape_kind], Inches(x), Inches(y), Inches(w), Inches(h))
+    if object_name:
+        sp.name = object_name
     if color:
         sp.fill.solid()
         sp.fill.fore_color.rgb = _hex_to_rgb(color)
@@ -1306,14 +1434,17 @@ def _resolve_image_path(image_id: str, asset_root: str) -> Optional[Path]:
 
 
 def _add_image(slide, x: float, y: float, w: float, h: float,
-               image_id: Optional[str], asset_root: str) -> bool:
+               image_id: Optional[str], asset_root: str,
+               object_name: Optional[str] = None) -> Tuple[bool, str]:
     if not image_id:
-        return False
+        return False, "image_id 为空"
     img_path = _resolve_image_path(image_id, asset_root)
     if img_path is None:
-        return False
+        return False, "文件未找到或路径越出素材根目录"
     try:
         pic = slide.shapes.add_picture(str(img_path), Inches(x), Inches(y), Inches(w), Inches(h))
+        if object_name:
+            pic.name = object_name
         img_w, img_h = pic.image.size
         if img_w > 0 and img_h > 0 and w > 0 and h > 0:
             src_ratio = img_w / img_h
@@ -1326,9 +1457,9 @@ def _add_image(slide, x: float, y: float, w: float, h: float,
                 crop = (1.0 - src_ratio / dst_ratio) / 2.0
                 pic.crop_top = crop
                 pic.crop_bottom = crop
-        return True
-    except Exception:  # 读取/裁切失败按缺失资产处理，由调用方绘制占位框并报 E003
-        return False
+        return True, ""
+    except Exception as exc:  # 读取/裁切失败必须保留真实根因
+        return False, f"{type(exc).__name__}: {exc}"
 
 
 def _compose_chart_caption(chart: Dict[str, Any]) -> str:
@@ -1346,6 +1477,44 @@ def _compose_chart_caption(chart: Dict[str, Any]) -> str:
     return title or suffix
 
 
+def _normalize_table_data(chart: Dict[str, Any]) -> Tuple[List[str], List[List[str]]]:
+    """表格两种合法载荷共用一个规范化函数，编译器与 G-SEM 不得各自解释。"""
+    data = chart["data"]
+    if "headers" in data:
+        headers = [str(c) for c in data["headers"]]
+        rows = [[str(c) for c in row] for row in data["rows"]]
+        if any(len(row) != len(headers) for row in rows):
+            raise ValueError("表格行长度与 headers 不一致")
+        return headers, rows
+
+    categories = [str(c) for c in data["categories"]]
+    series_list = data["series"]
+    headers = ["指标 / 类别"] + [str(s["name"]) for s in series_list]
+    if any(len(s["values"]) != len(categories) for s in series_list):
+        raise ValueError("表格系列长度与类别数不一致")
+    rows = [
+        [cat] + [str(series["values"][ci]) for series in series_list]
+        for ci, cat in enumerate(categories)
+    ]
+    return headers, rows
+
+
+def _table_caption_height(chart: Dict[str, Any], h: float) -> float:
+    cfg = POLICY["chart"]["table_caption"]
+    if _compose_chart_caption(chart) and h > cfg["min_element_height_in"]:
+        return min(cfg["max_height_in"], h * cfg["height_ratio"])
+    return 0.0
+
+
+def _table_geometry(chart: Dict[str, Any], x: float, y: float, w: float, h: float) -> Tuple[float, float, float, float]:
+    """返回原生表格对象的实际几何；标题是独立文本对象，不能冒充表格本体。"""
+    cfg = POLICY["chart"]["table_caption"]
+    cap_h = _table_caption_height(chart, h)
+    if cap_h:
+        return x, y + cap_h + cfg["gap_in"], w, max(cfg["min_table_height_in"], h - cap_h - cfg["gap_in"])
+    return x, y, w, h
+
+
 def _add_table(
     slide,
     x: float,
@@ -1357,51 +1526,33 @@ def _add_table(
     body_font: str,
     palette: Optional[List[str]] = None,
     bg_hex: Optional[str] = None,
+    object_name: Optional[str] = None,
 ) -> bool:
-    data = chart.get("data")
-    if not isinstance(data, dict):
+    try:
+        headers, rows = _normalize_table_data(chart)
+    except (KeyError, TypeError, ValueError):
         return False
 
-    headers: List[str] = []
-    rows: List[List[str]] = []
-    if isinstance(data.get("headers"), list) and isinstance(data.get("rows"), list) and data["headers"] and data["rows"]:
-        headers = [str(c) for c in data["headers"]]
-        for r in data["rows"]:
-            if not isinstance(r, list) or len(r) != len(headers):
-                return False
-            rows.append([str(c) for c in r])
-    elif isinstance(data.get("categories"), list) and isinstance(data.get("series"), list) and data["categories"] and data["series"]:
-        cats = [str(c) for c in data["categories"]]
-        series_list = data["series"]
-        headers = ["指标 / 类别"] + [str(s.get("name", f"系列{i+1}")) for i, s in enumerate(series_list) if isinstance(s, dict)]
-        if len(headers) < 2:
-            return False
-        for s in series_list:
-            if not isinstance(s, dict) or not isinstance(s.get("values"), list) or len(s["values"]) != len(cats):
-                return False
-        for ci, cat in enumerate(cats):
-            rows.append([cat] + [str(s["values"][ci]) for s in series_list])
-    else:
-        return False
-
-    dark = _rel_luminance(bg_hex, default=1.0) < 0.18
-    ink_primary = "#F3F4F6" if dark else "#111827"
-    ink_body = "#D1D5DB" if dark else "#374151"
-    rule_strong = "#6B7280" if dark else "#4B5563"
-    rule_subtle = "#2E3440" if dark else "#E5E7EB"
+    dark = _rel_luminance(bg_hex, default=1.0) < POLICY["chart"]["dark_background_luminance"]
+    style = POLICY["chart"]["style"]["dark" if dark else "light"]
+    ink_primary = style["title"]
+    ink_body = style["body"]
+    rule_strong = style["rule_strong"]
+    rule_subtle = style["rule_subtle"]
 
     caption = _compose_chart_caption(chart)
-    table_y, table_h = y, h
-    if caption and h > 1.0:
-        cap_h = min(0.45, h * 0.16)
-        _add_textbox(slide, x, y, w, cap_h, caption, 15, ink_primary, "left",
-                     heading_font, body_font, etype="body", bold=True)
-        table_y = y + cap_h + 0.06
-        table_h = max(0.5, h - cap_h - 0.06)
+    cap_h = _table_caption_height(chart, h)
+    _, table_y, _, table_h = _table_geometry(chart, x, y, w, h)
+    if cap_h:
+        _add_textbox(slide, x, y, w, cap_h, caption, POLICY["chart"]["font_pt"]["title"], ink_primary, "left",
+                     heading_font, body_font, etype="body", bold=True,
+                     object_name=f"{object_name}.caption" if object_name else None)
 
     n_rows = 1 + len(rows)
     n_cols = len(headers)
     tbl_shape = slide.shapes.add_table(n_rows, n_cols, Inches(x), Inches(table_y), Inches(w), Inches(table_h))
+    if object_name:
+        tbl_shape.name = object_name
     tbl = tbl_shape.table
 
     # 清除内置带状/外框样式，回归“场域 > 对齐 > 发丝线 > 字体层级”无竖框三线秩序
@@ -1411,7 +1562,7 @@ def _add_table(
             tblPr.set(attr, "0")
         style_id = tblPr.find(qn("a:tableStyleId"))
         if style_id is not None:
-            style_id.text = "{2D5ABB26-0587-4C30-8999-92F81FD0307C}"
+            style_id.text = POLICY["chart"]["table_style_id"]
 
     col_aligns = [
         PP_ALIGN.RIGHT
@@ -1430,7 +1581,7 @@ def _add_table(
         p.alignment = col_aligns[ci]
         run = p.add_run()
         run.text = text
-        _apply_run_font(run, heading_font, 13.5, ink_primary, bold=True)
+        _apply_run_font(run, heading_font, POLICY["chart"]["font_pt"]["table_header"], ink_primary, bold=True)
 
     last_ri = len(rows)
     for ri, row in enumerate(rows, start=1):
@@ -1449,7 +1600,7 @@ def _add_table(
             p.alignment = col_aligns[ci]
             run = p.add_run()
             run.text = text
-            _apply_run_font(run, body_font, 14, ink_primary if ci == 0 else ink_body, bold=(ci == 0))
+            _apply_run_font(run, body_font, POLICY["chart"]["font_pt"]["table_body"], ink_primary if ci == 0 else ink_body, bold=(ci == 0))
     return True
 
 
@@ -1461,7 +1612,7 @@ def _contrast_ratio(a_hex: str, b_hex: str) -> float:
 
 
 # 线/标记是细笔画，按 WCAG 非文本图形 3:1 要求；柱/扇面是大面积填充，取 2:1 下限
-PALETTE_MIN_CONTRAST = {"bar": 2.0, "line": 3.0, "pie": 2.0, "donut": 2.0}
+PALETTE_MIN_CONTRAST = POLICY["chart"]["min_contrast"]
 
 
 def _label_ink(fill_hexes: List[str], bg_hex: Optional[str]) -> str:
@@ -1529,6 +1680,7 @@ def _add_chart(
     palette: Optional[List[str]] = None,
     bg_hex: Optional[str] = None,
     unusable: Optional[List[str]] = None,
+    object_name: Optional[str] = None,
 ) -> bool:
     unusable = unusable if unusable is not None else []
     if not isinstance(chart, dict):
@@ -1538,7 +1690,7 @@ def _add_chart(
         unusable.append(f"kind={kind!r} 不在支持范围 {sorted(VALID_CHART_KINDS)}")
         return False
     if kind == "table":
-        return _add_table(slide, x, y, w, h, chart, heading_font, body_font, palette=palette, bg_hex=bg_hex)
+        return _add_table(slide, x, y, w, h, chart, heading_font, body_font, palette=palette, bg_hex=bg_hex, object_name=object_name)
 
     data = chart.get("data")
     if not isinstance(data, dict):
@@ -1550,16 +1702,16 @@ def _add_chart(
         unusable.append("chart.data.series 为空或不是数组")
         return False
 
-    dark = _rel_luminance(bg_hex, default=1.0) < 0.18
-    ink_title = "#F3F4F6" if dark else "#111827"
-    ink_tick = "#D1D5DB" if dark else "#4B5563"
-    rule_grid = "#2E3440" if dark else "#E5E7EB"
+    dark = _rel_luminance(bg_hex, default=1.0) < POLICY["chart"]["dark_background_luminance"]
+    style = POLICY["chart"]["style"]["dark" if dark else "light"]
+    ink_title = style["title"]
+    ink_tick = style["tick"]
+    rule_grid = style["grid"]
 
     try:
         chart_data = CategoryChartData()
-        cat_list = list(categories) if isinstance(categories, list) and len(categories) > 0 else None
-        if cat_list is not None:
-            chart_data.categories = cat_list
+        cat_list = list(categories)
+        chart_data.categories = cat_list
 
         for s in series_list:
             if not isinstance(s, dict):
@@ -1590,6 +1742,8 @@ def _add_chart(
             "donut": XL_CHART_TYPE.DOUGHNUT,
         }[kind]
         gframe = slide.shapes.add_chart(xl_type, Inches(x), Inches(y), Inches(w), Inches(h), chart_data)
+        if object_name:
+            gframe.name = object_name
         chart_obj = gframe.chart
 
         # 去除图表外框与绘图区底色容器，融入页面连续场域
@@ -1615,7 +1769,7 @@ def _add_chart(
             tf.clear()
             run = tf.paragraphs[0].add_run()
             run.text = caption
-            _apply_run_font(run, heading_font, 15, ink_title, bold=True)
+            _apply_run_font(run, heading_font, POLICY["chart"]["font_pt"]["title"], ink_title, bold=True)
 
         # 图例只在多系列或饼/环（类别靠颜色区分）时保留，单系列柱线图不叠加重复标签
         want_legend = len(series_list) > 1 or kind in {"pie", "donut"}
@@ -1627,14 +1781,14 @@ def _add_chart(
             except Exception:
                 pass
             chart_obj.legend.font.name = body_font
-            chart_obj.legend.font.size = Pt(11.5)
+            chart_obj.legend.font.size = Pt(POLICY["chart"]["font_pt"]["legend"])
             chart_obj.legend.font.color.rgb = _hex_to_rgb(ink_tick)
 
         for axis_attr in ("category_axis", "value_axis"):
             try:
                 axis = getattr(chart_obj, axis_attr)
                 axis.tick_labels.font.name = body_font
-                axis.tick_labels.font.size = Pt(12)
+                axis.tick_labels.font.size = Pt(POLICY["chart"]["font_pt"]["axis"])
                 axis.tick_labels.font.color.rgb = _hex_to_rgb(ink_tick)
                 axis.format.line.color.rgb = _hex_to_rgb(rule_grid)
                 axis.format.line.width = Pt(0.75)
@@ -1684,7 +1838,7 @@ def _add_chart(
                 dl.show_legend_key = False
                 dl.number_format = "0%"
                 dl.number_format_is_linked = False
-                dl.font.size = Pt(12)
+                dl.font.size = Pt(POLICY["chart"]["font_pt"]["data_label"])
                 dl.font.name = body_font
                 dl.font.color.rgb = _hex_to_rgb(_label_ink(eligible or [], bg_hex))
             except Exception as exc:
@@ -1701,110 +1855,108 @@ def compile_plan(
     asset_root: str = ".",
     strict: bool = False,
 ) -> Tuple[bool, List[CompileError]]:
-    """返回 (是否成功, 错误列表)。strict=True 时 SOFT 也视为阻断。"""
-    ar = plan.get("aspect_ratio", "16:9")
+    """返回 (是否成功, 错误列表)。strict=True 时 SOFT 也阻断交付。"""
+    # 先校验再读取画幅；非法 aspect_ratio 必须变成可审查错误，而非异常或静默默认。
+    errors = validate_plan(plan)
+    if any(e.level == ErrorLevel.HARD for e in errors):
+        return False, errors
+    ar = plan.get("aspect_ratio") or _CANVAS["default_aspect_ratio"]
     slide_w_in, slide_h_in = _slide_dimensions(ar)
 
-    errors = validate_plan(plan, slide_w_in, slide_h_in)
-    hard_errors = [e for e in errors if e.level == ErrorLevel.HARD]
-    if hard_errors:
-        return False, errors
-
-    fonts = plan.get("fonts") or {}
+    fonts = plan.get("fonts", {})
     heading_font = fonts.get("heading", DEFAULT_FONTS["heading"])
     body_font = fonts.get("body", DEFAULT_FONTS["body"])
-    palette = plan.get("palette") if isinstance(plan.get("palette"), list) else None
+    uses_default_palette = "palette" not in plan
+    palette = list(POLICY["defaults"]["chart_palette"]) if uses_default_palette else plan["palette"]
 
     prs = Presentation()
     prs.slide_width = Inches(slide_w_in)
     prs.slide_height = Inches(slide_h_in)
     blank_layout = prs.slide_layouts[6]
 
-    for page in plan.get("pages", []):
+    for page in plan["pages"]:
         slide = prs.slides.add_slide(blank_layout)
         bg_hex = page.get("background")
         if bg_hex:
             fill = slide.background.fill
             fill.solid()
-            fill.fore_color.rgb = _hex_to_rgb(bg_hex, fallback=(0xFF, 0xFF, 0xFF))
+            fill.fore_color.rgb = _hex_to_rgb(bg_hex)
 
-        pid = page.get("id", "?")
-        elements = page.get("elements") or []
-        ordered = sorted(elements, key=lambda e: e.get("z_index", 0))
-
+        pid = page["id"]
+        # Python sort 稳定；z_index 相同时保持 THINK 交接的元素顺序。
+        ordered = sorted(page["elements"], key=lambda e: float(e.get("z_index", 0)))
         for el in ordered:
-            etype = el.get("type", "text")
-            eid = el.get("id", "?")
-            raw_x = _num(el.get("x"), pid) or 0.0
-            raw_y = _num(el.get("y"), pid) or 0.0
-            raw_w = _num(el.get("w"), pid) or 1.0
-            raw_h = _num(el.get("h"), pid) or 0.4
-            x = max(0.0, raw_x)
-            y = max(0.0, raw_y)
-            w = min(raw_w, slide_w_in - x) if x < slide_w_in else raw_w
-            h = min(raw_h, slide_h_in - y) if y < slide_h_in else raw_h
-
+            etype = el["type"]
+            eid = el["id"]
+            object_name = f"{pid}.{eid}"
+            x, y, w, h = (float(el[k]) for k in ("x", "y", "w", "h"))
             content = el.get("content", "")
-            fs = _num(el.get("font_size"), None)
+            fs = el.get("font_size")
             color = el.get("color")
             align = el.get("align")
-            bold = el.get("bold") if isinstance(el.get("bold"), bool) else None
+            bold = el.get("bold")
 
             if etype in TEXT_ELEMENT_TYPES:
                 _add_textbox(
                     slide, x, y, w, h, content, fs, color, align,
                     heading_font, body_font, etype=etype, bold=bold,
+                    object_name=object_name,
                 )
             elif etype == "image":
-                ok = _add_image(slide, x, y, w, h, el.get("image_id"), asset_root)
+                ok, image_error = _add_image(
+                    slide, x, y, w, h, el["image_id"], asset_root,
+                    object_name=object_name,
+                )
                 if not ok:
-                    _add_shape(slide, x, y, w, h, "#DDDDDD", "rect")
+                    placeholder = POLICY["chart"]["placeholder"]
+                    _add_shape(slide, x, y, w, h, placeholder["fill"], "rect", object_name=f"{object_name}.error")
                     _add_textbox(
                         slide, x + 0.05, y + 0.05, max(0.1, w - 0.1), max(0.1, h - 0.1),
-                        f"[缺失资产：{el.get('image_id')}]", 12, "#666666", "left",
+                        f"[缺失资产：{el['image_id']}]", MIN_CAPTION_PT, placeholder["text"], "left",
                         heading_font, body_font, etype="caption",
+                        object_name=f"{object_name}.error.message",
                     )
                     errors.append(CompileError(
                         "E003", ErrorLevel.HARD, f"page[{pid}].element[{eid}].image",
-                        f"资产 {el.get('image_id')} 存在",
-                        "文件未找到",
-                        "图片资源缺失，已绘制占位框，需作者替换",
+                        f"资产 {el['image_id']} 可读且能置入 PPTX", image_error,
+                        "图片资源不可用，已绘制仅供诊断的占位框；交付仍阻断",
                     ))
             elif etype == "chart":
                 chart_notes: List[str] = []
+                if uses_default_palette:
+                    chart_notes.append("未提供 palette；本次使用 policy.json 的默认图表色，需复核其语义与整稿适配")
                 ok = _add_chart(
-                    slide, x, y, w, h, el.get("chart"),
+                    slide, x, y, w, h, el["chart"],
                     heading_font=heading_font, body_font=body_font, palette=palette, bg_hex=bg_hex,
-                    unusable=chart_notes,
+                    unusable=chart_notes, object_name=object_name,
                 )
-                for note in chart_notes:
-                    errors.append(CompileError(
-                        "E009", ErrorLevel.SOFT, f"page[{pid}].element[{eid}].chart",
-                        "图表配色与标注须在页面底色上可辨且语义一致",
-                        note,
-                        "图表已渲染但存在配色/标注风险，请人工复核渲染结果",
-                    ))
-                if not ok:
-                    _add_shape(slide, x, y, w, h, "#EEEEEE", "rect")
+                if ok:
+                    for note in chart_notes:
+                        errors.append(CompileError(
+                            "E009", ErrorLevel.SOFT, f"page[{pid}].element[{eid}].chart",
+                            "图表配色与标注须在页面底色上可辨且语义一致", note,
+                            "图表已渲染但存在配色/标注风险，请人工复核渲染结果",
+                        ))
+                else:
+                    placeholder = POLICY["chart"]["placeholder"]
+                    _add_shape(slide, x, y, w, h, placeholder["fill"], "rect", object_name=f"{object_name}.error")
                     _add_textbox(
                         slide, x + 0.05, y + 0.05, max(0.1, w - 0.1), max(0.1, h - 0.1),
-                        "[图表渲染失败：数据或类型非法]", 12, "#666666", "left",
+                        "[图表渲染失败：数据或类型非法]", MIN_CAPTION_PT, placeholder["text"], "left",
                         heading_font, body_font, etype="caption",
+                        object_name=f"{object_name}.error.message",
                     )
                     errors.append(CompileError(
                         "E007", ErrorLevel.HARD, f"page[{pid}].element[{eid}].chart",
                         f"图表 {eid} 类型合法且数据结构完整",
-                        f"kind={el.get('chart', {}).get('kind')!r} 或数据非法，渲染失败"
+                        f"kind={el['chart'].get('kind')!r} 渲染失败"
                         + (f"；原因：{chart_notes[-1]}" if chart_notes else ""),
-                        "图表/表格渲染失败，已绘制占位框，请核查 kind 与 categories/series/rows",
+                        "图表/表格渲染失败，已绘制仅供诊断的占位框；交付仍阻断",
                     ))
             elif etype in {"shape", "divider"}:
-                _add_shape(slide, x, y, w, h, color, el.get("shape_kind", "rect"))
-            else:
-                _add_textbox(
-                    slide, x, y, w, h, content, fs, color, align,
-                    heading_font, body_font, etype="text", bold=bold,
-                )
+                _add_shape(slide, x, y, w, h, color, el.get("shape_kind", "rect"), object_name=object_name)
+            else:  # Schema 已排除；若权威源与实现漂移，必须显式失败
+                raise RuntimeError(f"Schema 允许但编译器未实现的元素类型：{etype!r}")
 
     out_file = Path(out_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1841,7 +1993,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(str(e), file=sys.stderr)
 
     if not success:
-        print("\n编译失败：存在未解决的阻断问题。", file=sys.stderr)
+        print("\nBLOCK — Delivery：存在未解决的强制条件；若已写出 PPTX，该文件仅供诊断，不得作为通过产物。", file=sys.stderr)
         return 1
     print(f"编译成功：{args.output}")
     return 0

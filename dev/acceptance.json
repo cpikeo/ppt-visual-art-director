@@ -1,0 +1,46 @@
+{
+  "project": "ppt-visual-art-director",
+  "plan_fixture": "dev/tests/fixtures/render_deck.json",
+  "target_powerpoint": {
+    "configured": false,
+    "version": null,
+    "operating_system": null,
+    "fonts": [],
+    "status": "PENDING_CONFIGURATION"
+  },
+  "required_gates": ["G-STR", "G-SEM", "G-PRE", "G-DECK", "G-TGT", "G-COMPLY"],
+  "key_pages": ["cover", "chart_bar", "table_mixed", "image_crop"],
+  "high_risk_pages": ["chart_bar", "table_mixed"],
+  "historical_issue_pages": [],
+  "sampling": {
+    "low_risk_rate": 0.2,
+    "seed": 20261023,
+    "method": "关键/高风险/复杂图表/历史问题页全量；其余低风险页用 seeded random.sample 扩样；发现 MUST FIX 或系统性问题时扩展同类页，必要时全量"
+  },
+  "reviews": {
+    "G-DECK": {
+      "status": "NOT_VERIFIED",
+      "evidence": null,
+      "reviewer": null,
+      "note": "尚无独立人工整稿终验；AI 看图诊断不能冒充人工或盲评"
+    },
+    "G-TGT": {
+      "status": "NOT_VERIFIED",
+      "evidence": null,
+      "reviewer": null,
+      "note": "目标 Microsoft PowerPoint 版本、OS 与字体环境待配置"
+    },
+    "G-COMPLY": {
+      "status": "DECLARATIONS_ONLY",
+      "evidence": "dev/tests/fixtures/render_deck.json#assets",
+      "reviewer": null,
+      "note": "固定案例为本地确定性生成测试素材；无外部授权或个人信息。其他项目必须重新核验"
+    }
+  },
+  "independent_blind_review": {
+    "status": "NOT_VERIFIED",
+    "reviewer_count": 0,
+    "evidence": null
+  },
+  "risk_approvals": []
+}

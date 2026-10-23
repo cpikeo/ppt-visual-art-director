@@ -24,6 +24,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.compile_pptx import (  # noqa: E402
     ErrorLevel,
+    PLAN_VALIDATOR,
+    POLICY,
     REQUIRED_DECK_FIELDS,
     REQUIRED_ELEMENT_FIELDS,
     REQUIRED_PAGE_FIELDS,
@@ -39,6 +41,7 @@ from scripts.compile_pptx import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 VALID_PLAN = {
+    "schema_version": "2.0",
     "deck_id": "deck-001",
     "title": "季度业绩回顾",
     "audience": "领导团队",
@@ -54,6 +57,9 @@ VALID_PLAN = {
             "id": "p1",
             "role": "open",
             "claim": "本季度核心业务增长 25%",
+            "evidence_status": "supported",
+            "focus": "核心业务增长结论",
+            "composition_rationale": "结论居主位，两项证据按阅读顺序支撑",
             "evidence": ["收入 1.2 亿元"],
             "layout": "large_white",
             "density": "sparse",
@@ -69,6 +75,9 @@ VALID_PLAN = {
             "id": "p2",
             "role": "close",
             "claim": "建议预算增加 15%",
+            "evidence_status": "not_applicable",
+            "focus": "预算行动建议",
+            "composition_rationale": "收束页只保留行动焦点，避免重复证据页构图",
             "layout": "editorial",
             "density": "moderate",
             "emphasis": "medium",
@@ -86,6 +95,16 @@ def _write_plan(tmpdir: str, plan: dict) -> str:
     with open(p, "w", encoding="utf-8") as f:
         json.dump(plan, f, ensure_ascii=False)
     return p
+
+
+def _register_test_asset(plan: dict, image_id: str) -> None:
+    plan.setdefault("assets", {})[image_id] = {
+        "source": "本地测试即时生成，无外部素材",
+        "generated": True,
+        "used_as_evidence": False,
+        "license_status": "cleared",
+        "privacy_status": "cleared",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +286,9 @@ def test_chart_render_failure_records_e007(tmp_path):
 
 def test_missing_image_asset_records_e003(tmp_path):
     plan = json.loads(json.dumps(VALID_PLAN))
+    _register_test_asset(plan, "nonexistent_asset")
     plan["pages"][0]["elements"] = [
-        {"id": "img1", "type": "image", "image_id": "nonexistent_asset", "x": 0, "y": 0, "w": 3, "h": 2}
+        {"id": "img1", "type": "image", "image_id": "nonexistent_asset", "asset_reason": "验证缺失素材硬阻断", "x": 0, "y": 0, "w": 3, "h": 2}
     ]
     out_path = str(tmp_path / "img_fail.pptx")
     success, errors = compile_plan(plan, out_path, asset_root=str(tmp_path), strict=False)
@@ -312,11 +332,10 @@ def test_empty_claim_open_question_follows_contract(tmp_path):
     ok, errs = compile_plan(plan, str(tmp_path / "open_q.pptx"), strict=True)
     assert ok and not errs, f"按契约留空 claim 并记录 notes 应严格通过，实际：{errs}"
 
-    # 若未写 notes，则给出 SOFT 提示但不硬阻断常规编译
+    # 若未写 notes/open_questions，THINK 交接不完整，必须在 BUILD 前硬阻断
     plan["pages"][0]["notes"] = ""
-    soft_errs = validate_plan(plan)
-    assert any(e.code == "E001" and e.level == ErrorLevel.SOFT for e in soft_errs)
-    assert not any(e.level == ErrorLevel.HARD for e in soft_errs)
+    handoff_errors = validate_plan(plan)
+    assert any(e.code == "E001" and e.level == ErrorLevel.HARD for e in handoff_errors)
 
 
 def test_zero_negative_size_and_float_edge_bounds():
@@ -328,7 +347,7 @@ def test_zero_negative_size_and_float_edge_bounds():
     # IEEE-754 1.1 + 12.233 == 13.333000000000002 以及精确 16:9 宽 13.3333 不应误判越界
     good = json.loads(json.dumps(VALID_PLAN))
     good["pages"][0]["elements"] = [
-        {"id": "bg", "type": "shape", "x": 0.0, "y": 0.0, "w": 13.3333, "h": 7.5, "color": "#111827"},
+        {"id": "bg", "type": "shape", "x": 0.0, "y": 0.0, "w": 13.3333, "h": 7.5, "color": "#111827", "z_index": 0, "overlap_allowed": True},
         {"id": "t1", "type": "title", "content": "全宽标题", "x": 1.1, "y": 1.0, "w": 12.233, "h": 1.2,
          "font_size": 34, "color": "#FFFFFF"},
     ]
@@ -353,8 +372,9 @@ def test_image_preserves_aspect_ratio_via_crop_and_accepts_extension(tmp_path):
     img.save(tmp_path / "hero.png")
 
     plan = json.loads(json.dumps(VALID_PLAN))
+    _register_test_asset(plan, "hero.png")
     plan["pages"][0]["elements"] = [
-        {"id": "pic", "type": "image", "image_id": "hero.png", "x": 7.5, "y": 0.5, "w": 5.0, "h": 6.5}
+        {"id": "pic", "type": "image", "image_id": "hero.png", "asset_reason": "验证竖框等比裁切且主体不变形", "x": 7.5, "y": 0.5, "w": 5.0, "h": 6.5}
     ]
     out_path = str(tmp_path / "img_crop.pptx")
     ok, errs = compile_plan(plan, out_path, asset_root=str(tmp_path), strict=True)
@@ -428,6 +448,7 @@ def test_e008_catches_conflict_without_penalizing_derived_rates_or_commas():
             {"name": "堂食", "values": [74, 78, 78, 86]},
         ],
     }
+    multi_plan["pages"][0]["elements"][0]["chart"]["shared_basis"] = True
     assert validate_plan(multi_plan) == []
 
 
@@ -441,6 +462,9 @@ def test_structure_over_containers_table_and_dark_chart(tmp_path):
             "id": "p_light_tbl",
             "role": "build",
             "claim": "Q3 营收达 1.2 亿元，复购率 42%",
+            "evidence_status": "supported",
+            "focus": "原生表格中的两项运营指标",
+            "composition_rationale": "异类信息用三线表保持可编辑与口径清晰",
             "background": "#F5F1EB",
             "elements": [
                 {
@@ -467,6 +491,9 @@ def test_structure_over_containers_table_and_dark_chart(tmp_path):
             "id": "p_dark_chart",
             "role": "turn",
             "claim": "Q3 销量升至 150 万件",
+            "evidence_status": "supported",
+            "focus": "深色场中的季度销量柱图",
+            "composition_rationale": "深色转折页集中突出销量变化",
             "background": "#151210",
             "elements": [
                 {
@@ -531,6 +558,7 @@ def _e008(claim, chart, page_extra=None):
     plan = json.loads(json.dumps(VALID_PLAN))
     plan["pages"] = [{
         "id": "p_sem", "role": "build", "claim": claim,
+        "evidence_status": "supported", "focus": "语义核对图表", "composition_rationale": "单图表契约探针",
         "elements": [{"id": "c1", "type": "chart", "x": 1, "y": 1, "w": 8, "h": 5, "chart": chart}],
         **(page_extra or {}),
     }]
@@ -648,6 +676,7 @@ def _single_chart_plan(chart, palette, bg=None):
     plan = json.loads(json.dumps(VALID_PLAN))
     plan["palette"] = palette
     page = {"id": "p_chart", "role": "build", "claim": "", "notes": "图表契约测试",
+            "evidence_status": "not_applicable", "focus": "图表对象契约", "composition_rationale": "单图表隔离验证",
             "elements": [{"id": "c1", "type": "chart", "x": 1, "y": 1, "w": 8, "h": 5, "chart": chart}]}
     if bg:
         page["background"] = bg
@@ -739,6 +768,7 @@ def test_e008_flags_caption_period_that_contradicts_chart_period():
     plan = json.loads(json.dumps(VALID_PLAN))
     plan["pages"] = [{
         "id": "p_cap", "role": "build", "claim": "26Q3 收入 1.2 亿元",
+        "evidence_status": "supported", "focus": "季度收入图表", "composition_rationale": "图注与图表同场核对",
         "elements": [
             {"id": "c1", "type": "chart", "x": 1, "y": 1, "w": 8, "h": 4, "chart": chart},
             {"id": "src", "type": "caption", "content": "数据来源：财务系统 2024 Q1–Q4。",
@@ -764,7 +794,8 @@ def test_e007_reports_actionable_root_cause(tmp_path):
     ]
     for chart, needle in cases:
         plan = json.loads(json.dumps(VALID_PLAN))
-        plan["pages"] = [{"id": "p", "role": "build", "claim": "x", "elements": [
+        plan["pages"] = [{"id": "p", "role": "build", "claim": "x",
+                          "evidence_status": "supported", "focus": "失败图表", "composition_rationale": "错误根因探针", "elements": [
             {"id": "c1", "type": "chart", "x": 1, "y": 1, "w": 8, "h": 5, "chart": chart}]}]
         ok, errs = compile_plan(plan, str(tmp_path / "bad.pptx"), asset_root=str(tmp_path))
         assert not ok
@@ -843,3 +874,195 @@ def test_pie_label_ink_maximises_worst_case_contrast(tmp_path):
     ok, _, chart = _chart_of(plan, None, tmp_path)
     assert ok
     assert str(chart.plots[0].data_labels.font.color.rgb) == ink.lstrip("#")
+
+
+# ---------------------------------------------------------------------------
+# P0 负向探针回归：Schema、静默回退、图层授权、图表语义与素材治理
+# ---------------------------------------------------------------------------
+
+
+def test_machine_examples_validate_against_real_schema():
+    assert list(PLAN_VALIDATOR.iter_errors(VALID_PLAN)) == []
+    fixture = json.loads((REPO_ROOT / "dev/tests/fixtures/render_deck.json").read_text(encoding="utf-8"))
+    assert list(PLAN_VALIDATOR.iter_errors(fixture)) == []
+
+
+def test_unknown_fields_and_duplicate_element_ids_are_hard_errors():
+    bad = json.loads(json.dumps(VALID_PLAN))
+    bad["unexpected"] = "不得静默忽略"
+    assert any(e.code == "E001" and e.level == ErrorLevel.HARD for e in validate_plan(bad))
+
+    bad = json.loads(json.dumps(VALID_PLAN))
+    page = bad["pages"][0]
+    duplicate = json.loads(json.dumps(page["elements"][0]))
+    duplicate["y"] = 2.0
+    page["elements"].append(duplicate)
+    assert any(e.code == "E001" and "唯一" in e.condition for e in validate_plan(bad))
+
+
+def test_invalid_values_never_silently_fall_back(tmp_path):
+    cases = [
+        ("aspect_ratio", "21:9"),
+        ("type", "video"),
+        ("color", "not-a-color"),
+        ("w", "wide"),
+        ("font_size", "large"),
+        ("align", "diagonal"),
+        ("bold", "yes"),
+    ]
+    for index, (field, value) in enumerate(cases):
+        plan = json.loads(json.dumps(VALID_PLAN))
+        if field == "aspect_ratio":
+            plan[field] = value
+        else:
+            plan["pages"][0]["elements"][0][field] = value
+        out = tmp_path / f"invalid-{index}.pptx"
+        ok, errors = compile_plan(plan, str(out), asset_root=str(tmp_path))
+        assert not ok and any(e.level == ErrorLevel.HARD for e in errors), field
+        assert not out.exists(), f"{field} 不得在契约失败后生成貌似正常的产物"
+
+    plan = json.loads(json.dumps(VALID_PLAN))
+    element = plan["pages"][0]["elements"][0]
+    element["type"] = "shape"
+    element["shape_kind"] = "hexagon"
+    ok, errors = compile_plan(plan, str(tmp_path / "invalid-shape.pptx"), asset_root=str(tmp_path))
+    assert not ok and any(e.code == "E001" for e in errors)
+
+
+def test_nonfinite_geometry_is_rejected_before_pptx_creation(tmp_path):
+    plan = json.loads(json.dumps(VALID_PLAN))
+    plan["pages"][0]["elements"][0]["w"] = float("nan")
+    out = tmp_path / "nan.pptx"
+    ok, errors = compile_plan(plan, str(out), asset_root=str(tmp_path))
+    assert not ok and any("有限" in e.condition for e in errors)
+    assert not out.exists()
+
+
+def test_multi_series_pie_and_donut_are_blocked_before_compile(tmp_path):
+    for kind in ("pie", "donut"):
+        chart = {"kind": kind, "data": {"categories": ["A", "B"], "series": [
+            {"name": "S1", "values": [50, 50]}, {"name": "S2", "values": [60, 40]},
+        ]}}
+        plan = _single_chart_plan(chart, ["#B08968", "#6B7A6C"])
+        out = tmp_path / f"{kind}-multi.pptx"
+        ok, errors = compile_plan(plan, str(out), asset_root=str(tmp_path))
+        assert not ok and any(e.code == "E007" and "只能有一个系列" in e.condition for e in errors)
+        assert not out.exists(), "不得再生成静默丢失后续系列的 PPTX"
+
+
+def test_pie_rejects_negative_values_and_zero_total():
+    for values in ([-20, 120], [0, 0]):
+        chart = {"kind": "pie", "data": {"categories": ["A", "B"], "series": [{"name": "占比", "values": values}]}}
+        errors = validate_plan(_single_chart_plan(chart, ["#B08968", "#6B7A6C"]))
+        assert any(e.code == "E007" and e.level == ErrorLevel.HARD for e in errors), values
+
+
+def test_overlap_requires_actual_lower_layer_authorization():
+    plan = json.loads(json.dumps(VALID_PLAN))
+    page = plan["pages"][0]
+    page["elements"] = [
+        {"id": "full_text", "type": "body", "content": "全屏文本不是背景", "x": 0, "y": 0,
+         "w": 13.333, "h": 7.5, "font_size": 20, "z_index": 0},
+        {"id": "small_text", "type": "body", "content": "发生实质重叠", "x": 2, "y": 2,
+         "w": 5, "h": 2, "font_size": 20, "z_index": 1},
+    ]
+    assert any(e.code == "E002" for e in validate_plan(plan)), "全屏面积不得自动豁免文本重叠"
+    page["elements"][1]["overlap_allowed"] = True
+    assert any(e.code == "E002" for e in validate_plan(plan)), "上层不得自行授权覆盖下层"
+    page["elements"][0]["overlap_allowed"] = True
+    assert not [e for e in validate_plan(plan) if e.code == "E002"], "实际下层显式授权后才允许承载"
+
+
+def test_visible_title_is_checked_independently_from_page_claim():
+    plan = _single_chart_plan(BAR_800_900_1000, ["#B08968"])
+    page = plan["pages"][0]
+    page["claim"] = "Q1–Q3 获客人数持续增长 25%"
+    page["evidence_status"] = "supported"
+    page["elements"].insert(0, {"id": "title", "type": "title", "content": "获客成本下降 30%",
+                                "x": 0.5, "y": 0.3, "w": 8, "h": 0.8, "font_size": 32})
+    page["elements"][1]["y"] = 1.5
+    errors = [e for e in validate_plan(plan) if e.code == "E008"]
+    assert errors and "title:title" in errors[0].actual
+    assert "30%" in errors[0].actual
+
+
+def test_table_categories_series_payload_is_also_semantically_checked():
+    chart = {"kind": "table", "unit": "亿元", "data": {
+        "categories": ["Q3"], "series": [{"name": "营收", "values": [1.2]}],
+    }}
+    assert _e008("Q3 营收 9.9 亿元", chart) is not None
+    assert _e008("Q3 营收 1.2 亿元", chart) is None
+
+
+def test_multiseries_requires_shared_basis_and_compatible_units():
+    chart = {"kind": "bar", "unit": "万元", "data": {"categories": ["Q1", "Q2"], "series": [
+        {"name": "A", "values": [1, 2]}, {"name": "B", "values": [2, 3]},
+    ]}}
+    plan = _single_chart_plan(chart, ["#B08968", "#111827"])
+    missing = [e for e in validate_plan(plan) if e.code == "E008"]
+    assert missing and missing[0].level == ErrorLevel.SOFT
+
+    chart["shared_basis"] = False
+    plan = _single_chart_plan(chart, ["#B08968", "#111827"])
+    assert any(e.code == "E008" and e.level == ErrorLevel.HARD for e in validate_plan(plan))
+
+    chart["shared_basis"] = True
+    chart["data"]["series"][1]["unit"] = "亿元"
+    plan = _single_chart_plan(chart, ["#B08968", "#111827"])
+    assert any(e.code == "E008" and e.level == ErrorLevel.HARD and "单位" in e.condition for e in validate_plan(plan))
+
+    chart["data"]["series"][1]["unit"] = "万元"
+    plan = _single_chart_plan(chart, ["#B08968", "#111827"])
+    assert validate_plan(plan) == []
+
+
+def test_asset_reference_pending_status_and_generated_evidence_are_explicit():
+    plan = json.loads(json.dumps(VALID_PLAN))
+    plan["pages"][0]["elements"] = [{"id": "img", "type": "image", "image_id": "hero.png",
+                                    "asset_reason": "验证资产治理", "x": 1, "y": 1, "w": 4, "h": 3}]
+    assert any(e.code == "E011" and e.level == ErrorLevel.HARD for e in validate_plan(plan))
+
+    _register_test_asset(plan, "hero.png")
+    plan["assets"]["hero.png"]["license_status"] = "pending"
+    pending = [e for e in validate_plan(plan) if e.code == "E011"]
+    assert pending and pending[0].level == ErrorLevel.SOFT
+
+    plan["assets"]["hero.png"]["used_as_evidence"] = True
+    assert any(e.code == "E001" and e.level == ErrorLevel.HARD for e in validate_plan(plan)), "生成图不得声明为事实证据"
+
+
+def test_think_handoff_and_unresolved_states_are_enforced():
+    plan = json.loads(json.dumps(VALID_PLAN))
+    del plan["pages"][0]["focus"]
+    assert any(e.code == "E001" for e in validate_plan(plan))
+
+    plan = json.loads(json.dumps(VALID_PLAN))
+    plan["pages"][0]["evidence_status"] = "partial"
+    assert any(e.code == "E001" for e in validate_plan(plan))
+
+    plan = json.loads(json.dumps(VALID_PLAN))
+    plan["pages"][0]["evidence_status"] = "unsupported"
+    assert any(e.code == "E001" for e in validate_plan(plan))
+
+
+def test_default_chart_palette_is_deterministic_and_disclosed(tmp_path):
+    chart = {"kind": "bar", "data": {"categories": ["Q1"], "series": [{"name": "营收", "values": [1]}]}}
+    plan = _single_chart_plan(chart, ["#B08968"])
+    del plan["palette"]
+    out = tmp_path / "default-palette.pptx"
+    ok, errors = compile_plan(plan, str(out), asset_root=str(tmp_path))
+    assert ok
+    notes = [e for e in errors if e.code == "E009" and "policy.json" in e.actual]
+    assert notes, "使用默认色必须披露，不得退回不明 Office 主题色"
+    prs = Presentation(str(out))
+    chart_obj = [s.chart for s in prs.slides[0].shapes if getattr(s, "has_chart", False) and s.has_chart][0]
+    assert str(chart_obj.series[0].format.fill.fore_color.rgb) == POLICY["defaults"]["chart_palette"][0].lstrip("#")
+
+
+def test_precompile_chart_failure_does_not_emit_misleading_e009(tmp_path):
+    chart = {"kind": "bar", "data": {"categories": ["A"], "series": [{"name": "S", "values": [1, 2]}]}}
+    plan = _single_chart_plan(chart, ["#B08968"])
+    out = tmp_path / "bad-chart.pptx"
+    ok, errors = compile_plan(plan, str(out), asset_root=str(tmp_path))
+    assert not ok and any(e.code == "E007" for e in errors)
+    assert not [e for e in errors if e.code == "E009"]

@@ -22,7 +22,7 @@ jobs:
       - name: 安装技能包（同时验证 pyproject 可构建）
         run: python -m pip install . pillow pytest
       - name: 契约与语义回归（纯 Python，不含渲染）
-        run: python -m pytest dev/tests -q --ignore=dev/tests/test_render.py -p no:cacheprovider
+        run: python -m pytest dev/tests -q --ignore=dev/tests/test_render.py -m "not render" -p no:cacheprovider
       - name: 安装与 CLI 入口验证
         run: |
           if [ "${{ matrix.python-version }}" = "3.10" ]; then python -m pip install tomli; fi
@@ -43,14 +43,16 @@ jobs:
             libreoffice-impress poppler-utils fonts-noto-cjk
       - run: python -m pip install --upgrade pip
       - run: python -m pip install . pillow pytest
-      - name: 固定案例渲染回归
-        run: python -m pytest dev/tests/test_render.py -q -p no:cacheprovider
+      - name: 固定案例渲染与交付门回归
+        run: python -m pytest dev/tests/test_render.py dev/tests/test_delivery.py -q -p no:cacheprovider
       - name: 保留渲染产物供人工复核
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: render-artifacts
           path: |
-            /tmp/pytest-*/render*/**/*.png
-            /tmp/pytest-*/render*/**/*.pdf
+            /tmp/pytest-*/**/*.png
+            /tmp/pytest-*/**/*.pdf
+            /tmp/pytest-*/**/bbox.html
+            /tmp/pytest-*/**/pdffonts.txt
           if-no-files-found: warn

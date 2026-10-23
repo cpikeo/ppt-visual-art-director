@@ -24,7 +24,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List
-from xml.etree import ElementTree as ET
 
 import pytest
 from pptx import Presentation
@@ -33,6 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.compile_pptx import compile_plan, validate_plan  # noqa: E402
+from scripts.verify_delivery import _font_embedding_issues, _overflow_violations, _pdftotext_bbox  # noqa: E402
 
 FIXTURE = Path(__file__).parent / "fixtures" / "render_deck.json"
 SOFFICE = shutil.which("soffice") or shutil.which("libreoffice")
@@ -40,11 +40,6 @@ PDFTOTEXT = shutil.which("pdftotext")
 PDFINFO = shutil.which("pdfinfo")
 PDFFONTS = shutil.which("pdffonts")
 PDFTOPPM = shutil.which("pdftoppm")
-
-PT_PER_IN = 72.0
-# LibreOffice 行高与字体上升部会略超出文本框几何，留 4pt（≈0.056in）容差；
-# 真正溢出一行中文（≥18pt）就会超出 20pt 以上，仍会被捕获。
-OVERFLOW_TOL_PT = 4.0
 
 pytestmark = pytest.mark.skipif(
     not all([SOFFICE, PDFTOTEXT, PDFINFO, PDFFONTS, PDFTOPPM]),
@@ -98,23 +93,6 @@ def rendered(tmp_path_factory) -> Dict[str, object]:
         "fonts": subprocess.run([PDFFONTS, str(pdf_path)], capture_output=True, text=True).stdout,
         "info": subprocess.run([PDFINFO, str(pdf_path)], capture_output=True, text=True).stdout,
     }
-
-
-def _pdftotext_bbox(pdf: Path) -> List[Dict[str, object]]:
-    raw = subprocess.run([PDFTOTEXT, "-bbox", str(pdf), "-"], capture_output=True, text=True).stdout
-    raw = re.sub(r"<!DOCTYPE[^>]*>", "", raw).strip()
-    root = ET.fromstring(raw)
-    pages = []
-    for page in root.iter("{http://www.w3.org/1999/xhtml}page"):
-        words = []
-        for w in page.iter("{http://www.w3.org/1999/xhtml}word"):
-            words.append({
-                "x0": float(w.get("xMin")), "y0": float(w.get("yMin")),
-                "x1": float(w.get("xMax")), "y1": float(w.get("yMax")),
-                "text": (w.text or ""),
-            })
-        pages.append({"width": float(page.get("width")), "height": float(page.get("height")), "words": words})
-    return pages
 
 
 def _lines(words: List[Dict[str, object]]) -> List[List[Dict[str, object]]]:
@@ -172,10 +150,7 @@ def test_declared_cjk_fonts_are_embedded_in_pdf(rendered):
     fonts = rendered["fonts"]
     assert "NotoSerifCJK" in fonts, f"标题中文字体未落地：\n{fonts}"
     assert "NotoSansCJK" in fonts, f"正文中文字体未落地：\n{fonts}"
-    for line in fonts.splitlines()[2:]:
-        if not line.strip():
-            continue
-        assert re.search(r"\byes\b", line), f"字体未嵌入，跨设备将回退：{line}"
+    assert not _font_embedding_issues(fonts), f"字体未嵌入或 pdffonts 列无法解析：\n{fonts}"
 
 
 def test_every_text_element_has_ea_font_and_no_stretch(rendered):
@@ -199,34 +174,7 @@ def test_every_text_element_has_ea_font_and_no_stretch(rendered):
 
 def test_no_text_overflows_declared_box(rendered):
     """逐元素核对渲染后的墨迹包围盒是否仍落在声明的文本框内。"""
-    plan = rendered["plan"]
-    pages = rendered["bbox"]
-    violations: List[str] = []
-    checked = 0
-    for page, page_box in zip(plan["pages"], pages):
-        for el in page["elements"]:
-            if el["type"] not in {"title", "body", "text", "number", "caption", "footer"}:
-                continue
-            bx0, by0 = el["x"] * PT_PER_IN, el["y"] * PT_PER_IN
-            bx1, by1 = (el["x"] + el["w"]) * PT_PER_IN, (el["y"] + el["h"]) * PT_PER_IN
-            hit = [
-                w for w in page_box["words"]
-                if bx0 - 1 <= (w["x0"] + w["x1"]) / 2 <= bx1 + 1
-                and by0 - 1 <= (w["y0"] + w["y1"]) / 2 <= by1 + 1
-            ]
-            if not hit:
-                continue
-            checked += 1
-            over_bottom = max(w["y1"] for w in hit) - by1
-            over_right = max(w["x1"] for w in hit) - bx1
-            over_left = bx0 - min(w["x0"] for w in hit)
-            over_top = by0 - min(w["y0"] for w in hit)
-            worst = max(over_bottom, over_right, over_left, over_top)
-            if worst > OVERFLOW_TOL_PT:
-                violations.append(
-                    f"[{page['id']}.{el['id']}] 溢出 {worst:.1f}pt（下 {over_bottom:.1f} / 右 {over_right:.1f} / "
-                    f"上 {over_top:.1f} / 左 {over_left:.1f}）文本：{''.join(w['text'] for w in hit)[:40]}"
-                )
+    violations, checked = _overflow_violations(rendered["plan"], rendered["bbox"])
     assert checked >= 8, "参与核对的文本元素过少"
     assert not violations, "文本溢出声明框（应为改写文案或调整框体，而非缩字号硬塞）：\n" + "\n".join(violations)
 
@@ -315,3 +263,31 @@ def test_table_has_no_vertical_cage_and_right_aligned_numbers(rendered):
     assert tcPr.find(qn("a:lnL")).find(qn("a:noFill")) is not None, "表格不应有竖向网格框线"
     numeric_cell = tbl.cell(1, 1)
     assert numeric_cell.text_frame.paragraphs[0].alignment == PP_ALIGN.RIGHT, "数值列必须右对齐"
+
+
+def test_negative_render_probe_actually_detects_overflow(tmp_path):
+    """负向案例证明溢出检查会失败，而不是对任何 PDF 都给出绿灯。"""
+    plan = {
+        "schema_version": "2.0", "deck_id": "overflow-negative", "title": "溢出负向案例",
+        "audience": "测试", "goal": "证明真实渲染检查能够失败", "core_claim": "完全越界或丢失的文本不得被跳过",
+        "fonts": {"heading": "Noto Serif CJK SC", "body": "Noto Sans CJK SC"},
+        "pages": [{"id": "p", "role": "build", "claim": "文本溢出负向案例",
+                   "evidence_status": "not_applicable", "focus": "被刻意压缩的正文框",
+                   "composition_rationale": "仅用于制造真实溢出，不是设计示例",
+                   "elements": [{"id": "overflow", "type": "body",
+                                 "content": "这段中文正文被刻意放入严重不足的空间，必须在真实渲染检查中被发现。" * 5,
+                                 "x": 1, "y": 1, "w": 2.2, "h": 0.35, "font_size": 22}]}],
+    }
+    pptx = tmp_path / "overflow.pptx"
+    ok, errors = compile_plan(plan, str(pptx), asset_root=str(tmp_path), strict=False)
+    assert ok and any(e.code == "E010" for e in errors)
+    proc = subprocess.run(
+        [SOFFICE, f"-env:UserInstallation=file://{tmp_path / 'lo-profile'}", "--headless",
+         "--convert-to", "pdf", "--outdir", str(tmp_path), str(pptx)],
+        capture_output=True, text=True, timeout=180,
+    )
+    pdf = tmp_path / "overflow.pdf"
+    assert proc.returncode == 0 and pdf.is_file(), proc.stderr or proc.stdout
+    violations, checked = _overflow_violations(plan, _pdftotext_bbox(pdf))
+    assert checked == 1
+    assert violations, "真实溢出的负向案例必须被检测，不得因中心点出框而跳过"

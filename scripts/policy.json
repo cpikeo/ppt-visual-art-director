@@ -1,0 +1,84 @@
+{
+  "policy_version": "1.0",
+  "description": "确定性执行策略的唯一来源。这里不定义页面模板、行业风格或审美分数。",
+  "canvas": {
+    "default_aspect_ratio": "16:9",
+    "dimensions_in": {
+      "16:9": [13.333, 7.5],
+      "4:3": [10.0, 7.5]
+    },
+    "bound_tolerance_in": 0.01
+  },
+  "defaults": {
+    "fonts": {"heading": "微软雅黑", "body": "微软雅黑"},
+    "text_color": "#262626",
+    "chart_palette": ["#2F5597", "#B08968", "#6B7A6C", "#7A5C9E", "#9A6B4F", "#4F768E"]
+  },
+  "typography": {
+    "min_pt": {"title": 28, "body": 18, "caption": 12},
+    "default_pt": {"title": 28, "number": 40, "caption": 13, "body": 18},
+    "margin_in": {"x": 0.05, "y": 0.03},
+    "line_spacing": {"display": 1.15, "body": 1.3},
+    "text_fit_tolerance": 1.05,
+    "max_elements_per_page": 12
+  },
+  "geometry": {
+    "overlap_area_sq_in": 0.5,
+    "overlap_min_edge_in": 0.05,
+    "overlap_ratio": 0.25
+  },
+  "chart": {
+    "dark_background_luminance": 0.18,
+    "min_contrast": {"bar": 2.0, "line": 3.0, "pie": 2.0, "donut": 2.0},
+    "font_pt": {"title": 15, "legend": 11.5, "axis": 12, "data_label": 12, "table_header": 13.5, "table_body": 14},
+    "table_style_id": "{2D5ABB26-0587-4C30-8999-92F81FD0307C}",
+    "table_caption": {"min_element_height_in": 1.0, "max_height_in": 0.45, "height_ratio": 0.16, "gap_in": 0.06, "min_table_height_in": 0.5},
+    "style": {
+      "light": {
+        "title": "#111827",
+        "body": "#374151",
+        "tick": "#4B5563",
+        "grid": "#E5E7EB",
+        "rule_strong": "#4B5563",
+        "rule_subtle": "#E5E7EB"
+      },
+      "dark": {
+        "title": "#F3F4F6",
+        "body": "#D1D5DB",
+        "tick": "#D1D5DB",
+        "grid": "#2E3440",
+        "rule_strong": "#6B7280",
+        "rule_subtle": "#2E3440"
+      }
+    },
+    "placeholder": {"fill": "#EEEEEE", "text": "#666666"}
+  },
+  "preview": {
+    "render_dpi": 110,
+    "overflow_tolerance_pt": 4.0,
+    "slide_bounds_tolerance_pt": 1.0,
+    "blank_ink_min_ratio": 0.002
+  },
+  "quality_gates": {
+    "G-STR": "Schema、数据契约、引用和硬约束；默认全量",
+    "G-SEM": "THINK 交接、可见文本、实际 PPTX 对象与数据语义一致性",
+    "G-PRE": "由本次交付 PPTX 生成的真实渲染预览及客观检查",
+    "G-DECK": "整稿叙事、构图、中文排版与视觉复核；不能由编译通过推定",
+    "G-TGT": "项目指定的 Microsoft PowerPoint 目标环境验证",
+    "G-COMPLY": "素材来源、授权、隐私、生成属性与证据用途检查"
+  },
+  "release": {
+    "default_required_gates": ["G-STR", "G-SEM", "G-COMPLY"],
+    "mandatory_gate_not_verified": "BLOCK — Delivery",
+    "non_approvable": [
+      "结构硬错误",
+      "事实或证据错误",
+      "素材授权与隐私阻断",
+      "权威源冲突",
+      "未解决的 MUST FIX"
+    ],
+    "optional_gate_not_verified": "NOT VERIFIED",
+    "risk_record_required": ["scope", "impact", "alternative_evidence", "mitigation", "owner", "approver", "expires_when"]
+  },
+  "sampling": {"default_low_risk_rate": 0.2, "default_seed": 20261023}
+}

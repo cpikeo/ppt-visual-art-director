@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cpikeo/ppt-visual-art-director/scripts/plan.schema.json",
+  "title": "PPT Visual Art Director slide plan",
+  "description": "THINK 到 BUILD 的唯一机器数据契约。字段形状在此定义；默认值与阈值只在 policy.json 定义。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "deck_id", "title", "audience", "goal", "core_claim", "pages"],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "deck_id": {"$ref": "#/$defs/nonEmptyString"},
+    "title": {"$ref": "#/$defs/nonEmptyString"},
+    "audience": {"$ref": "#/$defs/nonEmptyString"},
+    "goal": {"$ref": "#/$defs/nonEmptyString"},
+    "core_claim": {"$ref": "#/$defs/nonEmptyString"},
+    "evidence": {"$ref": "#/$defs/stringList"},
+    "visual_concept": {"type": "string"},
+    "palette": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/color"},
+      "uniqueItems": true
+    },
+    "fonts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heading": {"$ref": "#/$defs/nonEmptyString"},
+        "body": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    },
+    "aspect_ratio": {"enum": ["16:9", "4:3"]},
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/page"}
+    },
+    "rhythm": {"$ref": "#/$defs/stringList"},
+    "asset_reason": {"$ref": "#/$defs/stringList"},
+    "assets": {
+      "type": "object",
+      "propertyNames": {"minLength": 1},
+      "additionalProperties": {"$ref": "#/$defs/asset"}
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "stringList": {"type": "array", "items": {"type": "string"}},
+    "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+    "finiteNumber": {"type": "number"},
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "claim", "evidence_status", "focus", "composition_rationale", "elements"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "role": {"enum": ["open", "build", "breathe", "turn", "hold", "close"]},
+        "claim": {"type": "string"},
+        "evidence_status": {"enum": ["supported", "partial", "unsupported", "not_applicable"]},
+        "focus": {"$ref": "#/$defs/nonEmptyString"},
+        "composition_rationale": {"$ref": "#/$defs/nonEmptyString"},
+        "evidence": {"$ref": "#/$defs/stringList"},
+        "constraints": {"$ref": "#/$defs/stringList"},
+        "open_questions": {"$ref": "#/$defs/stringList"},
+        "acceptance": {"$ref": "#/$defs/stringList"},
+        "layout": {"enum": ["large_white", "editorial", "data_field", "image_story", "linear", "asymmetric"]},
+        "density": {"enum": ["sparse", "moderate", "dense"]},
+        "emphasis": {"enum": ["low", "medium", "high"]},
+        "background": {"$ref": "#/$defs/color"},
+        "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}},
+        "notes": {"type": "string"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"claim": {"maxLength": 0}}},
+          "then": {
+            "anyOf": [
+              {"required": ["notes"], "properties": {"notes": {"minLength": 1}}},
+              {"required": ["open_questions"], "properties": {"open_questions": {"minItems": 1}}}
+            ]
+          }
+        },
+        {
+          "if": {"properties": {"evidence_status": {"const": "partial"}}, "required": ["evidence_status"]},
+          "then": {"required": ["open_questions"], "properties": {"open_questions": {"minItems": 1}}}
+        },
+        {
+          "if": {"properties": {"evidence_status": {"const": "unsupported"}}, "required": ["evidence_status"]},
+          "then": {"properties": {"claim": {"maxLength": 0}}}
+        }
+      ]
+    },
+    "element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "x", "y", "w", "h"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "type": {"enum": ["title", "body", "text", "number", "image", "chart", "shape", "divider", "caption", "footer"]},
+        "content": {"type": "string"},
+        "x": {"type": "number", "minimum": 0},
+        "y": {"type": "number", "minimum": 0},
+        "w": {"type": "number", "exclusiveMinimum": 0},
+        "h": {"type": "number", "exclusiveMinimum": 0},
+        "font_size": {"type": "number", "exclusiveMinimum": 0},
+        "bold": {"type": "boolean"},
+        "color": {"$ref": "#/$defs/color"},
+        "align": {"enum": ["left", "center", "right", "justify"]},
+        "shape_kind": {"enum": ["rect", "round_rect", "oval"]},
+        "image_id": {"$ref": "#/$defs/nonEmptyString"},
+        "asset_reason": {"$ref": "#/$defs/nonEmptyString"},
+        "chart": {"$ref": "#/$defs/chart"},
+        "z_index": {"type": "number"},
+        "overlap_allowed": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"$ref": "#/$defs/textElementType"}}, "required": ["type"]},
+          "then": {"required": ["content"]}
+        },
+        {
+          "if": {"properties": {"type": {"const": "image"}}, "required": ["type"]},
+          "then": {"required": ["image_id", "asset_reason"]}
+        },
+        {
+          "if": {"properties": {"type": {"const": "chart"}}, "required": ["type"]},
+          "then": {"required": ["chart"]}
+        }
+      ]
+    },
+    "textElementType": {"enum": ["title", "body", "text", "number", "caption", "footer"]},
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "generated", "used_as_evidence", "license_status", "privacy_status"],
+      "properties": {
+        "source": {"$ref": "#/$defs/nonEmptyString"},
+        "generated": {"type": "boolean"},
+        "used_as_evidence": {"type": "boolean"},
+        "license_status": {"enum": ["cleared", "pending", "blocked"]},
+        "privacy_status": {"enum": ["cleared", "pending", "blocked"]},
+        "reference": {"type": "string"},
+        "notes": {"type": "string"}
+      },
+      "not": {
+        "properties": {
+          "generated": {"const": true},
+          "used_as_evidence": {"const": true}
+        },
+        "required": ["generated", "used_as_evidence"]
+      }
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "data"],
+      "properties": {
+        "kind": {"enum": ["bar", "line", "pie", "donut", "table"]},
+        "data": {"$ref": "#/$defs/chartData"},
+        "title": {"type": "string"},
+        "unit": {"type": "string"},
+        "period": {"type": "string"},
+        "basis": {"type": "string"},
+        "shared_basis": {"type": "boolean"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "table"}}, "required": ["kind"]},
+          "else": {"properties": {"data": {"$ref": "#/$defs/categorySeriesData"}}}
+        }
+      ]
+    },
+    "chartData": {
+      "oneOf": [
+        {"$ref": "#/$defs/categorySeriesData"},
+        {"$ref": "#/$defs/tableData"}
+      ]
+    },
+    "categorySeriesData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["categories", "series"],
+      "properties": {
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": ["string", "number"]}
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/series"}
+        }
+      }
+    },
+    "series": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "values"],
+      "properties": {
+        "name": {"$ref": "#/$defs/nonEmptyString"},
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "number"}
+        },
+        "unit": {"type": "string"},
+        "period": {"type": "string"},
+        "basis": {"type": "string"}
+      }
+    },
+    "tableData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["headers", "rows"],
+      "properties": {
+        "headers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": ["string", "number"]}
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": ["string", "number"]}
+          }
+        }
+      }
+    }
+  }
+}
