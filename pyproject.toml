@@ -1,0 +1,16 @@
+[project]
+name = "ppt-visual-art-director"
+version = "0.1.0"
+description = "Visual Art Director 设计判断技能包：内容 → 逐页判断 → 原生可编辑 PPTX"
+requires-python = ">=3.10"
+dependencies = [
+    "python-pptx>=1.0.2",
+]
+
+[project.scripts]
+ppt-vad = "scripts.compile_pptx:main"
+
+[tool.pytest.ini_options]
+testpaths = ["dev/tests"]
+python_files = ["test_*.py"]
+addopts = "-q"

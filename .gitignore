@@ -1,14 +1,16 @@
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
 .pytest_cache/
-.ruff_cache/
-.mypy_cache/
+*.egg-info/
 build/
 dist/
-*.egg-info/
-audit/
-pvad-report/
-release-preflight/
-ci-package/
-ci-package.zip
-*.part
+.env
+.venv/
+.idea/
+.vscode/
+.DS_Store
+# 生成产物，不进入源代码
+dev/demo/*.pptx
+dev/reports/
+*.log
