@@ -48,7 +48,7 @@
         "generated": {"type": "boolean", "description": "是否为生成图；生成图不得作证据。"},
         "used_as_evidence": {"type": "boolean"},
         "rights": {"enum": ["cleared", "pending", "blocked"], "description": "版权与肖像/隐私的可确认状态；缺省 pending。"},
-        "reference": {"type": "string", "description": "凭据位置（合同、授权页、编号）；rights=cleared 时必填。"},
+        "reference": {"type": "string", "description": "凭据位置（合同、授权页、编号）；rights=cleared 时应有，缺则提示。"},
         "generation": {"$ref": "#/$defs/generation"},
         "notes": {"type": "string"}
       }
@@ -142,7 +142,14 @@
         {"if": {"required": ["type"], "properties": {"type": {"const": "shape"}}}, "then": {"required": ["x", "y", "w", "h"], "anyOf": [{"required": ["color"]}, {"required": ["gradient"]}, {"required": ["stroke"]}]}},
         {"if": {"required": ["type"], "properties": {"type": {"const": "divider"}}}, "then": {"required": ["color", "x", "y", "w", "h"]}},
         {"if": {"required": ["type"], "properties": {"type": {"const": "path"}}}, "then": {"required": ["points", "stroke"]}},
-        {"if": {"required": ["type"], "properties": {"type": {"const": "group"}}}, "then": {"required": ["elements"]}}
+        {"if": {"required": ["type"], "properties": {"type": {"const": "group"}}}, "then": {"required": ["elements"]}},
+
+        {"if": {"required": ["chart"]}, "then": {"properties": {"type": {"const": "chart"}}}},
+        {"if": {"required": ["image_id"]}, "then": {"properties": {"type": {"const": "image"}}}},
+        {"if": {"required": ["points"]}, "then": {"properties": {"type": {"const": "path"}}}},
+        {"if": {"required": ["elements"]}, "then": {"properties": {"type": {"const": "group"}}}},
+        {"if": {"required": ["content"]}, "then": {"properties": {"type": {"$ref": "#/$defs/textType"}}}},
+        {"if": {"required": ["runs"]}, "then": {"properties": {"type": {"$ref": "#/$defs/textType"}}}}
       ]
     },
 

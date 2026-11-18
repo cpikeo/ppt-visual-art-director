@@ -6,8 +6,9 @@
 用法：
     python scripts/inspect_pptx.py deck.pptx [--json inspect.json]
 
-报告画布、母版/版式、每页对象的类型·几何·文字·逐段字体·图片·图表载荷·表格内容·
-组合结构·备注·动画与切换，以及字号档数与用色统计。只给事实，不给审美结论；不改原文件。
+报告画布、母版/版式、主题字体、宏、每页对象的类型·几何·文字·逐 run 字体（含东亚字族）·
+图片·图表载荷·表格内容·组合结构·备注·动画与切换·隐藏页，以及字号档数与用色统计。
+只给事实，不给审美结论；不改原文件。单个对象解析失败不会中断整份报告。
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 EMU = 914400.0
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+DGM_REL = "{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds"
 
 
 def inch(value: Optional[int]) -> Optional[float]:
@@ -28,15 +31,23 @@ def inch(value: Optional[int]) -> Optional[float]:
 
 def kind_of(shape) -> str:
     from pptx.enum.shapes import MSO_SHAPE_TYPE
-    if getattr(shape, "has_chart", False) and shape.has_chart:
-        return "chart"
-    if getattr(shape, "has_table", False) and shape.has_table:
-        return "table"
-    if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+
+    kind = getattr(shape, "shape_type", None)
+    if kind == MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT:
+        return "ole"
+    if kind == MSO_SHAPE_TYPE.MEDIA:
+        return "media"
+    if kind == MSO_SHAPE_TYPE.GROUP:
         return "group"
-    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+    if kind == MSO_SHAPE_TYPE.PICTURE:
         return "picture"
-    if shape.shape_type == MSO_SHAPE_TYPE.PLACEHOLDER:
+    if getattr(shape, "has_chart", False):
+        return "chart"
+    if getattr(shape, "has_table", False):
+        return "table"
+    if shape._element.find(".//" + DGM_REL) is not None:
+        return "smartart"
+    if getattr(shape, "is_placeholder", False):
         return "placeholder"
     if getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
         return "text"
@@ -44,8 +55,10 @@ def kind_of(shape) -> str:
 
 
 def run_styles(shape) -> Dict[str, Any]:
-    """逐段逐 run 的字体事实：只看第一个 run 会漏掉混排与局部改色。"""
+    """逐段逐 run 的字体事实。只看第一个 run 会漏掉混排、局部改色与中文回退。"""
     from pptx.enum.dml import MSO_COLOR_TYPE
+    from pptx.oxml.ns import qn
+
     out: Dict[str, Any] = {"paragraphs": []}
     try:
         paragraphs = shape.text_frame.paragraphs
@@ -55,6 +68,11 @@ def run_styles(shape) -> Dict[str, Any]:
     for para in paragraphs:
         runs = []
         for run in para.runs:
+            rPr = run._r.find(qn("a:rPr"))
+            ea = None
+            if rPr is not None:
+                node = rPr.find(qn("a:ea"))
+                ea = None if node is None else node.get("typeface")
             size = round(run.font.size.pt, 1) if run.font.size else None
             color = None
             try:
@@ -65,15 +83,15 @@ def run_styles(shape) -> Dict[str, Any]:
                     color = "(theme)"
             except (AttributeError, ValueError):
                 pass
-            item = {"text": run.text, "size_pt": size, "font": run.font.name,
-                    "bold": bool(run.font.bold), "italic": bool(run.font.italic), "color": color}
-            runs.append(item)
+            runs.append({"text": run.text, "size_pt": size, "font": run.font.name, "ea": ea,
+                         "bold": bool(run.font.bold), "italic": bool(run.font.italic), "color": color})
             if size:
                 sizes.add(size)
             if color:
                 colors.add(color)
-            if run.font.name:
-                fonts.add(run.font.name)
+            for name in (run.font.name, ea):
+                if name:
+                    fonts.add(name)
             weights.add(bool(run.font.bold))
         out["paragraphs"].append({
             "text": para.text.replace("\n", "⏎"),
@@ -87,7 +105,6 @@ def run_styles(shape) -> Dict[str, Any]:
 
 
 def describe(shape, depth: int = 0) -> Dict[str, Any]:
-    from pptx.enum.shapes import MSO_SHAPE_TYPE
     kind = kind_of(shape)
     item: Dict[str, Any] = {
         "name": shape.name,
@@ -98,6 +115,11 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
     if kind in ("text", "placeholder"):
         item["text"] = shape.text_frame.text.replace("\n", "⏎")[:240]
         item["styles"] = run_styles(shape)
+        if kind == "placeholder":
+            try:
+                item["ph"] = f"{shape.placeholder_format.type} #{shape.placeholder_format.idx}"
+            except (AttributeError, ValueError, KeyError):
+                item["ph"] = "unknown"
     elif kind == "picture":
         try:
             image = shape.image
@@ -115,7 +137,7 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
     elif kind == "chart":
         chart = shape.chart
         item["chart_type"] = str(chart.chart_type).split(" ")[0]
-        item["title"] = chart.chart_title.text_frame.text if chart.has_title and chart.has_title else None
+        item["title"] = chart.chart_title.text_frame.text if chart.has_title else None
         plots = []
         for plot in chart.plots:
             series = []
@@ -141,8 +163,8 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
         item.update({"rows": len(table.rows), "cols": len(table.columns), "grid": grid,
                      "col_widths_in": [round(col.width / EMU, 2) for col in table.columns]})
     elif kind == "group":
-        item["children"] = [describe(child, depth + 1) for child in shape.shapes]
-    if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+        item["children"] = [safe_describe(child, depth + 1) for child in shape.shapes]
+    if kind in ("shape", "placeholder", "text"):
         try:
             fill = shape.fill
             if fill.type is not None and str(fill.type).startswith("MSO_FILL_TYPE.SOLID"):
@@ -156,31 +178,91 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
     return item
 
 
-def slide_flags(slide) -> Dict[str, bool]:
+def safe_describe(shape, depth: int = 0) -> Dict[str, Any]:
+    try:
+        return describe(shape, depth)
+    except Exception as exc:
+        return {"name": getattr(shape, "name", "?"), "kind": "unparsed",
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
+def slide_flags(slide, objects: List[Dict[str, Any]]) -> Dict[str, Any]:
     xml = slide._element.xml
-    return {"transition": "<p:transition" in xml, "timing": "<p:timing" in xml}
+
+    def has(name: str) -> bool:
+        def walk(items: List[Dict[str, Any]]) -> bool:
+            return any(item.get("kind") == name or walk(item.get("children", [])) for item in items)
+
+        return walk(objects)
+
+    return {
+        "hidden": slide._element.get("show") == "0",
+        "transition": "<p:transition" in xml,
+        "animation": "<p:timing" in xml,
+        "smartart": has("smartart"),
+        "ole": has("ole"),
+        "media": has("media"),
+        "notes": bool(slide.has_notes_slide and slide.notes_slide.notes_text_frame.text.strip()),
+    }
 
 
 def collect_fonts(shapes, fonts: set, sizes: set) -> None:
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
     for shape in shapes:
-        if getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
-            for para in shape.text_frame.paragraphs:
-                for run in para.runs:
-                    if run.font.name:
-                        fonts.add(run.font.name)
-                    if run.font.size:
-                        sizes.add(round(run.font.size.pt, 1))
-        if getattr(shape, "has_table", False) and shape.has_table:
-            for row in shape.table.rows:
-                for cell in row.cells:
-                    for para in cell.text_frame.paragraphs:
-                        for run in para.runs:
-                            if run.font.name:
-                                fonts.add(run.font.name)
-                            if run.font.size:
-                                sizes.add(round(run.font.size.pt, 1))
-        if getattr(shape, "shape_type", None) is not None and shape.shape_type == 6:
-            collect_fonts(shape.shapes, fonts, sizes)
+        try:
+            if getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
+                for para in shape.text_frame.paragraphs:
+                    for run in para.runs:
+                        if run.font.name:
+                            fonts.add(run.font.name)
+                        if run.font.size:
+                            sizes.add(round(run.font.size.pt, 1))
+            if getattr(shape, "has_table", False) and shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        for para in cell.text_frame.paragraphs:
+                            for run in para.runs:
+                                if run.font.name:
+                                    fonts.add(run.font.name)
+                                if run.font.size:
+                                    sizes.add(round(run.font.size.pt, 1))
+            if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+                collect_fonts(shape.shapes, fonts, sizes)
+        except Exception:
+            continue
+
+
+def theme_fonts(prs) -> Dict[str, Any]:
+    """主题字族：改稿时判断"原稿本来想用什么字"，run 上的字体名可能只是继承。"""
+    from lxml import etree
+
+    out: Dict[str, Any] = {}
+    for master in prs.slide_masters:
+        for rel in master.part.rels.values():
+            if not rel.reltype.endswith("/theme"):
+                continue
+            try:
+                root = etree.fromstring(rel.target_part.blob)
+            except Exception:
+                continue
+            for tag in ("majorFont", "minorFont"):
+                node = root.find(".//" + A + tag)
+                if node is None:
+                    continue
+                latin, ea = node.find(A + "latin"), node.find(A + "ea")
+                out[tag] = {"latin": None if latin is None else latin.get("typeface"),
+                            "ea": None if ea is None else ea.get("typeface")}
+    return out
+
+
+def has_macros(pptx: Path, prs) -> bool:
+    if pptx.suffix.lower() in (".pptm", ".ppsm", ".potm"):
+        return True
+    try:
+        return any("vbaProject" in str(part.partname) for part in prs.part.package.iter_parts())
+    except Exception:
+        return False
 
 
 def inspect(pptx: Path) -> Dict[str, Any]:
@@ -193,26 +275,51 @@ def inspect(pptx: Path) -> Dict[str, Any]:
         "slides": len(prs.slides),
         "masters": len(prs.slide_masters),
         "layouts": sum(len(m.slide_layouts) for m in prs.slide_masters),
+        "theme_fonts": theme_fonts(prs),
+        "macros": has_macros(pptx, prs),
         "pages": [],
+        "errors": [],
     }
     fonts: set = set()
     sizes: set = set()
     for index, slide in enumerate(prs.slides):
-        notes = slide.notes_slide.notes_text_frame.text.strip() if slide.has_notes_slide else ""
-        page = {
+        try:
+            objects = [safe_describe(s) for s in slide.shapes]
+            flags = slide_flags(slide, objects)
+            notes = slide.notes_slide.notes_text_frame.text.strip() if slide.has_notes_slide else ""
+        except Exception as exc:
+            out["errors"].append(f"第 {index + 1} 页解析失败：{type(exc).__name__}: {exc}")
+            continue
+        collect_fonts(slide.shapes, fonts, sizes)
+        out["pages"].append({
             "index": index + 1,
             "layout": slide.slide_layout.name,
-            "flags": slide_flags(slide),
+            "flags": flags,
             "notes": notes[:400],
-            "objects": [describe(s) for s in slide.shapes],
-        }
-        collect_fonts(slide.shapes, fonts, sizes)
-        out["pages"].append(page)
+            "objects": objects,
+        })
     out["fonts"] = sorted(fonts)
     if sizes:
         distinct = sorted(sizes)
         out["type_scale"] = {"steps": len(distinct), "sizes": distinct, "min": min(distinct), "max": max(distinct)}
+    out["risks"] = rebuild_risks(out)
     return out
+
+
+def rebuild_risks(data: Dict[str, Any]) -> List[str]:
+    """改稿路线的判断依据：这些特性在重建里回不来，必须先说明。"""
+    risks: List[str] = []
+    if data.get("macros"):
+        risks.append("含宏（vbaProject）：重建会丢失，只能给逐页指令")
+    for page in data["pages"]:
+        flags = page["flags"]
+        for key, label in (("smartart", "SmartArt"), ("ole", "嵌入对象"), ("media", "音视频"),
+                           ("transition", "切换"), ("animation", "动画")):
+            if flags.get(key):
+                risks.append(f"第 {page['index']} 页含{label}：重建后不存在")
+    if data.get("layouts", 0) > 11 or data.get("masters", 0) > 1:
+        risks.append(f"母版 {data['masters']} 套、版式 {data['layouts']} 个：自定义母版样式不会随重建保留")
+    return risks
 
 
 def to_markdown(data: Dict[str, Any]) -> str:
@@ -224,10 +331,16 @@ def to_markdown(data: Dict[str, Any]) -> str:
         lines.append(f"字号 {scale['steps']} 档（{scale['min']:g}–{scale['max']:g}pt）")
     if data.get("fonts"):
         lines.append(f"字体 {data['fonts']}")
+    theme = data.get("theme_fonts") or {}
+    for tag in ("majorFont", "minorFont"):
+        if theme.get(tag):
+            lines.append(f"主题{tag} 西文 {theme[tag]['latin']}／东亚 {theme[tag]['ea']}")
+    if data.get("macros"):
+        lines.append("**含宏**")
 
     def emit(obj: Dict[str, Any], depth: int = 0) -> None:
         pad = "  " * depth
-        box = obj["box_in"]
+        box = obj.get("box_in") or [None, None, None, None]
         head = f"{pad}- {obj['kind']:11} {obj['name'][:26]:26} [{box[0]},{box[1]},{box[2]}×{box[3]}]"
         if obj.get("rotation"):
             head += f" {obj['rotation']}°"
@@ -236,13 +349,13 @@ def to_markdown(data: Dict[str, Any]) -> str:
             styles = obj.get("styles", {})
             sizes = "/".join(f"{s:g}" for s in styles.get("sizes", []))
             detail = f"{sizes}pt {'/'.join(styles.get('fonts', []))} 「{obj.get('text', '')}」"
+            if obj.get("ph"):
+                detail = f"{obj['ph']}｜" + detail
         elif obj["kind"] == "picture":
             detail = f"{obj.get('px')} {obj.get('ppi')}ppi {obj.get('ext')}"
         elif obj["kind"] == "chart":
             plots = obj.get("plots", [])
-            bits = []
-            for plot in plots:
-                bits.append(" / ".join(f"{s['name']}({s['count']})" for s in plot["series"]))
+            bits = [" / ".join(f"{s['name']}({s['count']})" for s in plot["series"]) for plot in plots]
             detail = f"{obj.get('chart_type')} {len(plots)} 层｜" + "；".join(bits)
             if obj.get("title"):
                 detail += f"｜题「{obj['title'][:28]}」"
@@ -250,6 +363,8 @@ def to_markdown(data: Dict[str, Any]) -> str:
             detail = f"{obj['rows']}×{obj['cols']}  首行 {obj.get('grid', [[]])[0]}"
         elif obj["kind"] == "group":
             detail = f"{len(obj.get('children', []))} 个子对象"
+        elif obj["kind"] == "unparsed":
+            detail = f"解析失败：{obj.get('error')}"
         lines.append(f"{head} {detail}".rstrip())
         for child in obj.get("children", []):
             emit(child, depth + 1)
@@ -258,16 +373,32 @@ def to_markdown(data: Dict[str, Any]) -> str:
         flags = [name for name, on in page["flags"].items() if on]
         head = f"\n## 第 {page['index']} 页 · {page['layout']}"
         if flags:
-            head += f" · 含{'/'.join(flags)}"
+            head += f" · {','.join(flags)}"
         lines.append(head)
         if page["notes"]:
             lines.append(f"备注：{page['notes'][:100]}")
         for obj in page["objects"]:
             emit(obj)
+    if data.get("risks"):
+        lines.append("\n## 重建会失去什么")
+        lines.extend(f"- {item}" for item in data["risks"])
+    if data.get("errors"):
+        lines.append("\n## 解析异常")
+        lines.extend(f"- {item}" for item in data["errors"])
     return "\n".join(lines)
 
 
+def utf8_stdio() -> None:
+    """控制台代码页不是 UTF-8 时，⏎ 之类的字符会抛 UnicodeEncodeError；这里统一兜住。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    utf8_stdio()
     parser = argparse.ArgumentParser(description="只读解析既有 PPTX")
     parser.add_argument("pptx")
     parser.add_argument("--json", default=None, help="另存完整 JSON")

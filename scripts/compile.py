@@ -4,11 +4,12 @@
 plan.json → 原生可编辑 PPTX。
 
 用法：
-    python scripts/compile.py plan.json out.pptx [--assets DIR] [--report report.json]
+    python scripts/compile.py plan.json out.pptx [--assets DIR] [--report report.json] [--force]
 
 只做确定性执行：校验契约、按 plan 建对象、写出文件。不做审美判断，不自动缩字、
-换色、补数据或联网取图。硬错误（E-）在写文件前阻断，永不覆盖既有交付物；
-运行期异常另写 <out>.error.pptx 供排查，该文件不是交付物。
+换色、补数据或联网取图。硬错误（E-）在写文件前阻断；目标文件已存在时默认不动它，
+确认要替换才加 --force。先写临时文件再原子替换，失败不留半成品；运行期异常另写
+<名称>.error.pptx 供排查，该文件不是交付物。
 """
 
 from __future__ import annotations
@@ -218,6 +219,22 @@ def anchor_point(box: Box, anchor: str, at: float = 0.5) -> Tuple[float, float]:
     if anchor == "bottom":
         return x + w * t, y + h
     return x + w / 2.0, y + h / 2.0
+
+
+def rotated_ancestors(page: Dict[str, Any]) -> Dict[str, Tuple[str, ...]]:
+    """每个元素身上带旋转的祖先组，用于判断锚点会不会被组旋转带走。"""
+    out: Dict[str, Tuple[str, ...]] = {}
+
+    def walk(items: List[Dict[str, Any]], chain: Tuple[str, ...]) -> None:
+        for el in items:
+            eid = str(el.get("id"))
+            out[eid] = chain
+            if el.get("type") == "group":
+                nxt = chain + (eid,) if float(el.get("rotation") or 0) else chain
+                walk(el.get("elements") or [], nxt)
+
+    walk(page.get("elements") or [], ())
+    return out
 
 
 def flatten(page: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -432,8 +449,9 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
             x, y, ew, eh = box
             if x + ew <= 0 or y + eh <= 0 or x >= w or y >= h:
                 rep.hard("E-GEOM", eloc, f"元素完全在画布外：x={x} y={y} w={ew} h={eh}")
-            elif kind in TEXT_TYPES and (x < -tol or y < -tol or x + ew > w + tol or y + eh > h + tol):
-                rep.soft("E-GEOM", eloc, f"文本框伸出画布（{w}×{h}），边缘文字会被裁切")
+            elif kind in TEXT_TYPES + ("chart",) and (x < -tol or y < -tol or x + ew > w + tol or y + eh > h + tol):
+                what = "文本框" if kind in TEXT_TYPES else "图表"
+                rep.soft("E-GEOM", eloc, f"{what}伸出画布（{w}×{h}），边缘内容会被裁掉")
 
             if el.get("overlap_allowed") and kind not in CARRIERS and not (
                     kind == "image" and el.get("image_role") in ("background", "texture")):
@@ -457,7 +475,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
             elif kind == "shape" and not (el.get("color") or el.get("gradient") or el.get("stroke")):
                 rep.hard("E-SHAPE", eloc, "shape 既无填充也无描边，成品里看不见")
             elif kind == "path":
-                check_path(el, eloc, boxes, rep)
+                check_path(page, el, eloc, boxes, rep)
             elif kind == "chart":
                 check_chart(eloc, el, palette, rep)
 
@@ -549,7 +567,7 @@ def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
         rep.soft("W-CROP", loc, f"最终裁切丢掉了原图 {loss:.0%}，画幅或落位框大概选错了")
 
 
-def check_path(el, loc, boxes, rep: Report) -> None:
+def check_path(page: Dict[str, Any], el, loc, boxes, rep: Report) -> None:
     pts = resolve_points(el, boxes)
     raw = el.get("points") or []
     if len(pts) != len(raw):
@@ -559,11 +577,20 @@ def check_path(el, loc, boxes, rep: Report) -> None:
         rep.hard("E-GEOM", loc, "路径长度为零：至少要有两个不同的点")
     if el.get("closed") and el.get("arrow") and el["arrow"] != "none":
         rep.soft("E-SHAPE", loc, "闭合路径的箭头没有意义，会被忽略")
+    chains = rotated_ancestors(page)
+    own = set(chains.get(str(el.get("id")), ()))
     for point in raw:
-        if isinstance(point, dict):
-            target = boxes.get(str(point.get("el")))
-            if target is not None and (target[2] == 0 or target[3] == 0):
-                rep.soft("E-REF", loc, "锚点目标宽度或高度为 0，锚点位置可能不稳定")
+        if not isinstance(point, dict):
+            continue
+        target_id = str(point.get("el"))
+        target = boxes.get(target_id)
+        if target is not None and (target[2] == 0 or target[3] == 0):
+            rep.soft("E-REF", loc, "锚点目标宽度或高度为 0，锚点位置可能不稳定")
+        stray = set(chains.get(target_id, ())) - own
+        if stray:
+            rep.soft("W-ANCHOR", loc,
+                     f"锚点指向旋转组 {sorted(stray)} 内的 {target_id}：锚点按未旋转几何解析，"
+                     f"连线会错位；把连线放进同一个组，或改用显式坐标")
 
 
 def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -> None:
@@ -595,6 +622,8 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
             return
         if len(series) > 6:
             rep.soft("E-CHART", loc, f"散点有 {len(series)} 个系列，靠颜色区分会失效；考虑合并或标注重点")
+        if not (chart.get("axis_titles") or {}):
+            rep.soft("W-CHART", loc, "散点没有轴名：两个轴各是什么量、什么单位，读者无从判断")
     else:
         if "categories" not in data:
             rep.hard("E-CHART", loc, f"{kind} 的 data 需为 categories/series")
@@ -629,7 +658,7 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
     if chart.get("basis") and bases and str(chart["basis"]).strip() not in bases:
         rep.hard("E-CHART", loc, f"图表级 basis「{chart['basis']}」与系列口径 {sorted(bases)} 矛盾")
     if kind != "scatter":
-        if not chart.get("unit") and not units:
+        if not chart.get("unit") and not units and chart.get("stacked") != "percent":
             rep.soft("E-CHART", loc, "没有声明单位；读者无法判断数值量纲")
         if not chart.get("period") and not periods:
             rep.soft("E-CHART", loc, "没有声明期间；数值图的时效无从判断")
@@ -1220,6 +1249,7 @@ def add_chart(slide, plan, page, el, palette: List[str]):
         _ensure_family(labels.font, family)
         labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
         labels.position = _label_position(kind, stacked)
+        _force_show_values(plot)
 
     if combo:
         line_plot = _split_combo(obj, combo, names, colors)
@@ -1372,13 +1402,39 @@ def _label_format(chart: Dict[str, Any]) -> str:
     unit = str(chart.get("unit") or "").strip()
     if chart.get("stacked") == "percent":
         return '0"%"'
-    if not unit:
+    if not unit or "%" in base:
         return base
     if unit == "%":
         return base + '"%"'
     if len(unit) <= 3:
         return base + '" ' + unit + '"'
     return base
+
+
+def _force_show_values(plot) -> None:
+    """python-pptx 给环图写出的 dLbls 里 showVal=0：声明了直标却一个数都不显示。这里补正。"""
+    from pptx.oxml.ns import qn
+    from lxml import etree
+
+    dlbls = plot._element.find(qn("c:dLbls"))
+    if dlbls is None:
+        return
+    node = dlbls.find(qn("c:showVal"))
+    if node is not None:
+        node.set("val", "1")
+        return
+    node = etree.Element(qn("c:showVal"))
+    node.set("val", "1")
+    anchor = None
+    for tag in ("c:showCatName", "c:showSerName", "c:showPercent", "c:showBubbleSize",
+                "c:separator", "c:showLeaderLines"):
+        anchor = dlbls.find(qn(tag))
+        if anchor is not None:
+            break
+    if anchor is not None:
+        anchor.addprevious(node)
+    else:
+        dlbls.append(node)
 
 
 def _add_dlbls(plot_element, style: Dict[str, str], number_format: str, position: Optional[str] = None) -> None:
@@ -1404,7 +1460,11 @@ def _add_dlbls(plot_element, style: Dict[str, str], number_format: str, position
     etree.SubElement(para, qn("a:endParaRPr")).set("lang", "zh-CN")
     if position:
         etree.SubElement(labels, qn("c:dLblPos")).set("val", position)
+    # 只写 showVal 时，部分渲染器会把类别名与系列名一并显示；把其余开关显式关掉。
+    etree.SubElement(labels, qn("c:showLegendKey")).set("val", "0")
     etree.SubElement(labels, qn("c:showVal")).set("val", "1")
+    for tag in ("c:showCatName", "c:showSerName", "c:showPercent", "c:showBubbleSize"):
+        etree.SubElement(labels, qn(tag)).set("val", "0")
 
     anchor = None
     for tag in ("c:dropLines", "c:hiLowLines", "c:upDownBars", "c:marker", "c:smooth", "c:axId"):
@@ -1596,9 +1656,14 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     prs.core_properties.title = plan.get("title", "")
     prs.core_properties.author = "ppt-visual-art-director"
     prs.core_properties.comments = (plan.get("visual_concept") or "")[:500]
-    tmp = out.with_suffix(".partial.pptx")
-    prs.save(str(tmp))
-    os.replace(tmp, out)
+    # 临时文件名带进程号：既不覆盖用户同名文件，也不会两次并发编译互相踩踏。
+    tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
+    try:
+        prs.save(str(tmp))
+        os.replace(tmp, out)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
 
 
 def write_error_deck(out: Path, message: str) -> None:
@@ -1617,12 +1682,23 @@ def write_error_deck(out: Path, message: str) -> None:
     prs.save(str(out))
 
 
+def utf8_stdio() -> None:
+    """控制台代码页不是 UTF-8 时（Windows 中文终端很常见），中文与 ⏎ 会抛 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: Optional[List[str]] = None) -> int:
+    utf8_stdio()
     parser = argparse.ArgumentParser(description="plan.json → 原生可编辑 PPTX")
     parser.add_argument("plan")
     parser.add_argument("out")
     parser.add_argument("--assets", default=None, help="素材目录；缺省为 plan 同级 assets/ 或 plan 所在目录")
     parser.add_argument("--report", default=None, help="把诊断写成 JSON")
+    parser.add_argument("--force", action="store_true", help="允许替换已存在的输出文件")
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan).resolve()
@@ -1631,6 +1707,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent)
 
     rep = Report()
+    if out_path.exists() and not args.force:
+        rep.hard("E-EXIST", str(out_path), "目标文件已存在，未写入；确认要替换就加 --force")
+    if out_path.is_dir():
+        rep.hard("E-EXIST", str(out_path), "输出路径是目录")
+    elif not out_path.parent.is_dir():
+        rep.hard("E-EXIST", str(out_path.parent), "输出目录不存在，先建目录再编译")
+    if args.report and Path(args.report).resolve() == out_path:
+        rep.hard("E-EXIST", str(out_path), "--report 与输出文件同路径，会互相覆盖")
     plan = load_plan(plan_path, rep)
     if plan is None or rep.blocked:
         for issue in rep.items:
@@ -1651,7 +1735,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         build(plan, asset_root, out_path)
     except Exception as exc:  # 运行期异常：不覆盖正式输出
-        error_path = out_path.with_suffix(".error.pptx")
+        error_path = out_path.with_name(out_path.stem + ".error.pptx")
         write_error_deck(error_path, f"{type(exc).__name__}: {exc}")
         print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {exc}\n诊断文件：{error_path}（不是交付物）")
         return 3

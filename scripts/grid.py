@@ -59,6 +59,11 @@ def parse(text: str):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            pass
     dims = LIMITS["canvas"]
     parser = argparse.ArgumentParser(description="网格 → 英寸坐标")
     parser.add_argument("--aspect", choices=["16:9", "4:3"], default=dims["default"])

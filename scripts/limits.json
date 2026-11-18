@@ -11,7 +11,7 @@
   "type": {
     "min_pt": {"title": 24, "number": 24, "body": 14, "text": 14, "caption": 12, "footer": 12},
     "default_pt": {"title": 40, "number": 72, "body": 20, "text": 20, "caption": 13, "footer": 13},
-    "line_spacing": {"title": 1.12, "number": 1.05, "body": 1.32, "text": 1.32, "caption": 1.25, "footer": 1.25},
+    "line_spacing": {"title": 1.12, "number": 1.12, "body": 1.32, "text": 1.32, "caption": 1.25, "footer": 1.25},
     "bold": {"title": true, "number": true, "caption": false},
     "inset_in": {"x": 0.05, "y": 0.03},
     "line_pitch_em": 1.2,
