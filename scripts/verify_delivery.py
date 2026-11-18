@@ -29,14 +29,7 @@ from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 与 compile_pptx 同目录分发，直接导入
 
-from pptx import Presentation
-from pptx.enum.chart import XL_CHART_TYPE, XL_TICK_LABEL_POSITION
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-from pptx.oxml.ns import qn
-from pptx.util import Inches
-
-from compile_pptx import (  # noqa: E402
+from compile_pptx import (  # noqa: E402  先导入：它对缺失的 python-pptx / jsonschema 给出清晰提示，而不是原始 traceback
     CompileError,
     chart_deemphasis_ink,
     DEFAULT_FONTS,
@@ -66,6 +59,12 @@ from compile_pptx import (  # noqa: E402
     unresolved_reviews,
     validate_plan,
 )
+from pptx import Presentation
+from pptx.enum.chart import XL_CHART_TYPE, XL_TICK_LABEL_POSITION
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.oxml.ns import qn
+from pptx.util import Inches
 
 # 质量门拓扑、诊断码归属与人工/机器身份全部只从 policy.json 读取。
 # 契约文档解释「为什么」，这里是唯一的技术路由表；改契约不改 policy 会被装载检查直接拦住。

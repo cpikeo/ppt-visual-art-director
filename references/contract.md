@@ -26,6 +26,41 @@
 - **素材**：记录来源、授权、隐私、生成属性与证据用途；`license_status=cleared` 需要凭据位置。生成图不得作证据；`image_generation` 是真实调用、实际文件及 SHA-256 的登记，不是提示词草稿。提供 `--assets` 时，登记 `file` 必须与 `image_id` 解析到同一物理文件，且声明的 SHA-256 必须等于该文件的实际哈希；同名不同扩展名不能互相顶替。已引用的 `pending`／`failed` 生成素材硬阻断，生成图缺登记或权利待确认不得冒充通过。
 - **页码**：`page_numbers` 是整稿级契约，缺省使用 Policy 的位置、格式与起始值；编译器按页序生成保留 ID `_page_number` 的原生对象。整稿禁用或指定省略页必须写任务理由。全出血图角区明暗与底色不同，用页面 `page_number_tone` 如实声明。位置、式样及异常以 Schema/Policy 为准，不在页面手写页码。
 
+### 2.1 最小 plan 骨架
+
+字段形状以 Schema 为准；下面是能通过严格编译的最小单页骨架（必填字段 + 一个标题元素），用于确认结构，不是版式模板。页面必须二选一写 `focus_element` 或 `focus_unmapped`；`claim` 为空时须写 `notes` 或 `open_questions`；`supported` / `partial` 页必须有 `evidence`。
+
+```json
+{
+  "schema_version": "4.0",
+  "deck_id": "minimal",
+  "title": "最小骨架",
+  "audience": "受众是谁、已知什么",
+  "goal": "希望观众理解、记住或采取什么行动",
+  "core_claim": "整份演示最重要的主张",
+  "visual_concept": "由什么洞察推出什么视觉概念",
+  "pages": [
+    {
+      "id": "p1",
+      "role": "open",
+      "claim": "",
+      "evidence_status": "not_applicable",
+      "focus": "标题",
+      "focus_element": "t",
+      "composition_rationale": "左上起笔的标题承担全部重量，右侧留白连续",
+      "notes": "封面不举证，故 claim 留空",
+      "background": "#FFFFFF",
+      "elements": [
+        {"id": "t", "type": "title", "content": "一句可被证据支持的论断",
+         "x": 0.8, "y": 2.6, "w": 10.0, "h": 1.6, "font_size": 44}
+      ]
+    }
+  ]
+}
+```
+
+验收配置（人工门、目标环境、风险批准）的形状见 Schema 的 `$defs.acceptanceConfig` 与 `review-protocol.md` §5。
+
 ## 3. 编译保证与边界
 
 Schema、引用、身份、几何、实质重叠、图表长度／配色、素材登记和确定性声明冲突在写文件前检查；HARD 不可复核或风险批准。文本、形状、图表、表格和图片是可编辑原生对象，名称与 plan 对应；字体、颜色、层序、裁切和单位依声明执行，不自动缩字、换色或补数据。运行期素材或图表失败可能写出带 `.error` 的诊断占位文件，同时返回失败；不得作为交付物。
@@ -70,8 +105,10 @@ E009 同样适用于退隐项：`highlight_category` 里那些「退到背景里
 
 `PASS` 只涵盖实际执行并通过的范围；`NOT VERIFIED` 不等于通过。HARD、强制门失败或未完成、越权批准均为 `BLOCK — Delivery`。默认强制门包含 `G-STR`、`G-SEM`、`G-PRE`、`G-DECK`、`G-TGT`、`G-COMPLY`：真实渲染与人工验收都不能省，人工门不能以风险批准替代。只有项目显式从 `required_gates` 移除某人工门后，才允许有效风险记录逐项覆盖该门的未验证项；记录须匹配本次 PPTX 哈希、未过期、非笼统且绑定该门真实问题。`[页面.元素]` 使用完整定位符，写一个页面 ID 不能自动覆盖该页多个问题；无定位符的问题须点名报告中的完整描述，缺问题描述不得自动批准。预览通过不等于目标 PowerPoint 或审美通过。
 
+**核验独立性与残余偏差**：验证器的“期望值”由 plan 与 Policy 经 `compile_pptx` 中的同一批函数推导，“实际值”只从成品读取，不由编译过程回填：对象名、文本与式样、图表类别／数值／实际 `srgbClr` 着色、表格载荷、图片裁切参数与内嵌字节来自 PPTX XML 与媒体包；页序、词框、字体与溢出来自本次 PDF／PNG；生成图哈希由编译器核对登记值与素材文件，验证器另核对登记值与 PPTX **内嵌字节**。仍然**共用实现**的是：Schema／Policy 的读取、期望值推导（`text_style`／`run_styles`、页码对象规格、`_expected_image_crops`、图表题注与表格几何函数）、单位与数字记号表、相对亮度公式 `_rel_luminance` 与退隐色函数 `chart_deemphasis_ink()`。共用部分若有缺陷，编译与核验会同时“一致”，验证器发现不了——它们要靠 Policy 取值、公开公式和真实渲染观察（例如图片最终裁切、对比度）交叉印证。因此全绿不推断共用逻辑正确，也不替代看图。
+
 G-DECK 基础验收仍须看每页及整稿；抽样仅安排额外深查：关键、高风险、历史问题、含图表／图像及 open/turn/close 页优先，其余按配置与固定种子抽样。抽样比例不是质量证明。
 
 ## 7. 版本与兼容
 
-Schema 为 `4.0`，Policy 为 `2.5`，报告版本 `1.5`；计划形状自 4.0 起未迁移。完整变更历史见包根目录 `CHANGELOG.md`。要点：E006／E014／E015 路由保留兼容但新版不再生成；旧版对应复核记录仍可解析，会作为未匹配记录披露，不能代替人工设计验收；生成素材哈希不符归 E011／G-COMPLY；E009 的反强调色由 `chart_deemphasis_ink()` 按当页底色兜底，BUILD 与 VERIFY 共用同一实现。技术默认值及版本以随包 Policy 为准。
+Schema 为 `4.0`，Policy 为 `2.5`，报告版本 `1.5`；计划形状自 4.0 起未迁移。三者各自独立演进，**不随技能包发布版本联动**（包版本见 `README.md`）。要点：E006／E014／E015 路由保留兼容但新版不再生成；旧版对应复核记录仍可解析，会作为未匹配记录披露，不能代替人工设计验收；生成素材哈希不符归 E011／G-COMPLY；E009 的反强调色由 `chart_deemphasis_ink()` 按当页底色兜底，BUILD 与 VERIFY 共用同一实现。技术默认值及版本以随包 Policy 为准。

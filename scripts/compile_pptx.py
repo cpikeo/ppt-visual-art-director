@@ -3142,6 +3142,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="严格模式：未完成具名复核的 SOFT 问题视为失败")
     args = parser.parse_args(argv)
 
+    # 记录既有诊断文件的状态：本次失败只能指向本次写出的诊断，不得把上一次遗留的旧文件说成本次产物。
+    _target = Path(args.output)
+    _diag_path = _target.with_name(f"{_target.stem}.error{_target.suffix}")
+    try:
+        _diag_before = _diag_path.stat().st_mtime_ns if _diag_path.is_file() else None
+    except OSError:
+        _diag_before = None
+
     plan, load_errors = load_plan(args.plan)
     errors: List[CompileError] = list(load_errors)
     if plan is None:
@@ -3159,10 +3167,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(str(e), file=sys.stderr)
 
     if not success:
-        target = Path(args.output)
-        diagnostic = target.with_name(f"{target.stem}.error{target.suffix}")
-        if diagnostic.is_file():
+        diagnostic = _diag_path
+        try:
+            _diag_after = diagnostic.stat().st_mtime_ns if diagnostic.is_file() else None
+        except OSError:
+            _diag_after = None
+        if _diag_after is not None and _diag_after != _diag_before:
             detail = f"诊断文件仅供排查，不得作为交付物：{diagnostic}"
+        elif _diag_after is not None:
+            detail = (f"失败发生在创建文件之前，本次未写出 PPTX；正式输出未被覆盖。"
+                      f"目录中的 {diagnostic} 是更早一次失败遗留的旧诊断文件，同样不得交付。")
         else:
             detail = "失败发生在创建文件之前，未写出 PPTX；正式输出未被覆盖。"
         print(f"\nBLOCK — Delivery：存在未解决的强制条件。{detail}", file=sys.stderr)
