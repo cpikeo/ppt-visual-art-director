@@ -244,6 +244,11 @@ _BASE_ALIASES = {
     "件": "件", "台": "台", "套": "套", "个": "个", "条": "条", "次": "次",
     "单": "单", "户": "户", "家": "家", "辆": "辆", "份": "份", "张": "张", "例": "例",
     "吨": "吨", "平方米": "平方米", "㎡": "平方米",
+    # 常见商品/物量计量：保守收录（“千克/千米”由“千”+“克/米”解析，不另设别名）。“部/项/场/间/座”等易与“部门/项目/场景”等普通词冲突，故意不收。
+    "箱": "箱", "瓶": "瓶", "盒": "盒", "袋": "袋", "罐": "罐", "桶": "桶",
+    "公斤": "公斤", "斤": "斤", "克": "克", "毫升": "毫升", "升": "升",
+    "公里": "公里", "米": "米", "公顷": "公顷", "亩": "亩",
+    "千瓦时": "千瓦时", "兆瓦时": "兆瓦时",
     "gb": "GB", "tb": "TB", "mb": "MB", "ms": "ms",
     "天": "天", "日": "天", "小时": "小时", "分钟": "分钟", "倍": "倍",
 }
@@ -1538,7 +1543,7 @@ def _reject_nonstandard_json_number(token: str) -> None:
 def load_plan(path: str) -> Tuple[Optional[Dict[str, Any]], List[CompileError]]:
     errors: List[CompileError] = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:  # 兼容 Windows 记事本写入的 BOM
             plan = json.load(f, parse_constant=_reject_nonstandard_json_number)
     except FileNotFoundError:
         errors.append(CompileError("E001", ErrorLevel.HARD, path, "plan 文件存在", "文件不存在", "无法读取 plan 文件"))

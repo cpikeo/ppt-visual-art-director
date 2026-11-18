@@ -11,6 +11,8 @@
 | `scripts/policy.json` | 技术默认值、阈值、诊断码→门、复核权限与发布状态 |
 | `scripts/compile_pptx.py` | 解析、契约检查、确定性编译、数值筛查和装载估算 |
 | `scripts/verify_delivery.py` | plan↔PPTX 对象↔真实渲染、质量门与证据报告 |
+| `scripts/inspect_pptx.py` | 只读解析既有 PPTX 的事实与客观线索（改稿／评审用），不判断审美，不写回 |
+| `scripts/grid.py` | 把列数、边距、沟槽换算为英寸坐标并标出页码保留区；只做算术 |
 | 项目自备验收配置 | 强制门、抽样、目标环境、人工记录与风险批准 |
 
 脚本只从自身目录读取 Schema 和 Policy，不依赖开发目录。Markdown 不另立路由表；未登记诊断码按权威漂移阻断。
@@ -18,8 +20,8 @@
 ## 2. THINK 交接语义
 
 - **整稿**：`audience`、`goal`、`core_claim`、`visual_concept` 描述任务与视觉概念；`rhythm` 可交代跨页节奏。报告将其送 G-DECK，不作机器审美评分。
-- **页面**：`role` 是叙事职责；`claim` 是主张。`supported` 须有 `evidence`；`partial` 还须有 `open_questions`；`unsupported` 的 claim 留空；不举证的封面、过渡等可用 `not_applicable`。空 claim 须用 `notes` 或 `open_questions` 说明。`focus_element` 指本页存在的单一主角元素；有意并列或关系跨元素用 `focus_unmapped` 说明。所有页的主次由人看渲染判断。
-- **元素**：文本式样缺省由 Policy 唯一解析，`runs` 拼接必须与 `content` 一致；`fill_alpha` 只用于有色形状。`background` 建议显式声明；图像角色、素材用途、`crop_focus` 与简报须如实交接。
+- **页面**：`role` 是叙事职责；`claim` 是主张。`supported` 须有 `evidence`；`partial` 还须有 `open_questions`；`unsupported` 的 claim 留空；不举证的封面、过渡等可用 `not_applicable`。空 claim 须用 `notes` 或 `open_questions` 说明。页面 `notes` 是**设计备注**，只进入 plan 与复核材料，**不会写入 PPTX 的演讲者备注**；编译器也不生成动画与页面切换。需要演讲稿或动画时须在交付说明中告知并另行处理。`focus_element` 指本页存在的单一主角元素；有意并列或关系跨元素用 `focus_unmapped` 说明。所有页的主次由人看渲染判断。
+- **元素**：几何单位为**英寸**（`x/y/w/h`，原点在页面左上角，向下为正），`font_size` 为 pt；元素 `id` 页内唯一，成品对象名为 `<page.id>.<element.id>`。文本式样缺省由 Policy 唯一解析，`runs` 拼接必须与 `content` 一致；`fill_alpha` 只用于有色形状。`background` 建议显式声明；图像角色、素材用途、`crop_focus` 与简报须如实交接。
 - **图表**：`unit` 是数量级与量纲；图表与系列的单位、期间等声明不得矛盾。多系列共轴前显式 `shared_basis=true`；所有系列单位须一致或均未声明，不能静默换算。表格可以表达不同口径，已声明的单位须在成品可见。`bar` 是原生竖向簇状柱而非横条；`line` 是相邻类别等距的原生分类轴，不按实际日期自动定位。
 - **素材**：记录来源、授权、隐私、生成属性与证据用途；`license_status=cleared` 需要凭据位置。生成图不得作证据；`image_generation` 是真实调用、实际文件及 SHA-256 的登记，不是提示词草稿。提供 `--assets` 时，登记 `file` 必须与 `image_id` 解析到同一物理文件，且声明的 SHA-256 必须等于该文件的实际哈希；同名不同扩展名不能互相顶替。已引用的 `pending`／`failed` 生成素材硬阻断，生成图缺登记或权利待确认不得冒充通过。
 - **页码**：`page_numbers` 是整稿级契约，缺省使用 Policy 的位置、格式与起始值；编译器按页序生成保留 ID `_page_number` 的原生对象。整稿禁用或指定省略页必须写任务理由。全出血图角区明暗与底色不同，用页面 `page_number_tone` 如实声明。位置、式样及异常以 Schema/Policy 为准，不在页面手写页码。
@@ -72,4 +74,4 @@ G-DECK 基础验收仍须看每页及整稿；抽样仅安排额外深查：关�
 
 ## 7. 版本与兼容
 
-Schema 仍为 `4.0`，计划形状未迁移；Policy 为 `2.5`，报告版本 `1.5`。相较旧版：不再生成对象数量 E006、面积主角 E014 和近似字号／墨色 E015；旧 E006/E014 复核仍可解析但会作为未匹配记录披露，不能代替人工设计验收。E018 只把页码框内词框当页码；未执行的必检项不再令 G-PRE PASS；生成素材哈希不符归 E011/G-COMPLY。报告增加逐页尺寸与生成图哈希核对信息，不再生成 `pdfinfo.txt`；消费者应读取 `bbox.html` 与报告。2.4 起：默认强制门包含两道人工作业门；VERIFY 从实际 PPTX 重算 E009/E012；年度进入期间模型，数值筛查覆盖全部可见文本；PDF 文本层未完整命中时页序不确认；生成素材 `file` 与哈希按真实文件核对；PPTX 与报告原子写入，失败不覆盖正式输出。1.4 起：E009 的图表对比改从成品着色读取；`environment` 增加 `render_tools`／`render_ready`／`missing_render_tools`，G-PRE 无法执行时附带可照做的安装指引。2.5／1.5 起：反强调（退隐）色不再是一个固定 HEX，而由 `chart_deemphasis_ink(bg_hex, kind)` 以 policy 意图色为锚、按**当页底色**兜底到 `min_contrast[kind]` 之上；BUILD 与 VERIFY 共用这一个实现，退隐柱不再因固定色低于阈值而被 E009 判为不可辨，也不会再与「高亮/退色身份漂移」互相打架。底色偏离 policy 默认白（如米白纸、暗场）导致落色被调整时，以 E009 INFO 披露调整前后的 HEX 与实测比值。技术默认值及版本以随包 Policy 为准，提交标识由分发方管理。
+Schema 为 `4.0`，Policy 为 `2.5`，报告版本 `1.5`；计划形状自 4.0 起未迁移。完整变更历史见包根目录 `CHANGELOG.md`。要点：E006／E014／E015 路由保留兼容但新版不再生成；旧版对应复核记录仍可解析，会作为未匹配记录披露，不能代替人工设计验收；生成素材哈希不符归 E011／G-COMPLY；E009 的反强调色由 `chart_deemphasis_ink()` 按当页底色兜底，BUILD 与 VERIFY 共用同一实现。技术默认值及版本以随包 Policy 为准。

@@ -97,7 +97,13 @@ def _run_text(command: List[str], timeout: int = 180) -> subprocess.CompletedPro
 
     无法解码的字节以替换字符保留并在证据中显示，绝不让 reader 线程崩溃后把错误落到无关行号。
     """
-    return subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
+    try:
+        return subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # 渲染器卡死时返回非零结果，由调用方转成 G-PRE BLOCK，而不是抛 traceback 中断整个验证。
+        return subprocess.CompletedProcess(command, 124, stdout="", stderr=f"命令超时（>{timeout}s）：{command[0]}")
+    except OSError as exc:
+        return subprocess.CompletedProcess(command, 127, stdout="", stderr=f"无法执行 {command[0]}：{exc}")
 
 
 def _sha256(path: Path) -> str:
@@ -160,7 +166,7 @@ def _load_config(path: Optional[str]) -> Tuple[Dict[str, Any], Optional[Path], L
         return _default_config(), None, []
     config_path = Path(path).resolve()
     try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config = json.loads(config_path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         return _default_config(), config_path, [f"验收配置不可读：{exc}"]
     validator = PLAN_VALIDATOR.evolve(schema={"$ref": "#/$defs/acceptanceConfig", "$defs": PLAN_SCHEMA["$defs"]})
@@ -2484,7 +2490,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             config_file = Path(args.config).resolve()
             protected.append(config_file)
             try:
-                raw_config = json.loads(config_file.read_text(encoding="utf-8"))
+                raw_config = json.loads(config_file.read_text(encoding="utf-8-sig"))
                 for review in (raw_config.get("reviews") or {}).values():
                     evidence = (review or {}).get("evidence")
                     if evidence:
