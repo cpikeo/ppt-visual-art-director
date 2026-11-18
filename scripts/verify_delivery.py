@@ -39,6 +39,7 @@ from compile_pptx import (  # noqa: E402  先导入：它对缺失的 python-ppt
     PLAN_SCHEMA,
     TEXT_ELEMENT_TYPES,
     _compose_chart_caption,
+    _contrast_ratio,
     _expected_image_crops,
     _normalize_table_data,
     _NUM_TOKEN_RE,
@@ -88,7 +89,7 @@ if _unrouted:
 # 每个诊断码只归属一道门：HARD 必然阻断该门；SOFT 未经具名复核时阻断（合规待定为 NOT VERIFIED）；
 # INFO 只披露。未登记的诊断码按实现漂移阻断 G-STR——任何 HARD 都不能绕过全部质量门。
 EMU_PER_IN = 914400
-REPORT_VERSION = "1.5"
+REPORT_VERSION = "1.6"
 
 
 def _run_text(command: List[str], timeout: int = 180) -> subprocess.CompletedProcess:
@@ -468,11 +469,8 @@ def audit_pptx(plan: Dict[str, Any], pptx_path: Path, presentation=None) -> Tupl
     return issues, evidence
 
 
-def _pair_contrast(a: str, b: str) -> float:
-    """两色对比度（WCAG 相对亮度比）。只做技术核对，不是无障碍合规判定。"""
-    la, lb = _rel_luminance(a), _rel_luminance(b)
-    hi, lo = max(la, lb), min(la, lb)
-    return (hi + 0.05) / (lo + 0.05)
+# 注意：两色对比度直接复用 compile_pptx 导入的 _contrast_ratio（同一 WCAG 公式），
+# 不再在验证器内另定义一份实现，避免编译与核验各自维护一份亮度/对比逻辑。
 
 
 def _solid_hex(node, wrap: str = "") -> Optional[str]:
@@ -590,7 +588,7 @@ def _technical_diagnostics(plan: Dict[str, Any], presentation) -> List[CompileEr
                         ))
                 inks, gaps = _chart_artifact_inks(getattr(shape, "chart", None))
                 for role, hex_value in inks:
-                    ratio = _pair_contrast(hex_value, bg_hex)
+                    ratio = _contrast_ratio(hex_value, bg_hex)
                     if ratio < floor:
                         errors.append(CompileError(
                             "E009", ErrorLevel.SOFT, loc,
@@ -1025,8 +1023,7 @@ def _chart_regions(page: Dict[str, Any]) -> List[Tuple[float, float, float, floa
             for el in page.get("elements", []) if el.get("type") == "chart"]
 
 
-def _boxes_intersect(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> bool:
-    return min(a[2], b[2]) > max(a[0], b[0]) and min(a[3], b[3]) > max(a[1], b[1])
+# 注：矩形相交复用下方 _intersects（与 _boxes_intersect 原实现一致），不重复定义。
 
 
 def _inside_regions(word: Dict[str, Any], regions: List[Tuple[float, float, float, float]]) -> bool:
@@ -1051,7 +1048,7 @@ def _ambiguous_text(plan: Dict[str, Any]) -> Dict[int, List[Tuple[str, List[str]
                 continue
             box = (float(el["x"]) * 72.0, float(el["y"]) * 72.0,
                    float(el["x"] + el["w"]) * 72.0, float(el["y"] + el["h"]) * 72.0)
-            hits = [cid for cid, region in charts if _boxes_intersect(box, region)]
+            hits = [cid for cid, region in charts if _intersects(box, region)]
             if hits:
                 result.setdefault(pi, []).append((el["id"], hits))
     return result
