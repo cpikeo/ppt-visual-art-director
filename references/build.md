@@ -210,3 +210,5 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--corner top_rig
 ## 报告
 
 `--report` 写出的 JSON 含 `status`、`sha256`、`slides`、`render`（PDF、PNG、字体）、`findings`。把它当作证据材料附在交付里，不要当成绩单。
+
+`sha256` 用来区分"这份文件是不是我验的那一份"，不是复现凭据：同一份 plan 编译出的对象与几何一致，但图表内嵌的工作簿带时间戳，字节不会完全相同。
