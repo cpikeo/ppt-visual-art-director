@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Slide plan",
-  "description": "plan.json 的唯一数据契约：字段形状、必填与类型专属条件。技术数值见 limits.json；跨对象一致性（ID 唯一、引用、几何、重叠、图表载荷、素材权利）由 compile.py 确定性检查。",
+  "description": "plan.json 的唯一数据契约：字段形状、必填与类型专属条件。技术数值见 limits.json；跨对象一致性（ID、引用、锚点、几何、重叠、图表口径、素材权利）由 compile.py 确定性检查。",
   "type": "object",
   "additionalProperties": false,
   "required": ["deck_id", "title", "audience", "goal", "core_claim", "visual_concept", "pages"],
@@ -12,7 +12,7 @@
     "goal": {"$ref": "#/$defs/str", "description": "观众离场后应理解、记住或决定什么。"},
     "core_claim": {"$ref": "#/$defs/str", "description": "整稿最重要的一条主张。"},
     "visual_concept": {"$ref": "#/$defs/str", "description": "由哪条洞察推出哪个视觉概念，以及它否决了什么。"},
-    "rhythm": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "整稿乐谱：按页写叙事动作与重量。"},
+    "rhythm": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "整稿乐谱：按页一句叙事动作与重量，条数与页数一致。"},
     "palette": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/color"}, "description": "图表消费色，按系列/类别顺序取用；缺省用 limits.json。"},
     "fonts": {
       "type": "object",
@@ -27,6 +27,8 @@
   "$defs": {
     "str": {"type": "string", "minLength": 1, "pattern": "\\S"},
     "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+    "textType": {"enum": ["title", "body", "text", "number", "caption", "footer"]},
+
     "pageNumbers": {
       "type": "object",
       "additionalProperties": false,
@@ -36,6 +38,7 @@
         "hide": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "不显示页码的页面 id；须在交付说明里写理由。"}
       }
     },
+
     "asset": {
       "type": "object",
       "additionalProperties": false,
@@ -50,6 +53,7 @@
         "notes": {"type": "string"}
       }
     },
+
     "generation": {
       "type": "object",
       "additionalProperties": false,
@@ -63,6 +67,7 @@
         "note": {"type": "string"}
       }
     },
+
     "page": {
       "type": "object",
       "additionalProperties": false,
@@ -77,23 +82,24 @@
         "evidence": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "支持本页主张的事实与来源。"},
         "open_questions": {"type": "array", "items": {"$ref": "#/$defs/str"}},
         "background": {"$ref": "#/$defs/color"},
-        "page_number_tone": {"enum": ["light", "dark"], "description": "页码所在角区的实际明度场；仅在全出血图角区与 background 不同时声明。"},
+        "page_number_tone": {"enum": ["light", "dark"], "description": "页码所在角区的实际明度场；仅当与 background 不同时声明。"},
         "notes": {"type": "string", "description": "设计备注；不写入演讲者备注。"},
         "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}
       }
     },
+
     "element": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "type", "x", "y", "w", "h"],
+      "required": ["id", "type"],
       "properties": {
         "id": {"$ref": "#/$defs/str"},
-        "type": {"enum": ["title", "body", "text", "number", "image", "chart", "shape", "divider", "caption", "footer"]},
-        "content": {"type": "string", "description": "文本内容；\\n 分段。"},
-        "x": {"type": "number", "description": "左边缘，英寸。"},
+        "type": {"enum": ["title", "body", "text", "number", "image", "chart", "shape", "divider", "path", "group", "caption", "footer"]},
+        "x": {"type": "number", "description": "左边缘，英寸。path/group 不需要（由点集或子元素推出）。"},
         "y": {"type": "number", "description": "上边缘，英寸，向下为正。"},
         "w": {"type": "number", "exclusiveMinimum": 0},
         "h": {"type": "number", "exclusiveMinimum": 0},
+        "content": {"type": "string", "description": "文本内容；\\n 分段。"},
         "font_size": {"type": "number", "exclusiveMinimum": 0},
         "font": {"$ref": "#/$defs/str"},
         "line_spacing": {"type": "number", "minimum": 0.8, "maximum": 3.0},
@@ -102,45 +108,86 @@
         "valign": {"enum": ["top", "middle", "bottom"]},
         "align": {"enum": ["left", "center", "right", "justify"]},
         "bold": {"type": "boolean"},
-        "color": {"$ref": "#/$defs/color", "description": "文本为墨色；shape/divider 为填充色（必填）。"},
+        "color": {"$ref": "#/$defs/color", "description": "文本为墨色；shape/divider/path 为填充色。"},
         "runs": {
           "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/run"},
           "description": "单段内联片段；拼接须与 content 逐字相等且 content 不含换行。"
         },
-        "shape_kind": {"enum": ["rect", "round_rect", "oval"]},
+
+        "shape_kind": {"enum": ["rect", "round_rect", "oval", "triangle", "diamond", "chevron", "arrow_right", "arrow_up"]},
+        "stroke": {"$ref": "#/$defs/stroke"},
+        "gradient": {"$ref": "#/$defs/gradient"},
         "fill_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "overlap_allowed": {"type": "boolean", "description": "仅承载元素（背景图、蒙版、色块）可声明：允许后面声明的元素压在它上面。"},
+        "rotation": {"type": "number", "minimum": -180, "maximum": 180, "description": "顺时针角度；group 上表示整组旋转。"},
+        "overlap_allowed": {"type": "boolean", "description": "仅承载元素（背景图、蒙版、色块、闭合路径）可声明：允许后面声明的元素压在它上面。"},
+
+        "points": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/point"}, "description": "path 的顶点，英寸；可用元素锚点代替坐标。"},
+        "closed": {"type": "boolean", "description": "闭合路径按 color 填充。"},
+        "arrow": {"enum": ["none", "end", "both"], "description": "路径端点箭头。"},
+
+        "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}, "description": "group 的子元素；使用页面绝对坐标。"},
+
         "image_id": {"$ref": "#/$defs/str"},
         "image_role": {"enum": ["background", "subject", "detail", "evidence", "texture"]},
         "crop_focus": {"$ref": "#/$defs/crop"},
+        "alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "图片不透明度。"},
         "asset_reason": {"$ref": "#/$defs/str", "description": "这张图承担什么职责；删掉会损失什么。"},
+
         "chart": {"$ref": "#/$defs/chart"}
       },
       "allOf": [
+        {"if": {"required": ["type"], "properties": {"type": {"$ref": "#/$defs/textType"}}}, "then": {"required": ["content", "x", "y", "w", "h"]}},
+        {"if": {"required": ["type"], "properties": {"type": {"const": "image"}}}, "then": {"required": ["image_id", "asset_reason", "x", "y", "w", "h"]}},
+        {"if": {"required": ["type"], "properties": {"type": {"const": "chart"}}}, "then": {"required": ["chart", "x", "y", "w", "h"]}},
+        {"if": {"required": ["type"], "properties": {"type": {"const": "shape"}}}, "then": {"required": ["x", "y", "w", "h"], "anyOf": [{"required": ["color"]}, {"required": ["gradient"]}, {"required": ["stroke"]}]}},
+        {"if": {"required": ["type"], "properties": {"type": {"const": "divider"}}}, "then": {"required": ["color", "x", "y", "w", "h"]}},
+        {"if": {"required": ["type"], "properties": {"type": {"const": "path"}}}, "then": {"required": ["points", "stroke"]}},
+        {"if": {"required": ["type"], "properties": {"type": {"const": "group"}}}, "then": {"required": ["elements"]}}
+      ]
+    },
+
+    "point": {
+      "oneOf": [
+        {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}},
         {
-          "if": {"properties": {"type": {"enum": ["title", "body", "text", "number", "caption", "footer"]}}, "required": ["type"]},
-          "then": {"required": ["content"]}
-        },
-        {
-          "if": {"properties": {"type": {"const": "image"}}, "required": ["type"]},
-          "then": {"required": ["image_id", "asset_reason"]}
-        },
-        {
-          "if": {"properties": {"type": {"const": "chart"}}, "required": ["type"]},
-          "then": {"required": ["chart"]}
-        },
-        {
-          "if": {"properties": {"type": {"enum": ["shape", "divider"]}}, "required": ["type"]},
-          "then": {"required": ["color"]}
+          "type": "object", "additionalProperties": false, "required": ["el", "anchor"],
+          "properties": {
+            "el": {"$ref": "#/$defs/str"},
+            "anchor": {"enum": ["left", "right", "top", "bottom", "center"]},
+            "at": {"type": "number", "minimum": 0, "maximum": 1, "description": "沿该边的位置，0–1，缺省 0.5。"}
+          }
         }
       ]
     },
+
+    "stroke": {
+      "type": "object", "additionalProperties": false, "required": ["color"],
+      "properties": {
+        "color": {"$ref": "#/$defs/color"},
+        "width_pt": {"type": "number", "exclusiveMinimum": 0, "maximum": 12},
+        "dash": {"enum": ["solid", "dash", "dot", "dash_dot", "long_dash"]},
+        "cap": {"enum": ["flat", "round", "square"]}
+      }
+    },
+
+    "gradient": {
+      "type": "object", "additionalProperties": false, "required": ["from", "to", "angle"],
+      "properties": {
+        "from": {"$ref": "#/$defs/color"},
+        "to": {"$ref": "#/$defs/color"},
+        "angle": {"type": "number", "minimum": -180, "maximum": 180, "description": "0 = 从左到右，90 = 从上到下。"},
+        "from_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "to_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+      }
+    },
+
     "crop": {
       "type": "object",
       "additionalProperties": false,
       "required": ["x", "y"],
       "properties": {"x": {"type": "number", "minimum": 0, "maximum": 1}, "y": {"type": "number", "minimum": 0, "maximum": 1}}
     },
+
     "run": {
       "type": "object",
       "additionalProperties": false,
@@ -154,25 +201,49 @@
         "letter_spacing_pt": {"type": "number", "minimum": -4, "maximum": 20}
       }
     },
+
     "chart": {
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "data"],
       "properties": {
-        "kind": {"enum": ["bar", "line", "pie", "donut", "table"], "description": "bar 为竖向簇状柱；line 为等距类别轴。"},
-        "data": {"oneOf": [{"$ref": "#/$defs/seriesData"}, {"$ref": "#/$defs/tableData"}]},
+        "kind": {"enum": ["bar", "line", "area", "pie", "donut", "scatter", "table"]},
+        "data": {"oneOf": [{"$ref": "#/$defs/seriesData"}, {"$ref": "#/$defs/xyData"}, {"$ref": "#/$defs/tableData"}]},
         "title": {"type": "string", "description": "图题：说结论，不是话题。"},
-        "unit": {"type": "string", "description": "数量级+量纲；显示在图题。"},
+        "unit": {"type": "string", "description": "数量级+量纲；写进图题与核验。"},
         "period": {"type": "string"},
-        "basis": {"type": "string", "description": "口径/分母。"},
-        "shared_basis": {"type": "boolean", "description": "多系列共轴前对口径一致的显式确认。"},
+        "basis": {"type": "string", "description": "口径/分母/统计方式。"},
+        "shared_basis": {"type": "boolean", "description": "多系列口径一致（分母、样本、统计方式）的显式确认；不能用于绕过单位或期间不一致。"},
         "show_title": {"type": "boolean"},
         "data_labels": {"type": "boolean"},
-        "highlight_category": {"type": "integer", "minimum": 0, "description": "仅单系列柱图：该类别用调色板首色，其余退中性。"},
+        "horizontal": {"type": "boolean", "description": "仅 bar：横向条形。"},
+        "stacked": {"oneOf": [{"type": "boolean"}, {"const": "percent"}], "description": "仅 bar/area：堆叠；percent 为百分比堆叠（仅 bar）。"},
+        "combo_line_series": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/str"}, "description": "仅 bar：这些系列改画折线（共用数值轴）。"},
+        "highlight_category": {"type": "integer", "minimum": 0, "description": "仅单系列、非堆叠柱/条：该类别用调色板首色，其余退中性。"},
         "axis_labels": {"type": "boolean", "description": "false 时整根数值轴不画，须 data_labels=true。"},
-        "column_weights": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "description": "仅表格列宽权重。"}
+        "value_axis": {"$ref": "#/$defs/valueAxis"},
+        "axis_titles": {
+          "type": "object", "additionalProperties": false,
+          "properties": {"x": {"$ref": "#/$defs/str"}, "y": {"$ref": "#/$defs/str"}},
+          "description": "轴名；散点与双量纲对照必须写，否则读者不知道哪个轴是什么。"
+        },
+        "gap_width": {"type": "integer", "minimum": 0, "maximum": 500, "description": "仅 bar：柱宽间隙百分比，越小柱越粗。"},
+        "column_weights": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "description": "仅表格列宽权重。"},
+        "column_align": {"type": "array", "items": {"enum": ["left", "center", "right"]}, "description": "仅表格：逐列对齐；数字列右对齐。"}
       }
     },
+
+    "valueAxis": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "major_unit": {"type": "number", "exclusiveMinimum": 0},
+        "number_format": {"type": "string"},
+        "note": {"$ref": "#/$defs/str", "description": "截轴或非零起点时必须写：读者要看到起点不是零。"}
+      }
+    },
+
     "seriesData": {
       "type": "object",
       "additionalProperties": false,
@@ -196,6 +267,30 @@
         }
       }
     },
+
+    "xyData": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["series"],
+      "properties": {
+        "series": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "points"],
+            "properties": {
+              "name": {"$ref": "#/$defs/str"},
+              "points": {"type": "array", "minItems": 2, "items": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number"}}},
+              "unit": {"type": "string"},
+              "period": {"type": "string"},
+              "basis": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+
     "tableData": {
       "type": "object",
       "additionalProperties": false,

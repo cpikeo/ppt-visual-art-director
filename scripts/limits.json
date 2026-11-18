@@ -1,5 +1,5 @@
 {
-  "_readme": "技术阈值与运行时默认值的唯一来源。设计判断不在这里：这里只有脚本需要一致执行的数值。",
+  "_readme": "技术阈值与运行时默认值的唯一来源。设计判断不在这里：这里只有脚本必须一致执行的数值。改这里之前先确认它在 compile.py 或 verify.py 里真的被读取。",
 
   "canvas": {
     "16:9": [13.333, 7.5],
@@ -9,10 +9,9 @@
   },
 
   "type": {
-    "min_pt": {"title": 28, "number": 28, "body": 18, "text": 18, "caption": 12, "footer": 12},
+    "min_pt": {"title": 24, "number": 24, "body": 14, "text": 14, "caption": 12, "footer": 12},
     "default_pt": {"title": 40, "number": 72, "body": 20, "text": 20, "caption": 13, "footer": 13},
     "line_spacing": {"title": 1.12, "number": 1.05, "body": 1.32, "text": 1.32, "caption": 1.25, "footer": 1.25},
-    "letter_spacing_pt": {"title": 0, "number": 0},
     "bold": {"title": true, "number": true, "caption": false},
     "inset_in": {"x": 0.05, "y": 0.03},
     "line_pitch_em": 1.2,
@@ -22,7 +21,8 @@
   "geometry": {
     "overlap_area_sq_in": 0.5,
     "overlap_min_edge_in": 0.05,
-    "overlap_ratio": 0.25
+    "overlap_ratio": 0.25,
+    "stroke_default_pt": 0.75
   },
 
   "image": {
@@ -38,11 +38,11 @@
   },
 
   "chart": {
-    "min_contrast": {"bar": 2.0, "line": 3.0, "pie": 2.0, "donut": 2.0},
+    "min_contrast": {"bar": 2.0, "line": 3.0, "area": 2.0, "pie": 2.0, "donut": 2.0, "scatter": 3.0},
     "deemphasis": {"light": "#AEB3B8", "dark": "#50565E"},
-    "label_ink": ["#FFFFFF", "#111827"],
     "font_pt": {"title": 15, "legend": 11, "axis": 11, "label": 11, "table": 13},
     "gap_width": 60,
+    "stacked_overlap": 100,
     "style": {
       "light": {"title": "#111827", "body": "#374151", "grid": "#E5E7EB", "rule": "#D1D5DB"},
       "dark": {"title": "#F3F4F6", "body": "#D1D5DB", "grid": "#333A45", "rule": "#4B5563"}
@@ -60,9 +60,19 @@
 
   "preview": {
     "dpi": 110,
-    "overflow_tolerance_pt": 4.0,
     "blank_ink_ratio": 0.002,
     "contact_sheet_width_px": 1800
+  },
+
+  "font_aliases": {
+    "_readme": "声明字族 → 可能的字体文件名（小写、去空格）。核验器用它判断“声明的字体是否真的参与了渲染”。只在能确定映射时写，不要猜。",
+    "微软雅黑": ["microsoftyahei", "msyh"],
+    "宋体": ["simsun"],
+    "黑体": ["simhei"],
+    "等线": ["dengxian"],
+    "思源黑体": ["sourcehansans", "notosanscjk", "notosanssc"],
+    "思源宋体": ["sourcehanserif", "notoserifcjk", "notoserifsc"],
+    "苹方": ["pingfang"]
   },
 
   "defaults": {
