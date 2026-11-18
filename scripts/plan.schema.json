@@ -1,482 +1,199 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cpikeo/ppt-visual-art-director/scripts/plan.schema.json",
-  "title": "PPT Visual Art Director slide plan",
-  "description": "THINK→BUILD 唯一机器数据契约：字段形状、必填与跨字段条件、枚举在此定义；技术与数值阈值、运行时缺省值以 policy.json 为唯一来源，Schema 中的 description 只解释契约语义。形状是数据契约，不承担审美判断；跨对象一致性（ID 唯一、素材引用、数据长度、配色存量）由 compile_pptx 在写文件前确定性检查。",
+  "title": "Slide plan",
+  "description": "plan.json 的唯一数据契约：字段形状、必填与类型专属条件。技术数值见 limits.json；跨对象一致性（ID 唯一、引用、几何、重叠、图表载荷、素材权利）由 compile.py 确定性检查。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "deck_id", "title", "audience", "goal", "core_claim", "visual_concept", "pages"],
+  "required": ["deck_id", "title", "audience", "goal", "core_claim", "visual_concept", "pages"],
   "properties": {
-    "schema_version": {"const": "4.0"},
-    "deck_id": {"$ref": "#/$defs/nonEmptyString"},
-    "title": {"$ref": "#/$defs/nonEmptyString"},
-    "audience": {"$ref": "#/$defs/nonEmptyString"},
-    "goal": {"$ref": "#/$defs/nonEmptyString"},
-    "core_claim": {"$ref": "#/$defs/nonEmptyString"},
-    "evidence": {"$ref": "#/$defs/stringList"},
-    "visual_concept": {"$ref": "#/$defs/nonEmptyString", "description": "整稿视觉概念（必填）；随渲染总览交 G-DECK 复核。"},
-    "design_reviews": {
-      "description": "对可复核诊断（policy.diagnostics.reviewable_codes）的具名处置，按 code + location 精确关联。",
-      "type": "array",
-      "items": {"$ref": "#/$defs/designReview"}
-    },
-    "palette": {
-      "type": "array",
-      "items": {"$ref": "#/$defs/color"},
-      "uniqueItems": true,
-      "description": "可选：图表消费色，按系列/类别位置使用；忽略大小写互不相同且数量够用。缺省用 policy 色（E009 INFO）。"
-    },
+    "deck_id": {"$ref": "#/$defs/str"},
+    "title": {"$ref": "#/$defs/str"},
+    "audience": {"$ref": "#/$defs/str", "description": "受众、已知与怀疑什么、观看环境与时长。"},
+    "goal": {"$ref": "#/$defs/str", "description": "观众离场后应理解、记住或决定什么。"},
+    "core_claim": {"$ref": "#/$defs/str", "description": "整稿最重要的一条主张。"},
+    "visual_concept": {"$ref": "#/$defs/str", "description": "由哪条洞察推出哪个视觉概念，以及它否决了什么。"},
+    "rhythm": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "整稿乐谱：按页写叙事动作与重量。"},
+    "palette": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/color"}, "description": "图表消费色，按系列/类别顺序取用；缺省用 limits.json。"},
     "fonts": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {"heading": {"$ref": "#/$defs/nonEmptyString"}, "body": {"$ref": "#/$defs/nonEmptyString"}}
+      "properties": {"heading": {"$ref": "#/$defs/str"}, "body": {"$ref": "#/$defs/str"}}
     },
     "aspect_ratio": {"enum": ["16:9", "4:3"]},
-    "pages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/page"}},
-    "page_numbers": {
-      "$ref": "#/$defs/pageNumberConfig",
-      "description": "可选：整稿页码契约。缺省即每页都有页码，角区/格式/起始号取 policy 技术默认值。页码由编译器按 pages 顺序确定性生成，不在 pages 里逐页手写。"
-    },
-    "rhythm": {"$ref": "#/$defs/stringList", "description": "可选：整稿乐谱；随 G-DECK 复核材料输出。"},
-    "assets": {"type": "object", "propertyNames": {"minLength": 1}, "additionalProperties": {"$ref": "#/$defs/asset"}}
+    "page_numbers": {"$ref": "#/$defs/pageNumbers"},
+    "assets": {"type": "object", "additionalProperties": {"$ref": "#/$defs/asset"}},
+    "pages": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/page"}}
   },
   "$defs": {
-    "pageNumberConfig": {
-      "description": "整稿级页码契约：位置、格式与编号只在此处声明一次，全稿一致。省略页码必须有明确任务理由。",
+    "str": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
+    "pageNumbers": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": {"type": "boolean", "description": "整稿是否显示页码，缺省 true。false 仅在任务明确要求时允许，并须写 omit_reason。"},
-        "corner": {"enum": ["top_right", "bottom_right"], "description": "全稿唯一角区；缺省取 policy.page_number.corner（右下角）。若右下承担来源/图注等职能，可整稿改右上角，不得逐页切换。"},
-        "format": {"enum": ["plain", "zero_padded"], "description": "全稿唯一编号格式；缺省取 policy.page_number.format。不得混用。"},
-        "start": {"type": "integer", "minimum": 1, "description": "显式自定义起始号；缺省 1。章节重新编号不被自动推断：需要时显式声明 start，或拆分整稿。"},
-        "omit_pages": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyString"}, "description": "明确允许省略页码的真实页面 id；必须同时在 omit_reason 写出任务理由。"},
-        "omit_reason": {"$ref": "#/$defs/nonEmptyString", "description": "省略页码的任务理由（enabled=false 或 omit_pages 非空时必填）；会写进交付报告。"}
-      },
-      "allOf": [
-        {
-          "if": {"anyOf": [
-            {"properties": {"enabled": {"const": false}}, "required": ["enabled"]},
-            {"properties": {"omit_pages": {"minItems": 1}}, "required": ["omit_pages"]}
-          ]},
-          "then": {"required": ["omit_reason"]}
-        }
-      ]
-    },
-    "acceptanceConfig": {
-      "description": "项目验收配置；门 ID 由 policy.quality_gates 定义。",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "project": {"type": "string", "description": "可选：项目标识，写入报告。"},
-        "required_gates": {"$ref": "#/$defs/stringList"},
-        "key_pages": {"$ref": "#/$defs/stringList"},
-        "high_risk_pages": {"$ref": "#/$defs/stringList"},
-        "historical_issue_pages": {"$ref": "#/$defs/stringList"},
-        "target_powerpoint": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "configured": {"type": "boolean"},
-            "version": {"type": ["string", "null"]},
-            "operating_system": {"type": ["string", "null"]},
-            "fonts": {"$ref": "#/$defs/stringList"}
-          }
-        },
-        "sampling": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {"low_risk_rate": {"type": "number", "minimum": 0, "maximum": 1}, "seed": {"type": "integer"}}
-        },
-        "reviews": {"type": "object", "additionalProperties": {"$ref": "#/$defs/deliveryReview"}},
-        "risk_approvals": {"type": "array", "items": {"$ref": "#/$defs/riskApproval"}}
+        "corner": {"enum": ["top_right", "bottom_right"]},
+        "start": {"type": "integer", "minimum": 1},
+        "hide": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "不显示页码的页面 id；须在交付说明里写理由。"}
       }
     },
-    "riskApproval": {
+    "asset": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["source"],
       "properties": {
-        "gate": {"$ref": "#/$defs/nonEmptyString"},
-        "category": {"$ref": "#/$defs/nonEmptyString"},
-        "scope": {"$ref": "#/$defs/nonEmptyString", "description": "逐项点名该门真实未验证项；[页面.元素] 须写完整定位符，页 ID 不覆盖同页其他项；无定位符时写完整问题描述。未给出问题描述时不能自动批准，不得使用「全部」等笼统范围。"},
-        "impact": {"$ref": "#/$defs/nonEmptyString"},
-        "alternative_evidence": {"$ref": "#/$defs/nonEmptyString"},
-        "mitigation": {"$ref": "#/$defs/nonEmptyString"},
-        "owner": {"$ref": "#/$defs/nonEmptyString"},
-        "approver": {"$ref": "#/$defs/nonEmptyString"},
-        "expires_when": {"$ref": "#/$defs/nonEmptyString", "description": "有效期：写可核验日期（2026-12-31 / 2026 年 12 月 31 日）；过期记录失效，无法解析日期的条件式表述不计为覆盖。"},
-        "pptx_sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$", "description": "本次交付 PPTX 的 SHA-256；与受验交付物不符的记录无效，防止旧批准复用到新文件。"}
-      },
-      "required": [
-        "gate",
-        "category",
-        "scope",
-        "impact",
-        "alternative_evidence",
-        "mitigation",
-        "owner",
-        "approver",
-        "expires_when",
-        "pptx_sha256"
-      ]
+        "source": {"$ref": "#/$defs/str", "description": "来源：拍摄、机构、URL 或生成工具。"},
+        "generated": {"type": "boolean", "description": "是否为生成图；生成图不得作证据。"},
+        "used_as_evidence": {"type": "boolean"},
+        "rights": {"enum": ["cleared", "pending", "blocked"], "description": "版权与肖像/隐私的可确认状态；缺省 pending。"},
+        "reference": {"type": "string", "description": "凭据位置（合同、授权页、编号）；rights=cleared 时必填。"},
+        "generation": {"$ref": "#/$defs/generation"},
+        "notes": {"type": "string"}
+      }
     },
-    "deliveryReview": {
+    "generation": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["tool", "prompt", "file", "status"],
       "properties": {
-        "status": {"type": "string"},
-        "reviewer": {"type": ["string", "null"]},
-        "evidence": {"type": ["string", "null"]},
-        "pptx_sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"},
+        "tool": {"$ref": "#/$defs/str"},
+        "prompt": {"$ref": "#/$defs/str", "description": "实际提交的完整提示词。"},
+        "file": {"$ref": "#/$defs/str", "description": "实际落盘文件；必须与页面 image_id 解析到同一物理文件。"},
+        "status": {"enum": ["generated", "pending", "failed"]},
+        "sha256": {"type": "string", "pattern": "^[0-9A-Fa-f]{64}$"},
         "note": {"type": "string"}
       }
     },
-    "designReview": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["code", "location", "rationale", "reviewer", "evidence"],
-      "properties": {
-        "code": {"$ref": "#/$defs/nonEmptyString"},
-        "location": {"$ref": "#/$defs/nonEmptyString"},
-        "rationale": {"$ref": "#/$defs/nonEmptyString"},
-        "reviewer": {"$ref": "#/$defs/nonEmptyString"},
-        "evidence": {"$ref": "#/$defs/nonEmptyString"}
-      }
-    },
-    "textRun": {
-      "description": "单段内的同式样片段；未声明属性继承元素。",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["text"],
-      "properties": {
-        "text": {"type": "string", "minLength": 1},
-        "font": {"$ref": "#/$defs/nonEmptyString"},
-        "font_size": {"type": "number", "exclusiveMinimum": 0},
-        "bold": {"type": "boolean"},
-        "color": {"$ref": "#/$defs/color"},
-        "letter_spacing_pt": {"type": "number", "minimum": -2, "maximum": 12}
-      }
-    },
-    "cropFocus": {
-      "description": "可选：等比裁切窗口中心在源图中的归一化位置，缺省居中；确定性执行，不代表编译器识别主体。",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["x", "y"],
-      "properties": {
-        "x": {"type": "number", "minimum": 0, "maximum": 1},
-        "y": {"type": "number", "minimum": 0, "maximum": 1}
-      }
-    },
-    "imageBrief": {
-      "description": "可选：按最终落位框先写的图像简报；E012 按面积、角色与叠字要求前三项。",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "visual_intent": {"type": "string", "description": "观众应从此图理解或感到什么。"},
-        "subject_and_shot": {"type": "string", "description": "主体、景别、机位、占比与朝向。"},
-        "light_and_material": {"type": "string", "description": "主光方向与软硬、必须可信的材质。"},
-        "text_safe_zone": {"type": "string", "description": "最终裁切后文字落点的安静区；不叠字写 none — no overlay。"},
-        "reject_if": {"$ref": "#/$defs/stringList", "description": "可观察的淘汰条件，评审逐项对照；空列表不构成淘汰条件，证据类图片由 E012 要求至少一条。写不出淘汰条件通常说明意图还没想清。"}
-      }
-    },
-    "focusUnmapped": {
-      "description": "本页没有可映射到单一元素的主角：parallel = 有意并列（双边比较、等重选项）；unmappable = 主角是跨多个元素的关系或整体。机器不核验主次，报告把本页列入 G-DECK 人工验收。",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "reason"],
-      "properties": {
-        "kind": {"enum": ["parallel", "unmappable"]},
-        "reason": {"$ref": "#/$defs/nonEmptyString", "description": "为什么没有单一主角、读者应如何读这一页；G-DECK 据此验收。"}
-      }
-    },
-    "nonEmptyString": {"type": "string", "minLength": 1, "pattern": "\\S"},
-    "stringList": {"type": "array", "items": {"$ref": "#/$defs/nonEmptyString"}},
-    "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
     "page": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "role", "claim", "evidence_status", "focus", "composition_rationale", "elements"],
+      "required": ["id", "role", "focus", "elements"],
       "properties": {
-        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "id": {"$ref": "#/$defs/str"},
         "role": {"enum": ["open", "build", "breathe", "turn", "hold", "close"]},
-        "claim": {"type": "string", "description": "本页主张；空白表示未决，须有 notes 或 open_questions。"},
-        "evidence_status": {"enum": ["supported", "partial", "unsupported", "not_applicable"]},
-        "focus": {"$ref": "#/$defs/nonEmptyString"},
-        "focus_element": {"$ref": "#/$defs/nonEmptyString", "description": "单一主角所在的元素 id；人工对照真实渲染判断主次与阅读路径。"},
-        "focus_unmapped": {"$ref": "#/$defs/focusUnmapped"},
-        "composition_rationale": {"$ref": "#/$defs/nonEmptyString"},
-        "evidence": {"$ref": "#/$defs/stringList", "description": "主张的依据；supported/partial 必填。"},
-        "constraints": {"$ref": "#/$defs/stringList", "description": "可选：执行约束；随 G-DECK 复核材料输出。"},
-        "open_questions": {"$ref": "#/$defs/stringList"},
-        "acceptance": {"$ref": "#/$defs/stringList", "description": "可选：人工验收口径；随 G-DECK 复核材料输出。"},
-        "background": {"$ref": "#/$defs/color", "description": "建议显式声明：深浅页混排时页面明度场与前景墨阶要成套切换；缺省退回 policy 默认浅底。"},
-        "page_number_tone": {
-          "enum": ["light", "dark"],
-          "description": "可选：页码所在角区的**实际**明度场。仅当全出血图像让角区明度与 background 声明不同时显式声明（如明亮室内图的右下角是深色木影）。缺省由 background 亮度推导。整稿仍使用同一档次级墨色，只是随明暗场成套翻转；不是逐页样式变体。"
-        },
-        "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}},
-        "notes": {"type": "string"}
-      },
-      "allOf": [
-        {
-          "description": "主角映射二选一：单一主角写 focus_element；有意并列或主角无法落到单一元素写 focus_unmapped",
-          "oneOf": [{"required": ["focus_element"]}, {"required": ["focus_unmapped"]}]
-        },
-        {
-          "if": {"properties": {"claim": {"$ref": "#/$defs/blankString"}}, "required": ["claim"]},
-          "then": {
-            "anyOf": [
-              {"required": ["notes"], "properties": {"notes": {"$ref": "#/$defs/nonEmptyString"}}},
-              {"required": ["open_questions"], "properties": {"open_questions": {"minItems": 1}}}
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {"evidence_status": {"enum": ["supported", "partial"]}},
-            "required": ["evidence_status"]
-          },
-          "then": {"required": ["evidence"], "properties": {"evidence": {"minItems": 1}}}
-        },
-        {
-          "if": {"properties": {"evidence_status": {"const": "partial"}}, "required": ["evidence_status"]},
-          "then": {"required": ["open_questions"], "properties": {"open_questions": {"minItems": 1}}}
-        },
-        {
-          "if": {"properties": {"evidence_status": {"const": "unsupported"}}, "required": ["evidence_status"]},
-          "then": {"properties": {"claim": {"$ref": "#/$defs/blankString"}}}
-        }
-      ]
+        "claim": {"type": "string", "description": "本页主张；封面与过渡可留空。"},
+        "focus": {"$ref": "#/$defs/str", "description": "读者这一页先看到什么、按什么顺序读。"},
+        "focus_element": {"type": "string", "description": "承担主角的元素 id；有意并列或跨元素关系时不写。"},
+        "composition_rationale": {"type": "string", "description": "重心如何成立、为什么这样断、放弃了什么方案。"},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "支持本页主张的事实与来源。"},
+        "open_questions": {"type": "array", "items": {"$ref": "#/$defs/str"}},
+        "background": {"$ref": "#/$defs/color"},
+        "page_number_tone": {"enum": ["light", "dark"], "description": "页码所在角区的实际明度场；仅在全出血图角区与 background 不同时声明。"},
+        "notes": {"type": "string", "description": "设计备注；不写入演讲者备注。"},
+        "elements": {"type": "array", "items": {"$ref": "#/$defs/element"}}
+      }
     },
     "element": {
       "type": "object",
       "additionalProperties": false,
       "required": ["id", "type", "x", "y", "w", "h"],
       "properties": {
-        "id": {"$ref": "#/$defs/nonEmptyString"},
-        "type": {
-          "enum": ["title", "body", "text", "number", "image", "chart", "shape", "divider", "caption", "footer"]
-        },
-        "content": {"type": "string"},
-        "x": {"type": "number", "minimum": 0, "description": "左边缘，单位：英寸（inch），原点在页面左上角。16:9 画布 13.333×7.5，4:3 画布 10×7.5。可用 scripts/grid.py 换算网格。"},
-        "y": {"type": "number", "minimum": 0, "description": "上边缘，单位：英寸，原点在页面左上角，向下为正。"},
-        "w": {"type": "number", "exclusiveMinimum": 0, "description": "宽度，单位：英寸。"},
-        "h": {"type": "number", "exclusiveMinimum": 0, "description": "高度，单位：英寸。文本框高度估算见 references/layout-system.md §4。"},
-        "font_size": {"type": "number", "exclusiveMinimum": 0, "description": "字号，单位：pt。"},
-        "font": {"$ref": "#/$defs/nonEmptyString", "description": "可选：逐元素字族，覆盖 deck.fonts 的角色缺省。"},
-        "line_spacing": {"type": "number", "minimum": 0.8, "maximum": 3.0, "description": "可选：倍数行距，覆盖 policy 按类型的缺省。"},
-        "letter_spacing_pt": {"type": "number", "minimum": -2, "maximum": 12, "description": "可选：字距（pt）。"},
-        "space_after_pt": {"type": "number", "minimum": 0, "maximum": 72, "description": "可选：段后距离（pt）。"},
-        "valign": {"enum": ["top", "middle", "bottom"], "description": "可选：文本竖直锚定，缺省 top。"},
-        "runs": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"$ref": "#/$defs/textRun"},
-          "description": "可选：单段内联片段（同行混排）；拼接须与 content 逐字相等且 content 不含换行，未声明属性继承元素。"
-        },
-        "fill_alpha": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "maximum": 1,
-          "description": "可选：shape/divider 填充不透明度（1=不透明）；验证器按真实叠放计入文字背景。"
-        },
-        "bold": {"type": "boolean"},
-        "color": {"$ref": "#/$defs/color", "description": "文字为墨色（缺省取 policy）；shape/divider 为必填填充色。"},
+        "id": {"$ref": "#/$defs/str"},
+        "type": {"enum": ["title", "body", "text", "number", "image", "chart", "shape", "divider", "caption", "footer"]},
+        "content": {"type": "string", "description": "文本内容；\\n 分段。"},
+        "x": {"type": "number", "description": "左边缘，英寸。"},
+        "y": {"type": "number", "description": "上边缘，英寸，向下为正。"},
+        "w": {"type": "number", "exclusiveMinimum": 0},
+        "h": {"type": "number", "exclusiveMinimum": 0},
+        "font_size": {"type": "number", "exclusiveMinimum": 0},
+        "font": {"$ref": "#/$defs/str"},
+        "line_spacing": {"type": "number", "minimum": 0.8, "maximum": 3.0},
+        "letter_spacing_pt": {"type": "number", "minimum": -4, "maximum": 20},
+        "space_after_pt": {"type": "number", "minimum": 0, "maximum": 72},
+        "valign": {"enum": ["top", "middle", "bottom"]},
         "align": {"enum": ["left", "center", "right", "justify"]},
-        "shape_kind": {"enum": ["rect", "round_rect", "oval"]},
-        "image_id": {"$ref": "#/$defs/nonEmptyString"},
-        "image_role": {
-          "enum": ["background", "subject", "detail", "evidence", "texture"],
-          "description": "可选：background 承载文字的场、subject 主体、detail 局部细节、evidence 可核查的真实记录（须素材登记为证据）、texture 质感底层。"
+        "bold": {"type": "boolean"},
+        "color": {"$ref": "#/$defs/color", "description": "文本为墨色；shape/divider 为填充色（必填）。"},
+        "runs": {
+          "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/run"},
+          "description": "单段内联片段；拼接须与 content 逐字相等且 content 不含换行。"
         },
-        "crop_focus": {"$ref": "#/$defs/cropFocus"},
-        "asset_reason": {"$ref": "#/$defs/nonEmptyString"},
-        "chart": {"$ref": "#/$defs/chart"},
-        "z_index": {"type": "number", "description": "图层顺序；数值相同时按 elements 声明顺序稳定叠放（编译写入与对象核对共用此规则）。"},
-        "overlap_allowed": {"type": "boolean", "description": "仅下层承载元素可声明：允许上层文字/形状实质压在本元素上。不能由上层元素自行豁免重叠。"}
+        "shape_kind": {"enum": ["rect", "round_rect", "oval"]},
+        "fill_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "overlap_allowed": {"type": "boolean", "description": "仅承载元素（背景图、蒙版、色块）可声明：允许后面声明的元素压在它上面。"},
+        "image_id": {"$ref": "#/$defs/str"},
+        "image_role": {"enum": ["background", "subject", "detail", "evidence", "texture"]},
+        "crop_focus": {"$ref": "#/$defs/crop"},
+        "asset_reason": {"$ref": "#/$defs/str", "description": "这张图承担什么职责；删掉会损失什么。"},
+        "chart": {"$ref": "#/$defs/chart"}
       },
       "allOf": [
         {
-          "if": {"properties": {"type": {"$ref": "#/$defs/textElementType"}}, "required": ["type"]},
-          "then": {"required": ["content"]},
-          "else": {
-            "properties": {
-              "content": {"$ref": "#/$defs/forbidden"},
-              "font_size": {"$ref": "#/$defs/forbidden"},
-              "font": {"$ref": "#/$defs/forbidden"},
-              "line_spacing": {"$ref": "#/$defs/forbidden"},
-              "letter_spacing_pt": {"$ref": "#/$defs/forbidden"},
-              "space_after_pt": {"$ref": "#/$defs/forbidden"},
-              "valign": {"$ref": "#/$defs/forbidden"},
-              "runs": {"$ref": "#/$defs/forbidden"},
-              "bold": {"$ref": "#/$defs/forbidden"},
-              "align": {"$ref": "#/$defs/forbidden"}
-            }
-          }
-        },
-        {
-          "if": {"properties": {"type": {"enum": ["shape", "divider"]}}, "required": ["type"]},
-          "then": {"required": ["color"]},
-          "else": {
-            "properties": {"fill_alpha": {"$ref": "#/$defs/forbidden"}, "shape_kind": {"$ref": "#/$defs/forbidden"}}
-          }
-        },
-        {
-          "if": {"properties": {"type": {"enum": ["image", "chart"]}}, "required": ["type"]},
-          "then": {"properties": {"color": {"$ref": "#/$defs/forbidden"}}}
+          "if": {"properties": {"type": {"enum": ["title", "body", "text", "number", "caption", "footer"]}}, "required": ["type"]},
+          "then": {"required": ["content"]}
         },
         {
           "if": {"properties": {"type": {"const": "image"}}, "required": ["type"]},
-          "then": {"required": ["image_id", "asset_reason"]},
-          "else": {
-            "properties": {
-              "image_id": {"$ref": "#/$defs/forbidden"},
-              "image_role": {"$ref": "#/$defs/forbidden"},
-              "crop_focus": {"$ref": "#/$defs/forbidden"},
-              "asset_reason": {"$ref": "#/$defs/forbidden"}
-            }
-          }
+          "then": {"required": ["image_id", "asset_reason"]}
         },
         {
           "if": {"properties": {"type": {"const": "chart"}}, "required": ["type"]},
-          "then": {"required": ["chart"]},
-          "else": {"properties": {"chart": {"$ref": "#/$defs/forbidden"}}}
+          "then": {"required": ["chart"]}
+        },
+        {
+          "if": {"properties": {"type": {"enum": ["shape", "divider"]}}, "required": ["type"]},
+          "then": {"required": ["color"]}
         }
       ]
     },
-    "textElementType": {"enum": ["title", "body", "text", "number", "caption", "footer"]},
-    "asset": {
+    "crop": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source", "generated", "used_as_evidence", "license_status", "privacy_status"],
-      "properties": {
-        "source": {"$ref": "#/$defs/nonEmptyString"},
-        "generated": {"type": "boolean"},
-        "used_as_evidence": {"type": "boolean", "description": "是否作证据使用；image_role=evidence 时须为 true，生成图不得为 true。"},
-        "license_status": {"enum": ["cleared", "pending", "blocked"]},
-        "privacy_status": {"enum": ["cleared", "pending", "blocked"]},
-        "reference": {"$ref": "#/$defs/nonEmptyString", "description": "授权或来源凭据的位置；license_status=cleared 时必填。"},
-        "image_brief": {"$ref": "#/$defs/imageBrief"},
-        "image_generation": {
-          "$ref": "#/$defs/imageGeneration",
-          "description": "可选但生成素材必须填写：智能体实际调用图像模型的记录。提示词本身不是素材；status≠generated 的素材不得进入交付。"
-        },
-        "notes": {"type": "string"}
-      },
-      "not": {
-        "properties": {"generated": {"const": true}, "used_as_evidence": {"const": true}},
-        "required": ["generated", "used_as_evidence"]
-      },
-      "allOf": [
-        {
-          "if": {"properties": {"license_status": {"const": "cleared"}}, "required": ["license_status"]},
-          "then": {"required": ["reference"]}
-        },
-        {
-          "if": {"properties": {"image_generation": {"properties": {"status": {"const": "generated"}},
-                                                     "required": ["status"]}},
-                 "required": ["image_generation"]},
-          "then": {"properties": {"generated": {"const": true}, "used_as_evidence": {"const": false}},
-                   "required": ["generated", "used_as_evidence"]}
-        }
-      ]
+      "required": ["x", "y"],
+      "properties": {"x": {"type": "number", "minimum": 0, "maximum": 1}, "y": {"type": "number", "minimum": 0, "maximum": 1}}
     },
-    "imageGeneration": {
-      "description": "一次真实图像生成调用的落地记录；由智能体在调用工具、保存文件后填写，不是提示词草稿。",
+    "run": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tool", "prompt", "file", "status"],
+      "required": ["text"],
       "properties": {
-        "tool": {"$ref": "#/$defs/nonEmptyString", "description": "本环境中实际调用的图像生成工具/模型标识。"},
-        "prompt": {"$ref": "#/$defs/nonEmptyString", "description": "实际提交的完整提示词，或指向保存完整提示词记录的可读路径。"},
-        "file": {"$ref": "#/$defs/nonEmptyString", "description": "实际落盘的图片文件名；必须能被编译器从 --assets 解析，且与页面 image_id 指向同一文件。"},
-        "status": {"enum": ["generated", "pending", "failed"], "description": "generated=已生成并落地；pending/failed=未完成，不得作为正式素材使用。"},
-        "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$", "description": "实际落盘文件的 SHA-256；status=generated 时必填，验证器用它与 PPTX 内嵌图片哈希比对。"},
-        "note": {"type": "string", "description": "生成模型约束、重试原因、质量结论等补充记录。"}
-      },
-      "allOf": [
-        {
-          "if": {"properties": {"status": {"const": "generated"}}, "required": ["status"]},
-          "then": {"required": ["sha256"]}
-        }
-      ]
+        "text": {"type": "string", "minLength": 1},
+        "font": {"$ref": "#/$defs/str"},
+        "font_size": {"type": "number", "exclusiveMinimum": 0},
+        "bold": {"type": "boolean"},
+        "color": {"$ref": "#/$defs/color"},
+        "letter_spacing_pt": {"type": "number", "minimum": -4, "maximum": 20}
+      }
     },
     "chart": {
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "data"],
       "properties": {
-        "kind": {"enum": ["bar", "line", "pie", "donut", "table"], "description": "bar 为竖向簇状柱；line 为等间距类别轴，不自动按真实日期定位。其余关系可用原生对象手工组合，边界见 contract。"},
-        "data": {"$ref": "#/$defs/chartData"},
-        "title": {"type": "string"},
-        "unit": {"type": "string", "description": "图表级单位（数量级+量纲），显示在图题；与系列声明矛盾即阻断。"},
-        "period": {"type": "string", "description": "图表级期间，显示在图题；与系列声明矛盾即阻断。"},
-        "basis": {"type": "string"},
-        "shared_basis": {"type": "boolean", "description": "多系列柱/线图共轴前对统计口径一致的显式确认。"},
-        "show_title": {"type": "boolean", "description": "可选，缺省 true；false 时不渲染图题，单位与期间须由原生文字交代。"},
-        "data_labels": {"type": "boolean", "description": "可选：仅柱/线图，直标数值。"},
-        "highlight_category": {"type": "integer", "minimum": 0, "description": "可选：仅单系列柱图；该类别用 palette 首色，其余退 policy 中性色（按页底色兜底到 min_contrast）。"},
-        "axis_labels": {"type": "boolean", "description": "可选：仅柱/线图，缺省 true；false 时整根数值轴不绘制，且必须 data_labels=true。"},
-        "column_weights": {
-          "type": "array",
-          "items": {"type": "number", "exclusiveMinimum": 0},
-          "description": "可选：仅表格；各列相对宽度，数量须等于列数。"
-        }
-      },
-      "allOf": [
-        {
-          "if": {"properties": {"kind": {"const": "table"}}, "required": ["kind"]},
-          "then": {"properties": {"shared_basis": {"$ref": "#/$defs/forbidden"}}},
-          "else": {
-            "properties": {"data": {"$ref": "#/$defs/categorySeriesData"}, "column_weights": {"$ref": "#/$defs/forbidden"}}
-          }
-        },
-        {
-          "if": {"properties": {"kind": {"enum": ["bar", "line"]}}, "required": ["kind"]},
-          "else": {
-            "properties": {"data_labels": {"$ref": "#/$defs/forbidden"}, "axis_labels": {"$ref": "#/$defs/forbidden"}}
-          }
-        },
-        {
-          "if": {"properties": {"kind": {"const": "bar"}}, "required": ["kind"]},
-          "else": {"properties": {"highlight_category": {"$ref": "#/$defs/forbidden"}}}
-        },
-        {
-          "if": {"properties": {"axis_labels": {"const": false}}, "required": ["axis_labels"]},
-          "then": {"required": ["data_labels"], "properties": {"data_labels": {"const": true}}}
-        },
-        {
-          "if": {"properties": {"kind": {"enum": ["pie", "donut"]}}, "required": ["kind"]},
-          "then": {
-            "properties": {
-              "data": {
-                "properties": {"series": {"maxItems": 1, "items": {"properties": {"values": {"items": {"minimum": 0}}}}}}
-              }
-            }
-          }
-        }
-      ]
+        "kind": {"enum": ["bar", "line", "pie", "donut", "table"], "description": "bar 为竖向簇状柱；line 为等距类别轴。"},
+        "data": {"oneOf": [{"$ref": "#/$defs/seriesData"}, {"$ref": "#/$defs/tableData"}]},
+        "title": {"type": "string", "description": "图题：说结论，不是话题。"},
+        "unit": {"type": "string", "description": "数量级+量纲；显示在图题。"},
+        "period": {"type": "string"},
+        "basis": {"type": "string", "description": "口径/分母。"},
+        "shared_basis": {"type": "boolean", "description": "多系列共轴前对口径一致的显式确认。"},
+        "show_title": {"type": "boolean"},
+        "data_labels": {"type": "boolean"},
+        "highlight_category": {"type": "integer", "minimum": 0, "description": "仅单系列柱图：该类别用调色板首色，其余退中性。"},
+        "axis_labels": {"type": "boolean", "description": "false 时整根数值轴不画，须 data_labels=true。"},
+        "column_weights": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "description": "仅表格列宽权重。"}
+      }
     },
-    "chartData": {"oneOf": [{"$ref": "#/$defs/categorySeriesData"}, {"$ref": "#/$defs/tableData"}]},
-    "categorySeriesData": {
+    "seriesData": {
       "type": "object",
       "additionalProperties": false,
       "required": ["categories", "series"],
       "properties": {
         "categories": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": ["string", "number"]}},
-        "series": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/series"}}
-      }
-    },
-    "series": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["name", "values"],
-      "properties": {
-        "name": {"$ref": "#/$defs/nonEmptyString"},
-        "values": {"type": "array", "minItems": 1, "items": {"type": "number"}},
-        "unit": {"type": "string"},
-        "period": {"type": "string"},
-        "basis": {"type": "string"}
+        "series": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "values"],
+            "properties": {
+              "name": {"$ref": "#/$defs/str"},
+              "values": {"type": "array", "minItems": 1, "items": {"type": "number"}},
+              "unit": {"type": "string"},
+              "period": {"type": "string"},
+              "basis": {"type": "string"}
+            }
+          }
+        }
       }
     },
     "tableData": {
@@ -485,14 +202,8 @@
       "required": ["headers", "rows"],
       "properties": {
         "headers": {"type": "array", "minItems": 1, "items": {"type": ["string", "number"]}},
-        "rows": {
-          "type": "array",
-          "minItems": 1,
-          "items": {"type": "array", "minItems": 1, "items": {"type": ["string", "number"]}}
-        }
+        "rows": {"type": "array", "minItems": 1, "items": {"type": "array", "minItems": 1, "items": {"type": ["string", "number"]}}}
       }
-    },
-    "blankString": {"type": "string", "pattern": "^\\s*$"},
-    "forbidden": {"description": "该字段在此元素类型或图型上没有运行时语义，出现即拒绝。", "not": {}}
+    }
   }
 }
