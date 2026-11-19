@@ -1,0 +1,94 @@
+{
+  "_readme": "技术阈值与运行时默认值的唯一来源。设计判断不在这里：这里只有脚本必须一致执行的数值。改这里之前先确认它在 compile.py 或 verify.py 里真的被读取。",
+
+  "canvas": {
+    "16:9": [13.333, 7.5],
+    "4:3": [10.0, 7.5],
+    "default": "16:9",
+    "bound_tolerance_in": 0.02
+  },
+
+  "type": {
+    "min_pt": {"title": 24, "number": 24, "body": 14, "text": 14, "caption": 12, "footer": 12},
+    "default_pt": {"title": 40, "number": 72, "body": 20, "text": 20, "caption": 13, "footer": 13},
+    "line_spacing": {"title": 1.12, "number": 1.12, "body": 1.32, "text": 1.32, "caption": 1.25, "footer": 1.25},
+    "bold": {"title": true, "number": true, "caption": false},
+    "inset_in": {"x": 0.05, "y": 0.03},
+    "line_pitch_em": 1.2,
+    "fit_tolerance": 1.05
+  },
+
+  "geometry": {
+    "overlap_area_sq_in": 0.5,
+    "overlap_min_edge_in": 0.05,
+    "overlap_ratio": 0.25,
+    "stroke_default_pt": 0.75
+  },
+
+  "image": {
+    "min_ppi": 72,
+    "max_crop_loss": 0.72
+  },
+
+  "contrast": {
+    "normal": 4.5,
+    "large": 3.0,
+    "large_pt": 24,
+    "dark_background_luminance": 0.18
+  },
+
+  "chart": {
+    "min_contrast": {"bar": 2.0, "line": 3.0, "area": 2.0, "pie": 2.0, "donut": 2.0, "scatter": 3.0},
+    "deemphasis": {"light": "#AEB3B8", "dark": "#50565E"},
+    "font_pt": {"title": 15, "legend": 11, "axis": 11, "label": 11, "table": 13},
+    "gap_width": 60,
+    "stacked_overlap": 100,
+    "style": {
+      "light": {"title": "#111827", "body": "#374151", "grid": "#E5E7EB", "rule": "#D1D5DB"},
+      "dark": {"title": "#F3F4F6", "body": "#D1D5DB", "grid": "#333A45", "rule": "#4B5563"}
+    }
+  },
+
+  "page_number": {
+    "corner": "bottom_right",
+    "start": 1,
+    "font_pt": 12,
+    "box_in": {"w": 0.72, "h": 0.30},
+    "margin_in": {"x": 0.62, "y": 0.42},
+    "ink": {"light": "#111827", "dark": "#F3F4F6"}
+  },
+
+  "preview": {
+    "dpi": 110,
+    "blank_ink_ratio": 0.002,
+    "contact_sheet_width_px": 1800
+  },
+
+  "render_check": {
+    "_readme": "渲染核对用的容差与下限：span 归属容差、行归属容差、孤字判定所需的最少字数、旋转生效判定。",
+    "span_tol_in": 0.2,
+    "line_tol_in": 0.05,
+    "orphan_min_chars": 8,
+    "rotation_min_deg": 5,
+    "rotation_tol_deg": 20
+  },
+
+  "font_aliases": {
+    "_readme": "声明字族 → 可能的字体文件名（小写、去空格）。核验器用它判断“声明的字体是否真的参与了渲染”。只在能确定映射时写，不要猜。",
+    "微软雅黑": ["microsoftyahei", "msyh"],
+    "宋体": ["simsun"],
+    "黑体": ["simhei"],
+    "等线": ["dengxian"],
+    "思源黑体": ["sourcehansans", "notosanscjk", "notosanssc"],
+    "思源宋体": ["sourcehanserif", "notoserifcjk", "notoserifsc"],
+    "苹方": ["pingfang"]
+  },
+
+  "defaults": {
+    "fonts": {"heading": "微软雅黑", "body": "微软雅黑"},
+    "background": "#FFFFFF",
+    "ink": "#1A1A1A",
+    "ink_on_dark": "#F3F4F6",
+    "palette": ["#2F5597", "#C55A11", "#2E7D5B", "#6A4C93", "#B08505", "#1F9DAA"]
+  }
+}

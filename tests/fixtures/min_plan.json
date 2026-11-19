@@ -1,0 +1,31 @@
+{
+  "deck_id": "fixture", "title": "回归样例",
+  "audience": "内部评审", "goal": "确认定点编辑与渲染核对的回归",
+  "core_claim": "留存才是增长",
+  "brief": {
+    "insight": "观众以为问题在获客，数据显示在留存",
+    "concept": "用一条不断下移的基线，把流失画成位移而不是缺口",
+    "veto": ["不用漏斗图——它暗示一个并不存在的线性过程"],
+    "art": {"light": "侧逆光，中性偏冷", "lens": "平视中景", "material": "哑光纸",
+            "gamut": "炭黑到纸白，一处赭石", "grain": "细颗粒"},
+    "motif": ["左下角固定短基线"]
+  },
+  "pages": [{
+    "id": "p1", "role": "open", "claim": "",
+    "focus": "先看标题，再看副题",
+    "focus_element": "t",
+    "composition_rationale": "标题压在下三分之一，上方留连续暗场，重心靠底部横带稳定",
+    "page_number_tone": "dark",
+    "elements": [
+      {"id": "bg", "type": "shape", "color": "#14181B", "x": 0, "y": 0, "w": 13.333, "h": 7.5, "overlap_allowed": true},
+      {"id": "t", "type": "title", "content": "留存才是增长",
+       "x": 0.9, "y": 4.62, "w": 9.6, "h": 1.28, "font_size": 64, "color": "#F3F0E8", "pad_in": 0},
+      {"id": "sub", "type": "body", "content": "2026 年度复盘",
+       "x": 0.9, "y": 4.0, "w": 6.0, "h": 0.44, "font_size": 20, "color": "#C9C3B6"},
+      {"id": "dup", "type": "body", "content": "留存才是增长",
+       "x": 0.9, "y": 1.0, "w": 6.0, "h": 0.6, "font_size": 24, "color": "#8A8F94"},
+      {"id": "rule", "type": "path", "points": [[0.92, 6.3], [2.4, 6.3]],
+       "stroke": {"color": "#B8834A", "width_pt": 1.25}, "arrow": "end"}
+    ]
+  }]
+}
