@@ -39,20 +39,17 @@ from lxml import etree
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import compile as C  # noqa: E402  诊断类型、字体写入、颜色与几何工具共用一份实现
+import core as C  # noqa: E402  共享契约与诊断类型
+import compile as _comp  # noqa: E402  复用原生字体/颜色写入
 
 qn = C.qn
-P_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
-A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-REL_ID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
-
-EMU = 914400.0
-A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+P_NS = C.qn("p:x")[:-1]
+A_NS = C.qn("a:x")[:-1]
+REL_ID = C.qn("r:id")
+EMU = C.EMU
+A = A_NS
 DGM_REL = "{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds"
-
-
-def inch(value: Optional[int]) -> Optional[float]:
-    return None if value is None else round(value / EMU, 2)
+inch = C.inch
 
 
 def kind_of(shape) -> str:
@@ -656,7 +653,7 @@ def _first(*values: Any) -> Any:
 
 def _write_run(run, piece: Dict[str, Any], op: Dict[str, Any], base: Dict[str, Any]) -> None:
     """run 级 > 操作级 > 原稿该 run 的显式值；三层都没有就不写，让继承继续生效。"""
-    C.set_run_attrs(
+    _comp.set_run_attrs(
         run,
         font=_first(piece.get("font"), op.get("font"), base.get("font")),
         font_ea=_first(piece.get("font_ea"), op.get("font_ea"), base.get("font_ea")),
@@ -687,7 +684,7 @@ def apply_style(shape, op: Dict[str, Any]) -> None:
             para.line_spacing = float(op["line_spacing"])
         for run in para.runs:
             # 显式声明 font 就是要换字族：连东亚字族一起写，否则中文仍留在原字族上。
-            C.set_run_attrs(run, font=op.get("font"), font_ea=op.get("font_ea") or op.get("font"),
+            _comp.set_run_attrs(run, font=op.get("font"), font_ea=op.get("font_ea") or op.get("font"),
                             size=op.get("font_size"), color=op.get("color"),
                             bold=op.get("bold"), spacing=op.get("letter_spacing_pt"))
     if op.get("valign"):

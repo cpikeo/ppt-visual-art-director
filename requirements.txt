@@ -1,8 +1,10 @@
-# 编译与核验必需
+# 编译、校验与定点编辑必需
 python-pptx>=1.0.2,<2
 jsonschema>=4.18,<5
 Pillow>=10,<13
-lxml>=5          # compile.py / verify.py 直接读写 OOXML；python-pptx 也会带上它，这里显式声明
+lxml>=5
 
-# 渲染核验（PDF → 页尺寸、词框、字体的读取与 PNG 导出）；缺失时 verify.py 会跳过渲染核对
+# 渲染核验二选一（配合 LibreOffice 使用）：
+# 方案 A：PyMuPDF（跨平台，推荐）
 pymupdf>=1.24
+# 方案 B：若未安装 PyMuPDF，verify.py 会自动回退到系统 Poppler 工具链（pdftoppm / pdftotext / pdffonts / pdfinfo）

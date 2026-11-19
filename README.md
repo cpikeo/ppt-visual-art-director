@@ -1,34 +1,39 @@
 # ppt-visual-art-director
 
-以视觉艺术总监的判断制作、改稿或评审 PPT。AI 负责设计判断，脚本负责确定性执行与事实核验，人负责最终视觉签收。
+以国际一线视觉艺术总监的判断制作、改稿或评审 PPT。AI 负责设计判断，脚本负责确定性执行与事实核验，真实渲染与人眼复核共同把关，目标环境由人最终签收。
 
-交付原生可编辑的 PPTX（只输出 `.pptx`），并用对象核对与真实渲染给出证据。机器检查不等于好看，预览不等于目标环境通过。
+交付原生可编辑的 `.pptx`，并用对象核对与真实渲染给出可验证证据。机器检查不等于好看，LibreOffice 预览不等于 Microsoft PowerPoint 目标环境通过。
 
-## 结构
+## 目录结构
 
 ```
-SKILL.md                 判断原则、判断顺序、brief、任务路线、执行、验收、交付（AI 读的主文件）
+LICENSE                  MIT 开源许可证
+README.md                安装、命令、验证分级与能力边界说明
+SKILL.md                 判断原则、判断顺序、brief、任务路线、验收与边界（AI 主读文件）
+requirements.txt         Python 依赖声明
 references/
   design.md              概念、艺术指导、叙事、空间、信息设计、排版、色彩、图像、诊断、复核维度
-  build.md               plan 语义、几何、文本与 runs、素材与生成图、图表、命令、诊断码、定点编辑、报告、机器边界
+  build.md               plan 语义、几何、文本与 runs、素材与生成图、图表、命令、诊断码、定点编辑、兼容性清单
 scripts/
+  core.py                共享契约、度量、几何、色彩、文本样式、设计信号与包校验
+  pdf_backend.py         PDF 解析与 PNG 渲染适配器（PyMuPDF 优先，自动回退 Poppler）
   compile.py             plan.json → 原生 PPTX（校验、编译、成品包校验）
   verify.py              plan ↔ PPTX ↔ 真实渲染（对象核对、逐元素文字归属、字体替换检查、状态判定）
   revise.py              既有 PPTX：inspect 只读解析；定点编辑 + 保留核对（富文本、超链接、OOXML 结构）
-  plan.schema.json       plan 的数据契约
+  plan.schema.json       plan 的 JSON Schema 数据契约
   limits.json            技术阈值与默认值的唯一来源
-tests/                   回归用例（仓库开发用，不属于技能包运行所需）
-requirements.txt
+tests/                   工程回归用例（不属于运行时必需，用于开发与 CI 回归）
 ```
 
-## 安装
+## 安装与环境要求
 
-```bash
-python -m venv .venv && . .venv/bin/activate      # Windows：.venv\Scripts\activate
-pip install -r requirements.txt
-```
+- **Python**: 3.9+
+- **Python 依赖**: `pip install -r requirements.txt`（`python-pptx`、`jsonschema`、`Pillow`、`lxml`）
+- **渲染核验环境**: LibreOffice（`soffice`），配合以下任一 PDF 后端：
+  - `pymupdf`（`pip install pymupdf`），或
+  - 系统 Poppler 工具链（`pdftoppm`、`pdftotext`、`pdffonts`、`pdfinfo`）
 
-Python 3.9+。脚本不联网。真实渲染核验需要 LibreOffice 与 PyMuPDF；缺失时 `verify.py` 给出 `PARTIAL`，并说明哪些判断因此没有依据。
+缺少渲染工具时，`verify.py` 不会伪造通过，而是如实降级为 `PARTIAL` 并说明未核验项。
 
 ## 常用命令
 
@@ -40,18 +45,21 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx # 改稿：定点编辑�
 python -m unittest discover -s tests -v               # 回归用例
 ```
 
-## 状态
+## 验证分级与状态诚实度
 
-- `BLOCK`：有硬问题。
-- `PARTIAL`：对象核对通过但渲染没跑；或声明字体被替换，断行只代表替代字体。
-- `READY`：对象一致、渲染完成、声明字体都真实参与渲染。
+- **Tier 1（对象核对）**：校验 PPTX 内部每个对象的几何、文本、run 样式、颜色、图表载荷、表格单元格、图片字节与包结构。
+- **Tier 2（LibreOffice 渲染核对）**：通过 LibreOffice → PDF → PNG 核查页尺寸、越界、页码、空白页、字体替换与逐元素文字归属。
+- **Tier 3（目标 Microsoft PowerPoint 兼容）**：在 Windows / macOS 真实 PowerPoint 中核查字体、渐变、双色调、裁切与溢出。
 
-三档都不表示“设计通过”，`human` 永远是 `NOT REVIEWED`。
+状态三档：`BLOCK`（存在硬错误）、`PARTIAL`（渲染未跑或声明字体被替换）、`READY`（对象一致、LibreOffice 渲染完成且声明字体均参与渲染）。**任何自动状态都不代表“设计通过”或“PowerPoint 实机已验证”**——未在目标 PowerPoint 实际打开即标记为 `NOT VERIFIED`。
 
-## 测试
+## 能力边界
 
-`tests/test_regression.py` 每条负向用例都先人为破坏一个属性，再确认核对真的会响，覆盖：未知键与格式错误被拒、未授权属性或 XML 被改、超链接与富文本丢失、页面结构与关系丢失、隐藏页特性被删、PPTM 与宏被拒、素材 `generated` 与 `generation` 矛盾、生成图作证据、哈希不符、图表第 13 个数据点被改、页序与部件名不一致、重名对象、字体替换不得判 READY、LibreOffice 另存文件的误报。需要 LibreOffice 的渲染用例在缺失时跳过（输出中会显示）。
+- **完整支持**：`16:9` / `4:3` 原生 PPTX、富文本与 runs、矢量形状/渐变/路径/组合、原生图表（柱/条/堆叠/组合/折线/面积/饼/环/散点/表格）、既有稿定点编辑与 OOXML 保留核对。
+- **有限支持**：`duotone`（PowerPoint 生效，LibreOffice 仅去饱和）、无障碍读屏（页标题为普通文本框，非占位符）、曲线/复杂关系（仅直线与折线，编译期锚点）。
+- **外部依赖 / 不支持**：图片生成采用工具无关的简报与提示词工作流并强制登记 SHA-256；新建模式不生成备注、动画、页面切换、双数值轴、桑基、甘特或雷达图，不嵌入字体。
 
-## 未验证的部分
+## 未验证与已知限制
 
-成稿没有在真实 Microsoft PowerPoint 中打开过，只在 LibreOffice 下渲染；沙箱内可用的字体与目标机不同，断行与宽度的结论只对替代字体有效；`duotone` 在 LibreOffice 只体现为去饱和；没有做人工视觉评审，因此本包任何地方都不声称“设计通过”。
+- 在无 Windows / Microsoft PowerPoint 的 Linux 环境下，Tier 3（PowerPoint 实机渲染、Windows 专有字体如微软雅黑的精确折行、原生 `duotone` 着色效果）均标记为 `NOT VERIFIED`。
+- 详见 `references/build.md` 中的「Microsoft PowerPoint 真实环境兼容核对清单」。

@@ -32,7 +32,8 @@ from lxml import etree
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import compile as C  # noqa: E402  plan 模型与阈值共用一个实现；本文件只从成品读取“实际值”
+import core as C  # noqa: E402  共享契约与阈值
+import pdf_backend  # noqa: E402  PyMuPDF / Poppler PDF 渲染适配
 
 EMU = C.EMU
 TEXT_TYPES = C.TEXT_TYPES
@@ -870,10 +871,9 @@ def render(pptx: Path, render_dir: Path, f: C.Report) -> Optional[Path]:
     if soffice is None:
         f.add("INFO", "V-RENDER", "环境", "找不到 LibreOffice；页尺寸、断行、字体替换与溢出均未核验")
         return None
-    try:
-        import pymupdf  # noqa: F401
-    except ImportError:
-        f.add("INFO", "V-RENDER", "环境", "找不到 PyMuPDF（pip install pymupdf）；渲染核对跳过")
+    backend, reason = pdf_backend.detect_backend()
+    if backend is None:
+        f.add("INFO", "V-RENDER", "环境", reason)
         return None
     render_dir.mkdir(parents=True, exist_ok=True)
     for stale in render_dir.glob("*.pdf"):
@@ -984,7 +984,7 @@ def expected_text(el: Dict[str, Any]) -> List[str]:
     if kind != "chart":
         return []
     out: List[str] = []
-    if chart.get("show_title", True) and chart.get("title"):
+    if chart.get("kind") != "table" and chart.get("show_title", True) and chart.get("title"):
         out.append(str(chart["title"]))
     data = chart.get("data") or {}
     out.extend(str(c) for c in data.get("categories") or [])
@@ -1044,7 +1044,7 @@ def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: C.Report)
         pieces = [p for p in expected_text(el) if _norm_key(p)]
         if not pieces:
             continue
-        pool = _norm_key("".join(ln["text"] for ln in owned.get(str(el.get("id")), [])))
+        pool = _norm_key("".join(ln["text"] for ln in sorted(owned.get(str(el.get("id")), []), key=lambda ln: (round(ln["bbox"][1], 2), ln["bbox"][0]))))
         missing = [p for p in pieces if _norm_key(p) not in pool]
         checks += 1
         if not missing:
@@ -1128,13 +1128,12 @@ def _check_render_rotation(page, lines, boxes, pid: str, f: C.Report) -> None:
 
 
 def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path, f: C.Report) -> Dict[str, Any]:
-    import pymupdf
     from PIL import Image
 
-    doc = pymupdf.open(str(pdf))
+    doc = pdf_backend.open_pdf(pdf)
     w_in, h_in = C.canvas(plan)
     dpi = C.LIMITS["preview"]["dpi"]
-    facts: Dict[str, Any] = {"pages": doc.page_count, "dpi": dpi, "pngs": [], "fonts": {}, "text_checks": 0}
+    facts: Dict[str, Any] = {"backend": doc.backend, "pages": doc.page_count, "dpi": dpi, "pngs": [], "fonts": {}, "text_checks": 0}
     if doc.page_count != len(plan["pages"]):
         f.add("HARD", "V-PAGES", "渲染", f"PDF {doc.page_count} 页 ≠ plan {len(plan['pages'])} 页")
 
@@ -1152,8 +1151,8 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
             if el.get("type") in TEXT_TYPES + ("chart",) and "x" in el:
                 boxes[str(el.get("id"))] = C.rot_box(
                     (float(el["x"]), float(el["y"]), float(el["w"]), float(el["h"])), el.get("rotation"))
-        page_w = round(pdf_page.rect.width / 72, 3)
-        page_h = round(pdf_page.rect.height / 72, 3)
+        page_w = pdf_page.width_in
+        page_h = pdf_page.height_in
         if abs(page_w - w_in) > 0.05 or abs(page_h - h_in) > 0.05:
             f.add("HARD", "V-PAGES", pid, f"页面尺寸 {page_w}×{page_h}in ≠ 画布 {w_in}×{h_in}in")
 
@@ -1161,9 +1160,8 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         cfg = C.page_numbers(plan)
         pn = None if pid in cfg["hide"] else C.pn_box(plan, spec_page)
 
-        pix = pdf_page.get_pixmap(dpi=dpi)
         png_path = render_dir / f"p{index + 1:02d}.png"
-        pix.save(str(png_path))
+        pdf_page.save_png(png_path, dpi)
         pngs.append(png_path)
 
         with Image.open(png_path) as img:
@@ -1174,12 +1172,14 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
 
         page_box = (0.0, 0.0, page_w, page_h)
         fonts_here: set = set()
-        lines, spans = _render_text(pdf_page)
+        lines, spans = pdf_page.extract_text()
+        fonts_here = set(pdf_page.fonts_used())
         for span in spans:
             text = span["text"].strip()
             if not text:
                 continue
-            fonts_here.add(font_family_base(span["font"]))
+            if span.get("font"):
+                fonts_here.add(font_family_base(span["font"]))
             sx0, sy0, sx1, sy1 = span["bbox"]
             if sx0 < -0.02 or sy0 < -0.02 or sx1 > page_box[2] + 0.02 or sy1 > page_box[3] + 0.02:
                 f.add("HARD", "V-CLIP", pid, f"文字超出页面：{text[:24]}")
@@ -1209,7 +1209,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
             want = str(cfg["start"] + index)
             box = pn
             hit = False
-            for word in pdf_page.get_text("words"):
+            for word in pdf_page.extract_words():
                 if word[4].strip() == want:
                     cx, cy = (word[0] + word[2]) / 2 / 72, (word[1] + word[3]) / 2 / 72
                     if box["x"] - 0.35 <= cx <= box["x"] + box["w"] + 0.35 and \
@@ -1282,6 +1282,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("plan")
     parser.add_argument("pptx")
     parser.add_argument("--render-dir", default=None, help="写 PDF/PNG/缩略总览的目录")
+    parser.add_argument("--assets", default=None)
     parser.add_argument("--report", default=None)
     args = parser.parse_args(argv)
 
@@ -1309,7 +1310,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     key = pptx.read_bytes()
     sha = hashlib.sha256(key).hexdigest()
     facts: Dict[str, Any] = {"pptx": str(pptx), "sha256": sha, "bytes": len(key), "render": {"done": False}}
-    asset_root = plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent
+    asset_root = Path(args.assets).resolve() if args.assets else (
+        plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent)
     facts["asset_root"] = str(asset_root)
 
     # 两层各自出结论，不合并：合并之后"渲染没跑"会被"对象都对"盖掉。

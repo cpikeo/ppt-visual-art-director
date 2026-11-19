@@ -166,3 +166,14 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 - 图片按 `cover` 裁切，不保证主体不被裁到；`duotone` 只换色相。
 - 编译器与核验器共用同一套 plan 模型与阈值：共用部分有缺陷，两边会一起“一致”。所以对象核对不能替代看图。
 - 没跑过的检查与通过的检查长得一样。新增检查必须反向构造（故意破坏，确认它会响），见 `tests/test_regression.py`。
+
+
+## Microsoft PowerPoint 真实环境兼容核对清单（Tier 3）
+
+在 LibreOffice 渲染通过（`READY` 或 `PARTIAL`）后，交付到目标 Windows / macOS PowerPoint 放映或审阅时，需按本清单实机复核（未实机打开时必须标为 `NOT VERIFIED`）：
+
+1. **字体与断行**：`fonts.heading` / `fonts.body` / `fonts.number` 在目标机是否已安装；无字体时 PowerPoint 会静默替换并改变行宽，需重点看长标题、表格数字列与多行正文末行。
+2. **双色调与蒙版**：`duotone` 在 PowerPoint 中原生生效，而 LibreOffice 仅做去饱和，需实机确认亮暗映射后对比度是否仍满足文字可读。
+3. **渐变与透明度**：`gradient` 的 `from_alpha` / `to_alpha` 与形状 `fill_alpha` 在 Windows PowerPoint 下是否平滑过渡，无硬边色带。
+4. **裁切与出血**：`image` 的 `cover` 裁切与画布边缘出血对象在放映模式（Slide Show）下是否如期裁齐，无意外白边。
+5. **原生图表与直标**：柱/条/折线图表的 `data_labels` 在 PowerPoint 中是否与图例、轴线或相邻柱体碰撞；`highlight_category` 突出色与退隐色层次是否清晰。
