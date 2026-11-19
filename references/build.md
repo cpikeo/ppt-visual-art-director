@@ -103,6 +103,8 @@
 - 饼／环既无直标也无图例即阻断：读者不知道每一块是什么。
 - 散点没有轴名时会给提示——读者不知道哪个轴是什么。
 - `show_title: false` 连图题一起不画：结论已由页面标题承担时，图只留读数。
+- 组合图折线层没开 `combo_line_labels` 会给提示：折线的量只能对着柱的轴目测，要读数就开，要形状就认下这条提示。
+- 环图的直标是逐点节点：墨色与数字格式都写在每个点上，单位不会在渲染里丢掉（核对时看得到 `47%` 而不是 `47`）。
 - 表格不画图题；数字列右对齐，`column_weights` 数量必须等于列数。
 
 ## 页码
@@ -110,17 +112,22 @@
 整稿一个契约，编译器按页序生成，不在页面里手写。默认右下、12pt、从 1 起、纯数字。
 
 - `hide` 列出不显示页码的页；确需隐藏要在交付说明里写理由。
-- 文字与图表不得与页码保留框相交（编译期阻断）——右下要长期放来源或图注时，整稿改 `corner: top_right`，不要逐页切换。
-- 图片或色块压到角区是允许的（页码总在最上层），但要用 `page_number_tone` 声明角区实际明暗，页码墨色随之翻转。承载层压到角区不报。
+- 文字与图表不得与页码保留框相交（编译期阻断，旋转对象按转后的外接框算）——右下要长期放来源或图注时，整稿改 `corner: top_right`，不要逐页切换。
+- 色块压到角区是允许的（页码总在最上层）：编译器会按页码**实际落点**在深墨/浅墨两档里挑能读的那个，所以"底色其实由一张铺满的色块给出"这类页不会写出深底深字。承载层压到角区不报。
+- 图片压到角区无法靠一个色值判读，要自己用 `page_number_tone` 声明角区明暗；不声明就按页面底色算，并在编译期给 `I-PAGE` 提示。
 
 ## 网格与装载估算
 
 ```bash
 python scripts/grid.py --span 1:6 --span 8:5     # 默认 16:9、12 列、边距 0.7/0.6、沟槽 0.25
+python scripts/grid.py --split 5,7               # 按比例切版心（非对称构图的骨架）
+python scripts/grid.py --guides thirds           # 三分线；--guides golden 取黄金位
 python scripts/grid.py --json                    # 含页码保留框，供脚本消费
 ```
 
 先定 2–4 条主对齐轴（左边缘、内容区起点、右栏起点、底部来源线），元素贴轴。跨列要对应内容关系：论断＋证据常见 5＋空档＋6，真正等重的对照才等分。空列是资产——空档应连续并承担分组、停顿或回秤。品牌或媒介另有规范时改参数，别迁就默认值。
+
+**比例先于列。** 等分只是三种起点之一：等分给秩序，三／四分给稳定，黄金位给紧张。`--split 3,5,4` 直接给出按比例切分的栏宽与起点（含沟槽），`--guides` 给出三分或黄金位坐标——先知道线在哪，再决定东西放不放上去。比例要能说出理由，说不出就是"排得挺齐"。
 
 **装载估算**（编译期用同一模型给提示）：每行满宽字数 ≈ `(w − 2×内边距) ÷ (字号 ÷ 72)`，中文一字一 em、西文数字约 0.55 em；需要的高度 ≈ 行数 × 字号 × 1.2 × 行距 ÷ 72。`pad_in: 0` 会放宽每行字数，估不准就以真实渲染为准。
 
@@ -175,9 +182,10 @@ python scripts/grid.py --json                    # 含页码保留框，供脚�
 
 ```bash
 python scripts/compile.py plan.json out.pptx [--assets DIR] [--report compile.json] [--force]
+python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report revise.json] [--force]
 python scripts/verify.py plan.json out.pptx [--render-dir render] [--report verify.json]
 python scripts/inspect_pptx.py 原稿.pptx [--json inspect.json]
-python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--corner top_right] [--json]
+python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--split 5,7] [--guides thirds] [--corner top_right] [--json]
 ```
 
 - **不覆盖已有文件**：`out.pptx` 已存在时编译直接阻断（`E-EXIST`），确认要替换再加 `--force`。先写临时文件再原子替换，失败不留半成品；原稿不会被就地改写。
@@ -185,6 +193,44 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--corner top_rig
 - `--assets` 缺省取 plan 同级的 `assets/`，没有则取 plan 所在目录。
 - `verify.py` 的 `--render-dir` 缺省为 pptx 同级的 `render/<pptx 名>/`，写 PDF、逐页 PNG 与 `contact_sheet.png`；每份稿一个子目录，避免互相覆盖。
 - 退出码：`compile.py` 0 成功（可能有提示）、2 硬错误未写文件、3 运行期失败（另写 `.error.pptx`，不是交付物）；`verify.py` 0 无阻断、1 有阻断、2 输入不可读。
+
+## 定点编辑：改既有稿
+
+重建会丢母版、动画、切换、SmartArt、嵌入对象、备注。只改已有对象时，写 `edit.json` 走 `revise.py`：在原文件上做声明的改动，其余原样，输出新文件，原稿不动。
+
+```json
+{
+  "deck_id": "edit-01",
+  "intent": "第 1 页标题改成论断、压到下半部、把灰块改成整页深底并换图",
+  "ops": [
+    {"op": "text",  "page": 1, "target": "Title 1", "content": "留存才是增长"},
+    {"op": "box",   "page": 1, "target": "Title 1", "y": 4.62, "w": 9.6},
+    {"op": "style", "page": 1, "target": "Title 1", "font_size": 60, "color": "#F3F0E8", "pad_in": 0},
+    {"op": "box",   "page": 1, "target": "Rectangle 1", "x": 0, "y": 0, "w": 13.333, "h": 7.5},
+    {"op": "fill",  "page": 1, "target": "Rectangle 1", "color": "#14181B"},
+    {"op": "order", "page": 1, "target": "Rectangle 1", "to": "back"},
+    {"op": "image", "page": 1, "target": "Picture 1", "image_id": "hero"}
+  ]
+}
+```
+
+| `op` | 参数 | 说明 |
+| --- | --- | --- |
+| `text` | `content`（必需）、`runs` | 只换字时**不动样式**：底样式取原第一个 run |
+| `box` | `x` `y` `w` `h` 任意几个 | 只改给了的边 |
+| `style` | `font` `font_size` `bold` `color` `align` `line_spacing` `letter_spacing_pt` `valign` `pad_in` | 作用于该框全部 run |
+| `fill` | `color`、`alpha` | |
+| `line` | `color` `width_pt` `dash` `hide` | `hide: true` 去描边 |
+| `order` | `to`: `back` / `front` | 层级也是版面 |
+| `image` | `image_id` | 换图，保留框位与裁切 |
+| `chart_data` | `data.categories`、`data.series` | 系列数与系列名必须与原图一致 |
+| `delete` | — | |
+| `background` | `color` | 整页底色 |
+
+- `page` 是 1 起页序；`target` 是对象名（`p2.t` 或 `Title 1`），也可 `target_regex`；重名时用 `target_index`（0 起，z 序）。定位不到或命中多个即阻断，不猜。
+- **保留核对**：改动前后比对页数、母版、版式、主题字体、宏、逐页动画/切换/SmartArt/嵌入对象/备注、以及未被点名对象的类型/几何/旋转/文字/底色。任何未声明的漂移记 `E-PRESERVE`，报告写进 `--report`。
+- **改完再查版面**：`W-COVER` 报"文字落在上层色块上"（按字的落点算，不按空框），`W-BOUND` 报出画布。这两条只防不可读，不判断好看。
+- **边界**：不新增页、不复制页、不改页序；不改系列数（会破坏配色与格式）；不动母版与版式本身；不能加动画或切换。要这些就整稿重建，并先在交付说明里点名会失去什么。
 
 ## 读诊断
 
@@ -204,7 +250,8 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--corner top_rig
 - 页标题是普通文本框，不是标题占位符：PowerPoint 大纲视图与读屏软件识别不到。无障碍有要求时在交付说明里提示。
 - 字体只写字体名，不嵌入字体文件。
 - 图片按 `cover` 裁切，`crop_focus` 只给裁窗中心；不保证主体不被裁到——那是选图与框的事。`duotone` 只换色相，不改明暗结构。
-- 核验器与编译器共用同一套 plan 模型、文本式样解析与阈值。共用部分若有缺陷，两边会一起"一致"而发现不了；所以对象核对不能替代看图。图表系列色、数值与文字均从成品 XML 实际读取，不从 plan 回算。
+- 核验器与编译器共用同一套 plan 模型、文本式样解析与阈值。共用部分若有缺陷，两边会一起"一致"而发现不了；所以对象核对不能替代看图。图表系列色、数值与文字均从成品 XML 实际读取，不从 plan 回算。实例：页码底色曾由 `page.background` 单独判定，而该页的底色实际来自一张铺满的色块——两边同错，深底上写出深墨页码，直到放大渲染才看见。现在两边共同调用 `pn_ink()`，按页码实际落点取墨。
+- **没跑过的检查与通过的检查长得一样**。验证要先反向构造：把某条规则故意破坏，确认它真的会响。饼环直标核对曾因函数里一个提前 `return` 长期没执行，正向测试全绿；用环图反向构造才暴露。改完必须重跑全套，不要只跑刚改的那条。
 
 ## 报告
 

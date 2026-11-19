@@ -43,6 +43,10 @@ Box = Tuple[float, float, float, float]
 # ---------------------------------------------------------------- 诊断
 
 
+class BadOp(Exception):
+    """revise.py 的操作无法执行：定位不到对象、参数不合契约。不猜，直接停。"""
+
+
 @dataclass
 class Issue:
     level: str          # HARD | SOFT | INFO
@@ -539,6 +543,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                 gb = boxes.get(el.get("id"))
                 if gb is None:
                     continue
+                gb = rot_box(gb, el.get("rotation"))
                 ix, iy = _intersection(gb, (box["x"], box["y"], box["w"], box["h"]))
                 if ix <= 0.02 or iy <= 0.02:
                     continue
@@ -748,6 +753,8 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
             rep.hard("E-CHART", loc, "combo_line_series 不能把全部系列都改成折线")
         if stacked:
             rep.soft("W-CHART", loc, "堆叠柱上的折线读不出量级；确认这是有意为之")
+        if not chart.get("combo_line_labels"):
+            rep.soft("W-CHART", loc, "折线层没有直标：折线的量只能对着柱的轴目测；要读数就开 combo_line_labels")
 
     need = len(data.get("categories") or []) if kind in ("pie", "donut") else len(series)
     if len(palette) < need:
@@ -1117,6 +1124,8 @@ def add_text(slide, plan, page, el):
                 bool(piece.get("bold", st["bold"])),
                 float(piece.get("letter_spacing_pt", st["spacing"])),
             )
+    if el.get("rotation"):
+        frame.rotation = float(el["rotation"])
     return frame
 
 
@@ -1614,6 +1623,7 @@ def _pie_labels(plot, chart: Dict[str, Any], style: Dict[str, str], family: str,
 
     if kind != "donut":
         return
+    fmt = _label_format(chart)
     for point in plot.series[0].points:
         try:
             slice_hex = "#" + str(point.format.fill.fore_color.rgb).upper()
@@ -1624,6 +1634,46 @@ def _pie_labels(plot, chart: Dict[str, Any], style: Dict[str, str], family: str,
         dl.font.size = Pt(LIMITS["chart"]["font_pt"]["label"])
         _ensure_family(dl.font, family)
         dl.font.color.rgb = RGBColor.from_string(ink.lstrip("#"))
+        _point_numfmt(point, fmt)  # 必须写在字体之后：dLbl 是惰性生成的
+
+
+_DLBL_ORDER = ("c:idx", "c:delete", "c:layout", "c:tx", "c:numFmt", "c:spPr", "c:txPr",
+               "c:dLblPos", "c:showLegendKey", "c:showVal", "c:showCatName", "c:showSerName",
+               "c:showPercent", "c:showBubbleSize", "c:separator", "c:extLst")
+
+
+def _point_numfmt(point: Any, fmt: str) -> None:
+    """逐点 dLbl 一旦存在就不再继承 plot 级 numFmt，单位会静默丢掉（环图上只剩“47”）。
+
+    python-pptx 没有开放的入口：DataLabel 没有 number_format，而 DataLabel._element
+    指向的是 c:ser 而不是 c:dLbl——直接往那儿写会造出 PowerPoint 报修的顺序错误。
+    所以按 idx 找到真正的 c:dLbl，再按 CT_DLbl 的子元素顺序插 c:numFmt。
+    """
+    from pptx.oxml.ns import qn
+    from lxml import etree
+
+    series = point._ser
+    dlbls = series.find(qn("c:dLbls"))
+    if dlbls is None:
+        return
+    for d in dlbls.findall(qn("c:dLbl")):
+        hit = d.find(qn("c:idx"))
+        if hit is None or hit.get("val") != str(point._idx):
+            continue
+        node = d.find(qn("c:numFmt"))
+        if node is None:
+            node = etree.Element(qn("c:numFmt"))
+            rank = _DLBL_ORDER.index("c:numFmt")
+            pos = len(d)
+            for i, child in enumerate(d):
+                tag = "c:" + etree.QName(child).localname
+                if tag in _DLBL_ORDER and _DLBL_ORDER.index(tag) > rank:
+                    pos = i
+                    break
+            d.insert(pos, node)
+        node.set("formatCode", fmt)
+        node.set("sourceLinked", "0")
+        return
 
 
 def _best_ink(surface: str, style: Dict[str, str], bg: str) -> str:
@@ -1814,6 +1864,60 @@ def add_table(slide, plan, page, el, style, family):
     return shape
 
 
+def rot_box(box: Box, rotation: Any) -> Box:
+    """旋转后的外接框。声明的框是没转过的，页角与遮挡要按真实占位算。"""
+    import math
+
+    if not rotation:
+        return box
+    x, y, w, h = box
+    a = math.radians(abs(float(rotation)) % 180)
+    c, s = math.cos(a), math.sin(a)
+    nw, nh = w * c + h * s, w * s + h * c
+    return (x + w / 2 - nw / 2, y + h / 2 - nh / 2, nw, nh)
+
+
+def pn_surface(plan: Dict[str, Any], page: Dict[str, Any], box: Dict[str, float]) -> str:
+    """页码实际落在什么底色上：取最后绘制、且盖住页码中心的不透明色块或页面底色。
+
+    图片与图表上无法靠一个色值判读，遇到就停在页面底色，由 page_number_tone 声明。
+    """
+    cx, cy = box["x"] + box["w"] / 2, box["y"] + box["h"] / 2
+    boxes = page_geometry(page)
+    surface = page_bg(page)
+    for item in flatten(page):
+        el = item["el"]
+        if el["type"] in TEXT_TYPES or el["type"] in ("image", "chart", "table", "path"):
+            continue
+        color = el.get("color")
+        if not color:
+            continue
+        gb = boxes.get(str(el.get("id")))
+        if gb is None:
+            continue
+        gb = rot_box(gb, el.get("rotation"))
+        if gb[0] <= cx <= gb[0] + gb[2] and gb[1] <= cy <= gb[1] + gb[3]:
+            surface = str(color).upper()
+    return surface
+
+
+def pn_ink(plan: Dict[str, Any], page: Dict[str, Any]) -> str:
+    """页码墨色：声明优先；否则按页码实际落点，在两档墨里选能读的那个。
+
+    只看 page.background 会漏掉"底色其实由一张铺满的色块给出"这种页——
+    深蓝底上写深墨页码，等于没写。
+    """
+    box = pn_box(plan, page)
+    tone = page.get("page_number_tone")
+    if tone:
+        return LIMITS["page_number"]["ink"][tone]
+    surface = pn_surface(plan, page, box)
+    base = "dark" if is_dark(page_bg(page)) else "light"
+    ink = LIMITS["page_number"]["ink"][base]
+    other = LIMITS["page_number"]["ink"]["light" if base == "dark" else "dark"]
+    return ink if contrast_ratio(ink, surface) >= contrast_ratio(other, surface) else other
+
+
 def add_page_number(slide, plan, page, index):
     from pptx.util import Inches
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
@@ -1822,8 +1926,7 @@ def add_page_number(slide, plan, page, index):
     if page["id"] in cfg["hide"]:
         return None
     box = pn_box(plan, page)
-    tone = page.get("page_number_tone") or ("dark" if is_dark(page_bg(page)) else "light")
-    ink = LIMITS["page_number"]["ink"][tone]
+    ink = pn_ink(plan, page)
     shape = slide.shapes.add_textbox(Inches(box["x"]), Inches(box["y"]), Inches(box["w"]), Inches(box["h"]))
     shape.name = "_page_number"
     tf = shape.text_frame

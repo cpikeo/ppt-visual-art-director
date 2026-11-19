@@ -165,14 +165,24 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
     elif kind == "group":
         item["children"] = [safe_describe(child, depth + 1) for child in shape.shapes]
     if kind in ("shape", "placeholder", "text"):
+        from pptx.enum.dml import MSO_FILL_TYPE
+
         try:
             fill = shape.fill
-            if fill.type is not None and str(fill.type).startswith("MSO_FILL_TYPE.SOLID"):
+            ftype = fill.type
+            if ftype == MSO_FILL_TYPE.SOLID:
                 item["fill"] = f"#{fill.fore_color.rgb}"
-            elif fill.type is not None and "GRADIENT" in str(fill.type):
+            elif ftype == MSO_FILL_TYPE.GRADIENT:
                 item["fill"] = "gradient"
+            elif ftype == MSO_FILL_TYPE.BACKGROUND:
+                item["fill"] = "none"
             if shape.line.width:
                 item["stroke_pt"] = round(shape.line.width.pt, 2)
+            try:
+                if shape.line.color and shape.line.color.type is not None:
+                    item["stroke"] = f"#{shape.line.color.rgb}"
+            except (AttributeError, ValueError):
+                pass
         except Exception:
             pass
     return item
@@ -184,6 +194,21 @@ def safe_describe(shape, depth: int = 0) -> Dict[str, Any]:
     except Exception as exc:
         return {"name": getattr(shape, "name", "?"), "kind": "unparsed",
                 "error": f"{type(exc).__name__}: {exc}"}
+
+
+def slide_background(slide) -> Optional[str]:
+    """页面底色：改稿时要知道"原来是什么场"，评审时要判断深浅场有没有成套换。"""
+    from pptx.enum.dml import MSO_FILL_TYPE
+
+    try:
+        fill = slide.background.fill
+        if fill.type == MSO_FILL_TYPE.SOLID:
+            return f"#{fill.fore_color.rgb}"
+        if fill.type is None or fill.type == MSO_FILL_TYPE.BACKGROUND:
+            return None
+        return str(fill.type).split(" ")[0].lower()
+    except Exception:
+        return None
 
 
 def slide_flags(slide, objects: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -268,6 +293,7 @@ def has_macros(pptx: Path, prs) -> bool:
 def inspect(pptx: Path) -> Dict[str, Any]:
     from pptx import Presentation
 
+    pptx = Path(pptx)
     prs = Presentation(str(pptx))
     out: Dict[str, Any] = {
         "file": str(pptx),
@@ -294,6 +320,7 @@ def inspect(pptx: Path) -> Dict[str, Any]:
         out["pages"].append({
             "index": index + 1,
             "layout": slide.slide_layout.name,
+            "background": slide_background(slide),
             "flags": flags,
             "notes": notes[:400],
             "objects": objects,
@@ -375,6 +402,8 @@ def to_markdown(data: Dict[str, Any]) -> str:
         if flags:
             head += f" · {','.join(flags)}"
         lines.append(head)
+        if page.get("background"):
+            lines.append(f"底色 {page['background']}")
         if page["notes"]:
             lines.append(f"备注：{page['notes'][:100]}")
         for obj in page["objects"]:

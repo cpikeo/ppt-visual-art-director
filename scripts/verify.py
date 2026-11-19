@@ -209,6 +209,10 @@ def verify_text(plan, page, el, shape, name, f: C.Report) -> None:
         if got_pad is None or abs(got_pad / EMU - want_pad) > 0.005:
             f.add("SOFT", "V-STYLE", name, f"{side} 内边距 {None if got_pad is None else round(got_pad / EMU, 3)}in ≠ {want_pad}in")
 
+    want_rot = float(el.get("rotation") or 0)
+    if _angle_diff(float(shape.rotation or 0), want_rot) > 0.2:
+        f.add("HARD", "V-STYLE", name, f"文字旋转 {shape.rotation}° ≠ {want_rot}°：竖排边注或斜置标签会被静默拉平")
+
     anchor = shape.text_frame.vertical_anchor
     want_anchor = {"top": "TOP", "middle": "MIDDLE", "bottom": "BOTTOM"}[st["valign"]]
     if anchor is not None and want_anchor not in str(anchor):
@@ -655,6 +659,11 @@ def verify_chart_style(plan, el, shape, name, f: C.Report) -> None:
             f.add("SOFT", "V-CHART", name, f"柱宽间隙 {got} ≠ plan {spec['gap_width']}")
 
     if kind in ("pie", "donut"):
+        want_legend = bool(spec.get("legend", False))
+        if bool(obj.has_legend) != want_legend:
+            f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
+        if spec.get("data_labels"):
+            _verify_pie_labels(spec, obj, kind, name, f)
         return
     axis_on = spec.get("axis_labels", True)
     try:
@@ -695,43 +704,51 @@ def verify_chart_style(plan, el, shape, name, f: C.Report) -> None:
                   f"折线层直标 {_labels_on(line)} ≠ plan {want_line_labels}（柱的直标不自动扩展到折线）")
 
     series_spec = spec["data"].get("series") or []
-    if kind in ("pie", "donut"):
-        want_legend = bool(spec.get("legend", False))
-    else:
-        want_legend = bool(spec.get("legend", len(series_spec) > 1))
+    want_legend = bool(spec.get("legend", len(series_spec) > 1))
     if bool(obj.has_legend) != want_legend:
         f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
 
-    if kind in ("pie", "donut") and spec.get("data_labels"):
-        dlbls = obj.plots[0]._element.find(qn("c:dLbls"))
-        pos = dlbls.find(qn("c:dLblPos")) if dlbls is not None else None
-        want_pos = "outEnd" if kind == "pie" else "inEnd"
-        if pos is None or pos.get("val") != want_pos:
-            f.add("SOFT", "V-CHART", name, f"直标位置 {None if pos is None else pos.get('val')} ≠ {want_pos}")
-        cat = dlbls.find(qn("c:showCatName")) if dlbls is not None else None
-        want_cat = kind == "pie"
-        got_cat = cat is not None and cat.get("val") in ("1", "true")
-        if got_cat != want_cat:
+
+def _verify_pie_labels(spec, obj, kind: str, name: str, f: C.Report) -> None:
+    """饼环直标：位置、类别名开关、环带内墨色、以及数字格式有没有把单位丢掉。"""
+    from pptx.oxml.ns import qn
+
+    dlbls = obj.plots[0]._element.find(qn("c:dLbls"))
+    pos = dlbls.find(qn("c:dLblPos")) if dlbls is not None else None
+    want_pos = "outEnd" if kind == "pie" else "inEnd"
+    if pos is None or pos.get("val") != want_pos:
+        f.add("SOFT", "V-CHART", name, f"直标位置 {None if pos is None else pos.get('val')} ≠ {want_pos}")
+    cat = dlbls.find(qn("c:showCatName")) if dlbls is not None else None
+    want_cat = kind == "pie"
+    got_cat = cat is not None and cat.get("val") in ("1", "true")
+    if got_cat != want_cat:
+        f.add("SOFT", "V-CHART", name,
+              f"类别名开关 {got_cat} ≠ {want_cat}"
+              f"（{'饼图外置直标要带类别名' if want_cat else '环带内的直标只留数值，类别交给图例'}）")
+    if kind != "donut":
+        return
+    unit = str(spec.get("unit") or "").strip()
+    for lbl in [d for d in obj._chartSpace.iter(qn("c:dLbl")) if d.find(qn("c:idx")) is not None]:
+        idx = int(lbl.find(qn("c:idx")).get("val"))
+        fill = lbl.find(".//" + qn("a:solidFill") + "/" + qn("a:srgbClr"))
+        if fill is None:
+            f.add("SOFT", "V-CHART", name, f"环图第 {idx + 1} 个标签没有指定墨色，可能压在环带上读不出")
+            continue
+        surface = None
+        for dpt in obj._chartSpace.iter(qn("c:dPt")):
+            hit = dpt.find(qn("c:idx"))
+            if hit is not None and int(hit.get("val")) == idx:
+                s = dpt.find(".//" + qn("a:srgbClr"))
+                surface = "#" + s.get("val") if s is not None else None
+        if surface and C.contrast_ratio("#" + fill.get("val"), surface) < 2.5:
             f.add("SOFT", "V-CHART", name,
-                  f"类别名开关 {got_cat} ≠ {want_cat}"
-                  f"（{'饼图外置直标要带类别名' if want_cat else '环带内的直标只留数值，类别交给图例'}）")
-        if kind == "donut":
-            labels = [d for d in obj._chartSpace.iter(qn("c:dLbl")) if d.find(qn("c:idx")) is not None]
-            for lbl in labels:
-                idx = int(lbl.find(qn("c:idx")).get("val"))
-                fill = lbl.find(".//" + qn("a:solidFill") + "/" + qn("a:srgbClr"))
-                if fill is None:
-                    f.add("SOFT", "V-CHART", name, f"环图第 {idx + 1} 个标签没有指定墨色，可能压在环带上读不出")
-                    continue
-                slices = [d for d in obj._chartSpace.iter(qn("c:dPt"))]
-                surface = None
-                for dpt in slices:
-                    if dpt.find(qn("c:idx")) is not None and int(dpt.find(qn("c:idx")).get("val")) == idx:
-                        s = dpt.find(".//" + qn("a:srgbClr"))
-                        surface = "#" + s.get("val") if s is not None else None
-                if surface and C.contrast_ratio("#" + fill.get("val"), surface) < 2.5:
-                    f.add("SOFT", "V-CHART", name,
-                          f"环图第 {idx + 1} 个标签墨色对环带仅 {C.contrast_ratio('#' + fill.get('val'), surface):.2f}:1")
+                  f"环图第 {idx + 1} 个标签墨色对环带仅 {C.contrast_ratio('#' + fill.get('val'), surface):.2f}:1")
+        fmt = lbl.find(qn("c:numFmt"))
+        code = "" if fmt is None else (fmt.get("formatCode") or "")
+        if unit and unit not in code:
+            # 逐点 dLbl 一旦存在就不再继承 plot 级 numFmt，单位会静默消失：环图上只剩“47”。
+            f.add("HARD", "V-CHART", name,
+                  f"环图第 {idx + 1} 个标签的数字格式「{code or '未设置'}」丢掉了单位「{unit}」")
 
 
 def verify_page_number(plan, page, book, index, pid, f: C.Report) -> None:
@@ -756,13 +773,12 @@ def verify_page_number(plan, page, book, index, pid, f: C.Report) -> None:
         f.add("SOFT", "V-PAGENO", pid, f"页码字号 {runs[0].font.size.pt}pt 与整稿约定不符")
     if runs:
         from pptx.enum.dml import MSO_COLOR_TYPE
-        tone = page.get("page_number_tone") or ("dark" if C.is_dark(C.page_bg(page)) else "light")
-        want_ink = C.LIMITS["page_number"]["ink"][tone]
+        want_ink = C.pn_ink(plan, page)
         color = runs[0].font.color
         if color is None or color.type != MSO_COLOR_TYPE.RGB:
             f.add("HARD", "V-PAGENO", pid, "页码墨色不是显式 RGB")
         elif f"#{color.rgb}".upper() != want_ink:
-            f.add("HARD", "V-PAGENO", pid, f"页码墨色 #{color.rgb} ≠ {tone} 场约定的 {want_ink}")
+            f.add("HARD", "V-PAGENO", pid, f"页码墨色 #{color.rgb} ≠ 按实际落点算的 {want_ink}")
 
 
 # ---------------------------------------------------------------- 渲染核对

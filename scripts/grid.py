@@ -41,6 +41,37 @@ def span(grid: Dict[str, Any], start: int, count: int) -> Dict[str, float]:
             "w": round(last["x"] + last["w"] - first["x"], 3)}
 
 
+def split(grid: Dict[str, Any], ratios: List[float], gutter: float) -> List[Dict[str, Any]]:
+    """按比例切分版心。非对称构图的骨架是比例（3:5、2:1、1:1.618），不是等分列。"""
+    if any(r <= 0 for r in ratios) or len(ratios) < 2:
+        raise SystemExit(f"--split 需要两个以上正数比例，例如 3,5；收到 {ratios}")
+    safe = grid["safe_in"]
+    free = safe["w"] - gutter * (len(ratios) - 1)
+    if free <= 0:
+        raise SystemExit("比例切分后版心为负：减少栏数或沟槽")
+    total = sum(ratios)
+    out, x = [], safe["x"]
+    for i, ratio in enumerate(ratios):
+        width = free * ratio / total
+        out.append({"index": i + 1, "ratio": ratio, "x": round(x, 3), "w": round(width, 3)})
+        x += width + gutter
+    return out
+
+
+def guides(width: float, height: float, kind: str) -> Dict[str, List[float]]:
+    """比例参考线。三分与黄金位是空间的骨架：先知道线在哪，再决定东西放不放上去。"""
+    golden = 0.618
+    if kind == "thirds":
+        xs = [width / 3, width * 2 / 3]
+        ys = [height / 3, height * 2 / 3]
+    elif kind == "golden":
+        xs = [width * (1 - golden), width * golden]
+        ys = [height * (1 - golden), height * golden]
+    else:
+        raise SystemExit(f"--guides 取 thirds 或 golden，收到 {kind!r}")
+    return {"x": [round(v, 3) for v in xs], "y": [round(v, 3) for v in ys]}
+
+
 def page_number(width: float, height: float, corner: str) -> Dict[str, Any]:
     cfg = LIMITS["page_number"]
     bw, bh = cfg["box_in"]["w"], cfg["box_in"]["h"]
@@ -73,6 +104,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--gutter", type=float, default=0.25)
     parser.add_argument("--corner", choices=["bottom_right", "top_right"], default=LIMITS["page_number"]["corner"])
     parser.add_argument("--span", action="append", default=[], metavar="起始列:列数")
+    parser.add_argument("--split", default=None, metavar="3,5", help="按比例切分版心，非对称构图的骨架")
+    parser.add_argument("--guides", choices=["thirds", "golden"], default=None, help="三分线或黄金位坐标")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
@@ -81,6 +114,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     grid["aspect"] = args.aspect
     grid["page_number"] = page_number(width, height, args.corner)
     grid["spans"] = [span(grid, *parse(s)) for s in args.span]
+    if args.split:
+        try:
+            ratios = [float(v) for v in args.split.replace(":", ",").split(",") if v.strip()]
+        except ValueError:
+            raise SystemExit(f"--split 应为 3,5 这样的比例序列，收到 {args.split!r}")
+        grid["split"] = split(grid, ratios, args.gutter)
+    if args.guides:
+        grid["guides"] = guides(width, height, args.guides)
 
     if args.json:
         print(json.dumps(grid, ensure_ascii=False, indent=2))
@@ -96,6 +137,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\n跨列")
         for item in grid["spans"]:
             print(f"  {item['cols']:>8}  x={item['x']}  w={item['w']}")
+    if grid.get("split"):
+        ratios = ":".join(f"{c['ratio']:g}" for c in grid["split"])
+        print(f"\n按比例切分（{ratios}，沟槽 {args.gutter}）")
+        for item in grid["split"]:
+            print(f"  第{item['index']}栏  x={item['x']:<7} w={item['w']}")
+    if grid.get("guides"):
+        g = grid["guides"]
+        label = "三分线" if args.guides == "thirds" else "黄金位"
+        print(f"\n{label}：" + "｜".join([f"x={v}" for v in g["x"]] + [f"y={v}" for v in g["y"]]))
     box = grid["page_number"]["box_in"]
     print(f"\n页码保留框（{args.corner}）x={box['x']} y={box['y']} w={box['w']} h={box['h']}")
     print("任何元素都不得与页码框相交；右下要放来源时整稿改用 --corner top_right。")
