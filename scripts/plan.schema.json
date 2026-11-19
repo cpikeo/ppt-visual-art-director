@@ -146,7 +146,7 @@
         "stroke": {"$ref": "#/$defs/stroke"},
         "gradient": {"$ref": "#/$defs/gradient"},
         "fill_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
-        "rotation": {"type": "number", "minimum": -180, "maximum": 180, "description": "顺时针角度；group 上表示整组旋转。"},
+        "rotation": {"type": "number", "minimum": -360, "maximum": 360, "description": "顺时针角度；group 上表示整组旋转。任意角度按 360 取模写入（-90 与 270 等价）。"},
         "overlap_allowed": {"type": "boolean", "description": "仅承载元素（背景图、蒙版、色块、闭合路径）可声明：允许后面声明的元素压在它上面。"},
 
         "points": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/point"}, "description": "path 的顶点，英寸；可用元素锚点代替坐标。"},

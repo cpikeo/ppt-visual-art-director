@@ -151,21 +151,46 @@ def _em_width(ch: str) -> float:
     return 0.6
 
 
-def fit_lines(text: str, pt: float, box_w: float, pad_x: Optional[float] = None) -> int:
-    inset = LIMITS["type"]["inset_in"]["x"] if pad_x is None else pad_x
+def _para_width_em(seg: str, pieces: List[Dict[str, Any]], pt: float) -> float:
+    """一段的宽度，以"基准字号 1 em"计。逐 run 按各自字号折算：
+    标题里放一个 96pt 数字加 24pt 单位，按整段取同一个字号估高会差出好几行。"""
+    if not pieces:
+        return sum(_em_width(c) for c in seg)
+    total = 0.0
+    for piece in pieces:
+        size = float(piece.get("font_size") or pt)
+        total += sum(_em_width(c) for c in str(piece.get("text", ""))) * size / pt
+    return total
+
+
+def fit_lines(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> List[int]:
+    """逐段行数。按每段最大字号与逐 run 折算的宽度算，不用元素级字号一刀切。"""
+    inset = st["pad"][0]
     usable = max(box_w - 2 * inset, 0.05)
-    cap = usable / (pt / 72.0)
-    total = 0
-    for seg in text.split("\n"):
-        width = sum(_em_width(c) for c in seg)
-        total += max(1, math.ceil(width / cap - 1e-9))
-    return max(1, total)
+    paras = paragraph_runs(el)
+    if paras is None:
+        paras = [(str(el.get("content", "")), [])]
+    out: List[int] = []
+    for seg, pieces in paras:
+        base = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
+        cap = usable / (base / 72.0)
+        out.append(max(1, math.ceil(_para_width_em(seg, pieces, base) / cap - 1e-9)))
+    return out or [1]
 
 
-def fit_height_in(text: str, pt: float, box_w: float, line_spacing: float,
-                  pad_x: Optional[float] = None) -> float:
+def fit_height_in(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> float:
+    """框高需求（英寸）。行数、字号、行距、段后距都算进去；估不准时以真实渲染为准。"""
     pitch = LIMITS["type"]["line_pitch_em"]
-    return fit_lines(text, pt, box_w, pad_x) * pt * pitch * line_spacing / 72.0
+    paras = paragraph_runs(el) or [(str(el.get("content", "")), [])]
+    lines = fit_lines(el, st, box_w)
+    total = 0.0
+    for (seg, pieces), count in zip(paras, lines):
+        base = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
+        total += count * base * pitch * st["line_spacing"] / 72.0
+    space_after = float(el.get("space_after_pt") or 0)
+    if space_after:
+        total += space_after * max(len(paras) - 1, 1) / 72.0
+    return total
 
 
 def hex_rgb(hex_color: str) -> Tuple[int, int, int]:
@@ -463,6 +488,9 @@ def paragraph_runs(el: Dict[str, Any]) -> Optional[List[Tuple[str, List[Dict[str
 
 CARRIERS = ("shape", "divider", "path")
 
+# a:blip 里排在 duotone 之后的元素（ECMA-376 CT_Blip 的 EG_ColorTransform 次序）。
+_BLIP_AFTER_DUOTONE = ("fillOverlay", "grayscale", "hsl", "lum", "tint")
+
 
 def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
     rep = Report()
@@ -523,11 +551,14 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                     rep.hard("E-GEOM", eloc, "缺少坐标，或 group 没有可用的子元素")
                 continue
             x, y, ew, eh = box
+            rbox = rot_box(box, el.get("rotation"))
             if x + ew <= 0 or y + eh <= 0 or x >= w or y >= h:
                 rep.hard("E-GEOM", eloc, f"元素完全在画布外：x={x} y={y} w={ew} h={eh}")
-            elif kind in TEXT_TYPES + ("chart",) and (x < -tol or y < -tol or x + ew > w + tol or y + eh > h + tol):
+            elif kind in TEXT_TYPES + ("chart",) and (rbox[0] < -tol or rbox[1] < -tol
+                                                      or rbox[0] + rbox[2] > w + tol
+                                                      or rbox[1] + rbox[3] > h + tol):
                 what = "文本框" if kind in TEXT_TYPES else "图表"
-                rep.soft("W-GEOM", eloc, f"{what}伸出画布（{w}×{h}），边缘内容会被裁掉")
+                rep.soft("W-GEOM", eloc, f"{what}（含旋转）伸出画布（{w}×{h}），边缘内容会被裁掉")
 
             if el.get("overlap_allowed") and kind not in CARRIERS and not (
                     kind == "image" and el.get("image_role") in ("background", "texture")):
@@ -585,12 +616,14 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
             lbox = boxes.get(lower["el"].get("id"))
             if lbox is None or lower["el"].get("overlap_allowed") or lower["el"]["type"] == "path":
                 continue
+            lbox = rot_box(lbox, lower["el"].get("rotation"))
             for upper in items[i + 1:]:
                 if upper["group"] is not None and upper["group"] == lower["group"]:
                     continue
                 ubox = boxes.get(upper["el"].get("id"))
                 if ubox is None:
                     continue
+                ubox = rot_box(ubox, upper["el"].get("rotation"))
                 if substantive_overlap(lbox, ubox):
                     rep.hard("E-OVERLAP", f"{pid}/{upper['el'].get('id')}",
                              f"与先声明的 {lower['el'].get('id')} 实质重叠；若后者是承载层（背景图/蒙版/色块），"
@@ -605,7 +638,7 @@ def check_text(plan, page, el, loc, ew, eh, rep: Report) -> None:
     if paragraph_runs(el) is None:
         rep.hard("E-REF", loc, "runs 拼接与 content 不一致（含 \\n）；分段要对得上")
     st = text_style(plan, page, el)
-    need = fit_height_in(str(content), st["size"], ew, st["line_spacing"], st["pad"][0])
+    need = fit_height_in(el, st, ew)
     if need > eh * LIMITS["type"]["fit_tolerance"]:
         rep.soft("W-FIT", loc, f"按 {st['size']:g}pt 估算需 {need:.2f}in，框高 {eh:.2f}in：先编辑文案，再加宽/拆页")
     minimum = LIMITS["type"]["min_pt"].get(el["type"], 0)
@@ -795,6 +828,10 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
         rep.hard("E-CHART", loc, "value_axis 的 max 不大于 min")
     if axis.get("min") is not None and axis["min"] > 0 and not axis.get("note"):
         rep.hard("E-CHART", loc, "数值轴不从零起时必须用 value_axis.note 写明起点，否则读者会把截轴当全量")
+    if axis.get("note"):
+        rep.soft("W-NOTE", loc,
+                 f"value_axis.note「{str(axis['note'])[:40]}」不会画进图里：截轴起点要读者看得见，"
+                 f"必须落到页面的 caption、轴名或图题上")
 
 
 CAPS_LABEL = re.compile(r"^[A-Z][A-Z0-9 &/·.\-–—]{2,23}$")
@@ -1029,7 +1066,11 @@ def _set_corner_radius(shape, radius_in: float, box: Box) -> None:
 
 
 def _apply_duotone(pic, duo: Dict[str, Any]) -> None:
-    """把图压进整稿色域：暗部→一个色、亮部→另一个色。原生可编辑，随时可摘。"""
+    """把图压进整稿色域：暗部→一个色、亮部→另一个色。原生可编辑，随时可摘。
+
+    a:blip 的子元素有固定次序（alphaModFix 在 duotone 之前）。插错位置时 PowerPoint
+    多数情况仍能开，但严格校验器会报错——顺序由这里统一负责。
+    """
     blip = pic._element.blipFill.find(qn("a:blip"))
     if blip is None:
         return
@@ -1039,7 +1080,12 @@ def _apply_duotone(pic, duo: Dict[str, Any]) -> None:
     for key in ("dark", "light"):
         clr = etree.SubElement(node, qn("a:srgbClr"))
         clr.set("val", str(duo[key]).lstrip("#").upper())
-    blip.insert(0, node)
+    for i, child in enumerate(blip):
+        local = etree.QName(child).localname
+        if local in _BLIP_AFTER_DUOTONE:
+            blip.insert(i, node)
+            return
+    blip.append(node)
 
 
 def _apply_stroke(shape, stroke: Optional[Dict[str, Any]], arrow: str = "none") -> None:
@@ -1097,13 +1143,15 @@ def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = N
         font_obj.bold = bool(bold)
     if font is not None:
         font_obj.name = font
-    if font is not None or font_ea is not None:
+    # 东亚/复杂文字字族只在**明确给出**时写。原稿 run 上本来没有 a:ea 时凭空补一个，
+    # 等于把继承改成了显式值：样式其实没变，保留核对却会误报，目标机行为也变了。
+    if font_ea is not None:
         rPr = run._r.get_or_add_rPr()
         for tag in ("a:ea", "a:cs"):
             node = rPr.find(qn(tag))
             if node is None:
                 node = etree.SubElement(rPr, qn(tag))
-            node.set("typeface", font_ea or font)
+            node.set("typeface", font_ea)
     if color is not None:
         font_obj.color.rgb = RGBColor.from_string(color.lstrip("#").upper())
     if spacing is not None:
@@ -1115,7 +1163,8 @@ def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = N
 
 
 def _set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0) -> None:
-    set_run_attrs(run, font=family, size=size, color=color, bold=bold, spacing=spacing)
+    """新建对象一律连东亚字族一起写：只写 latin 时中文会被渲染器换掉，整稿字族就断了。"""
+    set_run_attrs(run, font=family, font_ea=family, size=size, color=color, bold=bold, spacing=spacing)
 
 
 # ---------------------------------------------------------------- 建对象
@@ -1236,12 +1285,13 @@ def add_image(slide, page, el, asset_root: Path):
     l, r, t, b = _crop_geometry(src_w, src_h, box[2], box[3], el.get("crop_focus"))
     if any(v > 0 for v in (l, r, t, b)):
         pic.crop_left, pic.crop_right, pic.crop_top, pic.crop_bottom = l, r, t, b
-    if el.get("duotone"):
-        _apply_duotone(pic, el["duotone"])
+    # 先写透明度，再写双色调：a:blip 的子元素有固定次序，反过来插会得到非法顺序。
     if el.get("alpha") and float(el["alpha"]) < 1:
         blip = pic._element.blipFill.find(qn("a:blip"))
         if blip is not None:
             etree.SubElement(blip, qn("a:alphaModFix")).set("amt", str(int(round(float(el["alpha"]) * 100000))))
+    if el.get("duotone"):
+        _apply_duotone(pic, el["duotone"])
     return pic
 
 
@@ -1659,11 +1709,6 @@ _DLBL_ORDER = ("c:idx", "c:delete", "c:layout", "c:tx", "c:numFmt", "c:spPr", "c
                "c:showPercent", "c:showBubbleSize", "c:separator", "c:extLst")
 
 
-_DLBL_ORDER = ("c:idx", "c:delete", "c:layout", "c:tx", "c:numFmt", "c:spPr", "c:txPr",
-               "c:dLblPos", "c:showLegendKey", "c:showVal", "c:showCatName", "c:showSerName",
-               "c:showPercent", "c:showBubbleSize", "c:separator", "c:extLst")
-
-
 def _insert_ordered(parent, node, order=_DLBL_ORDER) -> None:
     """按 schema 顺序插入。dLbl 与 dLbls 共用一张顺序表：两者共有的子元素相对次序一致，
     写错了 PowerPoint 会拒绝打开——这是直标相关代码唯一的顺序来源。"""
@@ -1855,14 +1900,18 @@ def add_table(slide, plan, page, el, style, family):
 
 
 def rot_box(box: Box, rotation: Any) -> Box:
-    """旋转后的外接框。声明的框是没转过的，页角与遮挡要按真实占位算。"""
+    """旋转后的外接框。声明的框是没转过的，页角与遮挡要按真实占位算。
+
+    外接框的两边是 |w·cos| + |h·sin| 与 |w·sin| + |h·cos|：只用 cos/sin 会把
+    100°–170° 这一类角度算成负数宽度。
+    """
     import math
 
     if not rotation:
         return box
     x, y, w, h = box
-    a = math.radians(abs(float(rotation)) % 180)
-    c, s = math.cos(a), math.sin(a)
+    a = math.radians(float(rotation) % 180)
+    c, s = abs(math.cos(a)), abs(math.sin(a))
     nw, nh = w * c + h * s, w * s + h * c
     return (x + w / 2 - nw / 2, y + h / 2 - nh / 2, nw, nh)
 
@@ -1877,7 +1926,7 @@ def pn_surface(plan: Dict[str, Any], page: Dict[str, Any], box: Dict[str, float]
     surface = page_bg(page)
     for item in flatten(page):
         el = item["el"]
-        if el["type"] in TEXT_TYPES or el["type"] in ("image", "chart", "table", "path"):
+        if el["type"] in TEXT_TYPES or el["type"] in ("image", "chart", "path"):
             continue
         color = el.get("color")
         if not color:
@@ -1955,8 +2004,9 @@ def build_element(slide, plan, page, el, boxes, asset_root: Path):
     else:
         raise ValueError(f"未知元素类型：{kind}")
     # 旋转在出口处统一应用：只有一处写 rot，也就不可能出现"某种类型忘了转"。
+    # 角度先归一到 [0,360)：270 与 -90 是同一件事，不该因为写法不同被 schema 拦下。
     if obj is not None and el.get("rotation"):
-        obj.rotation = float(el["rotation"])
+        obj.rotation = float(el["rotation"]) % 360
     return obj
 
 

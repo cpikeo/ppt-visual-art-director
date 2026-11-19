@@ -64,6 +64,15 @@
     "contact_sheet_width_px": 1800
   },
 
+  "render_check": {
+    "_readme": "渲染核对用的容差与下限：span 归属容差、行归属容差、孤字判定所需的最少字数、旋转生效判定。",
+    "span_tol_in": 0.2,
+    "line_tol_in": 0.05,
+    "orphan_min_chars": 8,
+    "rotation_min_deg": 5,
+    "rotation_tol_deg": 20
+  },
+
   "font_aliases": {
     "_readme": "声明字族 → 可能的字体文件名（小写、去空格）。核验器用它判断“声明的字体是否真的参与了渲染”。只在能确定映射时写，不要猜。",
     "微软雅黑": ["microsoftyahei", "msyh"],

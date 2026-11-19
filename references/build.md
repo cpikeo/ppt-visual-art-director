@@ -16,9 +16,10 @@
 - `runs` 也可以含 `\n`——它同时承担分段：拼接（连 `\n` 一起）必须与 `content` 逐字相等。两行标题第二行换色，就在一个文本框里写 `runs`，不要拆成两个框。
 - 不要把一个句子拆成两个文本框来混排——基线会漂移，核验也会按两个对象算几何。
 - 文本自带内边距（左右 0.05 in、上下 0.03 in），装载估算与真实排版都按它算；框高要留出这段余量。要让文字**贴住**网格轴线（大标题、数字、页边注释），写 `pad_in: 0`，否则光学边缘会偏 0.05 in。
+- 装载估算按**逐段最大字号**与逐 run 折算的宽度算，也把 `space_after_pt` 计入：标题里放一个 96pt 数字加 24pt 单位，按元素级字号一刀切会少算好几行。估不准就以真实渲染为准。
 - 没写样式时取默认：`title` 40pt 粗／`number` 72pt 粗／`body` `text` 20pt／`caption` `footer` 13pt；行距 1.12（标题、数字）、1.32（正文）、1.25（注释）。深底页（亮度 < 0.18）未声明 `color` 时自动用浅墨。默认值只保证"不会出错"，不保证好看。
 - 字族三分：`fonts.heading`（标题）、`fonts.body`（正文、图表、页码）、`fonts.number`（关键数字，缺省同 heading）。数字单独换等宽或窄体，是编辑设计里最省力的一处区分。
-- `rotation` 对文字、形状、图片、图表、路径、组合一律生效（编译期写在对象自己的 `xfrm rot` 上），核验按 0.2° 回读。
+- `rotation` 对文字、形状、图片、图表、路径、组合一律生效（编译期写在对象自己的 `xfrm rot` 上），核验按 0.2° 回读。角度写多少都行，落盘时按 360 取模：`-90` 与 `270` 是同一个竖排。
 
 ## 叠放与重叠
 
@@ -107,6 +108,7 @@
 - `show_title: false` 连图题一起不画：结论已由页面标题承担时，图只留读数。
 - 组合图折线层没开 `combo_line_labels` 会给提示：要读数就开，要形状就认下这条提示。
 - 环图的直标是逐点节点：墨色与数字格式都写在每个点上，单位不会在渲染里丢掉（核对时看得到 `47%` 而不是 `47`）。
+- `value_axis.note` 是写给**编译器与读者之外**的说明字段：它不会画进图里。截轴起点必须落到页面的 caption、轴名或图题上，否则 `W-NOTE` 会提示这一点——读者看不到的限定等于没有。
 - 表格不画图题；数字列右对齐，`column_weights` 数量必须等于列数。
 
 ## 页码
@@ -194,7 +196,8 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--split 5,7] [--
 - **源文件保护**：输出、报告都不得指向 plan 自己，报告也不得指向成品；输出必须是 `.pptx`。违反即阻断，不写文件。
 - `--assets` 缺省取 plan 同级的 `assets/`，没有则取 plan 所在目录。
 - `verify.py` 的 `--render-dir` 缺省为 pptx 同级的 `render/<pptx 名>/`，写 PDF、逐页 PNG 与 `contact_sheet.png`。
-- 退出码：`compile.py` 0 成功（可能有提示）、2 硬错误未写文件、3 运行期失败（另写 `.error.pptx`，不是交付物）；`verify.py` 0 无阻断、1 有阻断、2 输入不可读。
+- 退出码：`compile.py` 0 成功（可能有提示）、2 硬错误未写文件、3 运行期失败（另写 `.error.pptx`，不是交付物）；`verify.py` 0 无阻断、1 有阻断、2 输入不可读；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
+- **核验状态只有三档，别把它们读成质量**：`BLOCK` 有硬问题；`PARTIAL` 对象核对通过但**渲染没跑**（缺 LibreOffice / PyMuPDF，或转换失败）——此时视觉判断没有任何机器依据；`READY` 对象与渲染都一致。三档都不表示"设计通过"。报告里 `layers` 分别记 `objects` / `render` / `human`，`human` 永远是 `NOT REVIEWED`，只有看图的人能改它。
 
 ## 定点编辑：改既有稿
 
@@ -218,20 +221,25 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--split 5,7] [--
 
 | `op` | 参数 | 说明 |
 | --- | --- | --- |
-| `text` | `content`（必需）、`runs` | 只换字时**不动样式**；原稿没声明的字级继续继承，不会被写成 18pt |
+| `text` | `content`（必需）、`runs`、可选的 `align` `line_spacing` `space_after_pt` | 只换字时**不动样式**：新段落 i 的样式基线取原稿第 i 段；该段新 run 数与原 run 数一致时按位置继承（深色主句＋灰色括注不会被压平）。原稿没声明的字级继续继承，不会被写成 18pt |
 | `box` | `x` `y` `w` `h` 任意几个 | 只改给了的边 |
-| `style` | `font` `font_size` `bold` `color` `align` `line_spacing` `letter_spacing_pt` `valign` `pad_in` | **只改给了的属性**，其余保持原样 |
+| `style` | `font` `font_ea` `font_size` `bold` `color` `align` `line_spacing` `letter_spacing_pt` `valign` `pad_in` | **只改给了的属性**，其余保持原样。声明 `font` 会连东亚字族一起写 |
 | `fill` | `color`、`alpha` | |
 | `line` | `color` `width_pt` `dash` `hide` | `hide: true` 去描边 |
 | `order` | `to`: `back` / `front` | 层级也是版面 |
 | `image` | `image_id` | 换图，保留框位与裁切 |
-| `chart_data` | `data.categories`、`data.series` | 系列数与系列名必须与原图一致 |
-| `delete` | — | |
+| `chart_data` | `data.categories`、`data.series` | 系列数与系列名必须与原图一致；组合图（多图层）拒绝，会打乱两层格式 |
+| `delete` | — | 点名了才允许消失 |
 | `background` | `color` | 整页底色 |
 
 - `page` 是 1 起页序；`target` 是对象名（`p2.t` 或 `Title 1`），也可 `target_regex`；重名时用 `target_index`（0 起，z 序）。定位不到或命中多个即阻断，不猜。**搜索不到组内对象**——先取消组合。
-- **保留核对**：改动前后比对页数、母版、版式、主题字体、宏、逐页动画/切换/SmartArt/嵌入对象/备注，以及未被点名的对象的类型/几何/旋转/文字。任何未声明的漂移记 `E-PRESERVE`。
-- **只改文字的闸**：`text` 操作若没有声明任何样式字段，第一段的字级必须一字不差；字号、字重、字族、墨色变了就 `E-PRESERVE` 阻断。真实稿的标题多继承自版式，把继承值写死会把它从 44pt 压成 18pt，而页数、母版、几何全都对得上——不查这一项是发现不了的。
+- **保留核对四层，缺一层就等于没查**：
+  1. **结构**：页数、母版数、版式数、主题字体、宏。
+  2. **逐页特性**：动画、切换、SmartArt、嵌入对象、音视频、备注是否还在。
+  3. **对象**：未被点名的对象，类型、几何、旋转、**全文**、填色描边、裁切、图片字节、图表载荷、表格逐格逐项一致；**出现原稿没有的对象、或对象消失而没有 `delete` 点名，都算漂移**。
+  4. **包内部件**：除被点名页的 `slideN.xml` 与它的 rels、`[Content_Types].xml`、新增的 `media/`、`embeddings/`，以及**声明过要改的那张图自己的 `chartN.xml` 与它的内嵌工作簿**，其余部件必须逐字节一致。母版主题、备注页被意外重写时，前三层全都对得上。放行是按部件名的：改了 A 图，B 图的部件被重写照样报。
+- **只改文字的闸**：`text` 操作若没有声明任何样式字段（`font` `font_ea` `font_size` `bold` `color` `letter_spacing_pt` `align` `line_spacing` `pad_in` `valign`），改动后每一段用到的样式必须是它**原来就有**的。允许"少用"（那句灰色括注被删掉了），不允许"新出现"（14pt 副题被压成 32pt，或继承的 44pt 被写死成 18pt）——这类漂移页数、母版、几何全都对得上，只比文字字段是发现不了的。签名含段落级的对齐与行距：顺手改掉对齐是同一类漂移。同一对象上另有 `style` 操作、并显式声明了某个字段的，那个字段不参与判定（否则"先换字、再改字号"会被自己的闸拦住）。原段是混排、新内容 run 数又不同，会记 `W-RUNS` 说明"已统一为该段首个 run 的样式"：这是披露，不是通过。
+- **核对不通过就不落交付路径**：先写临时件，核对通过才原子替换到 `out`；不通过时 `out` 一个字节都不动，证据另存 `<out 名>.preserve-failed.pptx`（不是交付物）。
 - **改完再查版面**：`W-COVER` 报"文字落在上层色块上"（按字的落点算，不按空框），`W-BOUND` 报出画布。这两条只防不可读，不判断好看。
 - **边界**：不新增页、不复制页、不改页序；不改系列数（会破坏配色与格式）；不动母版与版式本身；不能加动画或切换。要这些就整稿重建，并先在交付说明里点名会失去什么。
 
@@ -255,6 +263,7 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--split 5,7] [--
 - 图片按 `cover` 裁切，`crop_focus` 只给裁窗中心；不保证主体不被裁到——那是选图与框的事。`duotone` 只换色相，不改明暗结构。
 - 核验器与编译器共用同一套 plan 模型与阈值。共用部分若有缺陷，两边会一起"一致"而发现不了；所以对象核对不能替代看图。图表系列色、数值与文字均从成品 XML 实际读取，不从 plan 回算。
 - **没跑过的检查与通过的检查长得一样**。验证要先反向构造：把某条规则故意破坏，确认它真的会响。饼环直标核对曾因一个提前 `return` 长期没执行，正向测试全绿；文字旋转、图片旋转、路径顶点也都曾"声明了但没生效"。改完必须重跑全套，不要只跑刚改的那条。
+- 这条边界还会以更隐蔽的方式出现：**两个数放在不同单位里比较，检查就永远不响**。渲染行的坐标曾是 PDF 点（1/72 in）而 plan 是英寸，于是"孤字""行首标点"两条长期沉默；孤字判定又曾依赖 PDF 的 block 结构，而 LibreOffice 把每行写成独立 block，同样永不触发。两条都是全绿用例，靠反向构造才暴露。凡是"把 plan 和渲染结果对起来"的判断，先确认两边单位与分组口径一致，再相信它的绿灯。
 
 ## 报告
 
@@ -263,7 +272,9 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--split 5,7] [--
 | 脚本 | 顶层字段 |
 | --- | --- |
 | `compile.py` | `blocked`、`output`、`pages`、`sha256`、`issues` |
-| `verify.py` | `status`、`pptx`、`sha256`、`bytes`、`slides`、`expected_slides`、`render`（PDF、PNG、**实际用到的字族**）、`asset_root`、`images`、`findings` |
-| `revise.py` | `status`、`source`、`output`、`sha256`、`ops`（每条是否 `style_free`）、`preservation`（`deleted`／`touched`）、`issues` |
+| `verify.py` | `status`、`pptx`、`sha256`、`bytes`、`slides`、`expected_slides`、`render`（PDF、PNG、**实际用到的字族**、`text_checks`）、`structure`（slide／原生图表／内嵌工作簿／media 数）、`layers`（`objects`／`render`／`human`）、`asset_root`、`images`、`findings` |
+| `revise.py` | `status`、`source`、`output`、`sha256`、`ops`（每条是否 `style_free`、声明过哪些样式）、`preservation`（`deleted`／`touched`／`parts`＝`parts`·`changed`·`lost`·`added`·`moved`／`rejected`）、`issues` |
+
+两个细节别读错：`verify.py` 的 `layers` 是本次判断的依据分层，`render` 为 `"SKIP"` 时 `status` 只能是 `PARTIAL`；`revise.py` 的保留核对不通过时 `output` 字段仍指向你请求的路径，但那个文件**没有被写入**，`sha256` 为 `null`，证据在 `preservation.rejected`。`preservation.parts.moved` 是"声明过、因此允许被重写"的部件——改数会重写那张图自己的 `chartN.xml` 与内嵌工作簿，它们出现在这里是对的；`changed` 才是越界。
 
 `sha256` 用来区分"这份文件是不是我验的那一份"，不是复现凭据：同一份 plan 编译出的对象与几何一致，但图表内嵌的工作簿带时间戳，字节不会完全相同。

@@ -184,6 +184,9 @@ def _angle_diff(a: float, b: float) -> float:
 def verify_text(plan, page, el, shape, name, f: C.Report) -> None:
     from pptx.enum.dml import MSO_COLOR_TYPE
 
+    if not getattr(shape, "has_text_frame", False):
+        f.add("HARD", "V-OBJ", name, "该对象没有文本框（plan 声明为文字）")
+        return
     actual = shape.text_frame.text
     if actual != el["content"]:
         if _norm_ws(actual) == _norm_ws(el["content"]):
@@ -695,7 +698,8 @@ def verify_chart_style(plan, el, shape, name, f: C.Report) -> None:
         if bool(obj.value_axis.visible) != bool(axis_on):
             f.add("SOFT", "V-CHART", name, f"数值轴显示 {bool(obj.value_axis.visible)} ≠ plan {bool(axis_on)}")
     except (AttributeError, ValueError):
-        pass
+        # 读不到就说读不到：静默 pass 会让"没查"和"查过没事"长得一模一样。
+        f.add("INFO", "I-AXIS", name, "读不到该类图表的数值轴显示状态，轴开关未核对")
 
     cfg = spec.get("value_axis") or {}
     va = obj.value_axis
@@ -713,7 +717,8 @@ def verify_chart_style(plan, el, shape, name, f: C.Report) -> None:
         try:
             got = axis.axis_title.text_frame.text if axis.has_title else ""
         except (AttributeError, ValueError):
-            got = ""
+            f.add("INFO", "I-AXIS", name, f"读不到 {key} 轴名，声明了「{titles[key]}」但未核对")
+            continue
         if got != str(titles[key]):
             f.add("HARD", "V-CHART", name, f"{key} 轴名「{got}」≠「{titles[key]}」")
 
@@ -808,6 +813,39 @@ def verify_page_number(plan, page, book, index, pid, f: C.Report) -> None:
             f.add("HARD", "V-PAGENO", pid, f"页码墨色 #{color.rgb} ≠ 按实际落点算的 {want_ink}")
 
 
+def verify_structure(plan: Dict[str, Any], pptx: Path, facts: Dict[str, Any], f: C.Report) -> Dict[str, Any]:
+    """文件结构：图表有对应的原生图表部件与内嵌工作簿，图片有对应的 media 部件。
+
+    这一层查的是"文件里到底有什么"，对象核对查的是"python-pptx 读出来对不对"。
+    一个图表被写成图片、内嵌工作簿丢失导致无法编辑数据，都只有在这一层才看得见。
+    """
+    import zipfile
+
+    with zipfile.ZipFile(pptx) as zf:
+        names = zf.namelist()
+    charts = sum(1 for p in plan["pages"] for el in C.all_elements(p)
+                 if el.get("type") == "chart" and (el.get("chart") or {}).get("kind") != "table")
+    chart_parts = [n for n in names if n.startswith("ppt/charts/chart") and n.endswith(".xml")]
+    books = [n for n in names if n.startswith("ppt/embeddings/")]
+    media = [n for n in names if n.startswith("ppt/media/")]
+    slides = [n for n in names if n.startswith("ppt/slides/slide") and n.endswith(".xml")]
+    distinct_images = len(set((facts.get("images") or {}).values()))
+
+    if len(slides) != len(plan["pages"]):
+        f.add("HARD", "V-PARTS", "结构", f"slide 部件 {len(slides)} 个 ≠ 页数 {len(plan['pages'])}")
+    if len(chart_parts) != charts:
+        f.add("HARD", "V-PARTS", "结构",
+              f"原生图表部件 {len(chart_parts)} 个 ≠ 声明的图表 {charts} 个（图表可能被写成图片）")
+    if len(books) < len(chart_parts):
+        f.add("HARD", "V-PARTS", "结构",
+              f"内嵌工作簿 {len(books)} 个 < 图表 {len(chart_parts)} 个（数据不可编辑）")
+    if distinct_images and len(media) < distinct_images:
+        f.add("HARD", "V-PARTS", "结构",
+              f"media 部件 {len(media)} 个 < 不同的图片字节 {distinct_images} 份（有图片没进文件）")
+    return {"slides": len(slides), "charts": len(chart_parts), "embeddings": len(books),
+            "media": len(media), "distinct_images": distinct_images}
+
+
 # ---------------------------------------------------------------- 渲染核对
 
 
@@ -857,10 +895,18 @@ def render(pptx: Path, render_dir: Path, f: C.Report) -> Optional[Path]:
 
 
 def _declared_families(plan, page) -> set:
+    """这一页**声明过**的全部字族：元素级、run 级、图表、页码。
+
+    只收元素级会漏掉"某个 run 单独换了字族"——那样的字在目标机上缺失时，
+    渲染核对不会报，因为声明集合里根本没有它。
+    """
     families = set()
     for el in C.all_elements(page):
         if el.get("type") in TEXT_TYPES:
             families.add(C.text_style(plan, page, el)["family"])
+            for run in el.get("runs") or []:
+                if run.get("font"):
+                    families.add(str(run["font"]))
         elif el.get("type") == "chart":
             families.add(el.get("font") or (plan.get("fonts") or {}).get("body") or C.LIMITS["defaults"]["fonts"]["body"])
     if page["id"] not in C.page_numbers(plan)["hide"]:
@@ -880,6 +926,174 @@ def _overlap_area(a, b) -> float:
     return ix * iy
 
 
+def _norm_key(text: str) -> str:
+    """比对用的归一化：去掉全部空白（含全角空格与不换行空格）。
+
+    字族被替换时断行位置会变，但字不会多也不会少——比字，不比空。
+    """
+    return "".join(str(text).split())
+
+
+def _render_text(pdf_page) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """一次遍历取出渲染里的行与 span。
+
+    行用于文字完整性与排印判断，span 用于越界与字族判断；分两次 get_text 只是
+    把同一份 PDF 解析两遍。坐标一律换算成英寸：调用方比的是 plan 的英寸框，
+    混着点与英寸比会永远"不在框内"，检查也就永远不会响。
+    """
+    lines: List[Dict[str, Any]] = []
+    spans: List[Dict[str, Any]] = []
+    for block in pdf_page.get_text("dict")["blocks"]:
+        blines = block.get("lines", [])
+        for i, line in enumerate(blines):
+            text = "".join(span.get("text", "") for span in line.get("spans", []))
+            direction = tuple(line.get("dir", (1.0, 0.0)))
+            x0, y0, x1, y1 = line["bbox"]
+            if text.strip():
+                lines.append({"text": text, "dir": direction,
+                              "bbox": (x0 / 72, y0 / 72, x1 / 72, y1 / 72),
+                              "last": i == len(blines) - 1, "n_lines": len(blines)})
+            for span in line.get("spans", []):
+                sx0, sy0, sx1, sy1 = span.get("bbox") or line["bbox"]
+                spans.append({"text": span.get("text", ""), "font": span.get("font", ""),
+                              "bbox": (sx0 / 72, sy0 / 72, sx1 / 72, sy1 / 72)})
+    return lines, spans
+
+
+def _render_lines(pdf_page) -> List[Dict[str, Any]]:
+    return _render_text(pdf_page)[0]
+
+
+def _inside(box: Tuple[float, float, float, float], bbox, tol: float) -> bool:
+    cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    return (box[0] - tol <= cx <= box[0] + box[2] + tol
+            and box[1] - tol <= cy <= box[1] + box[3] + tol)
+
+
+def expected_text(el: Dict[str, Any]) -> List[str]:
+    """成品上应该读到的字，按"块"返回。
+
+    文字元素是整段：段内换行由渲染决定，去掉空白后仍是同一串字。
+    图表与表格必须逐块比（图题、每个类别、每个单元格）：它们的阅读顺序由渲染器
+    决定，拼成一整串再去比对，字都在也会因为顺序不同而判成缺失。
+    """
+    kind = el.get("type")
+    if kind in TEXT_TYPES:
+        return [str(el.get("content") or "")]
+    chart = el.get("chart") or {}
+    if kind != "chart":
+        return []
+    out: List[str] = []
+    if chart.get("show_title", True) and chart.get("title"):
+        out.append(str(chart["title"]))
+    data = chart.get("data") or {}
+    out.extend(str(c) for c in data.get("categories") or [])
+    out.extend(str(v) for v in data.get("headers") or [])
+    for row in data.get("rows") or []:
+        out.extend(str(v) for v in row)
+    for series in data.get("series") or []:
+        if chart.get("legend") or len(data.get("series") or []) > 1:
+            out.append(str(series.get("name") or ""))
+    return [piece for piece in out if _norm_key(piece)]
+
+
+def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: C.Report) -> int:
+    """预期文字 vs 渲染文字，逐块核对。
+
+    只查"框有没有超出"是不够的：字体缺失吞字、渲染器省略长文本、上层色块盖住文字，
+    都能让框看起来正好、字却没了。这里比的是字，不是框。
+    """
+    checks = 0
+    for el in C.all_elements(page):
+        pieces = [p for p in expected_text(el) if _norm_key(p)]
+        if not pieces:
+            continue
+        box = boxes.get(str(el.get("id")))
+        local = ""
+        if box is not None:
+            tol = C.LIMITS["render_check"]["span_tol_in"]
+            local = _norm_key("".join(ln["text"] for ln in lines if _inside(box, ln["bbox"], tol)))
+        pool = local + page_key
+        missing = [p for p in pieces if _norm_key(p) not in pool]
+        checks += 1
+        if not missing:
+            continue
+        where = f"{pid}/{el.get('id')}"
+        detail = "、".join(f"「{p[:12]}」" for p in missing[:3])
+        if el.get("type") in TEXT_TYPES:
+            f.add("HARD", "V-TEXT-RENDER", where,
+                  f"渲染里读不到声明的文字：{detail}（共缺 {len(missing)}/{len(pieces)} 块）。"
+                  f"查字体是否存在、是否被上层遮住；不要靠缩字号掩盖")
+        else:
+            f.add("SOFT", "V-TEXT-RENDER", where,
+                  f"图表/表格里读不到声明的文字：{detail}（共缺 {len(missing)}/{len(pieces)} 块）")
+    return checks
+
+
+def _check_typography(page, lines, boxes, pid: str, f: C.Report) -> None:
+    """渲染实测的排印缺陷：行首收尾标点、行尾起始标点、末行孤字。
+
+    这三条只有断行之后才能判断——计划里是整段文字，断点由字族、字距与框宽共同决定。
+    全部记 SOFT：孤字也可能是刻意的短行，由人确认。
+
+    孤字按**元素**归组判断，不按 PDF 的 block 判断：LibreOffice 常把同一文本框的
+    每一行写成独立 block，按 block 取"最后一行"永远只有一行，检查会永远沉默。
+    """
+    lead_bad = "，。、；：？！）〕」』】》"
+    tail_bad = "（〔「『【《"
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for line in lines:
+        text = line["text"].strip()
+        if not text:
+            continue
+        tol = C.LIMITS["render_check"]["line_tol_in"]
+        host = next((name for name, box in boxes.items() if _inside(box, line["bbox"], tol)), None)
+        where = f"{pid}/{host}" if host else pid
+        if text[0] in lead_bad:
+            f.add("SOFT", "V-PUNCT", where, f"行首是收尾标点「{text[:8]}」：断点要往前挪一个字")
+        if text[-1] in tail_bad:
+            f.add("SOFT", "V-PUNCT", where, f"行尾是起始标点「{text[-8:]}」：断点落在括号前了")
+        if host is not None:
+            groups.setdefault(host, []).append(line)
+
+    for host, rows in groups.items():
+        horizontal = [ln for ln in rows if ln["dir"][0] > 0.9]
+        if len(horizontal) < 2:
+            continue
+        horizontal.sort(key=lambda ln: (round(ln["bbox"][1], 1), ln["bbox"][0]))
+        last = horizontal[-1]["text"].strip()
+        total = _norm_key("".join(ln["text"] for ln in horizontal))
+        min_chars = C.LIMITS["render_check"]["orphan_min_chars"]
+        if len(last) == 1 and ord(last) >= 0x2E80 and len(total) >= min_chars:
+            f.add("SOFT", "V-ORPHAN", f"{pid}/{host}",
+                  f"末行只剩「{last}」一个字：改文案或改框宽，不要用空格推")
+
+
+def _check_render_rotation(page, lines, boxes, pid: str, f: C.Report) -> None:
+    """旋转是否真的进了渲染：XML 里写了 rot、画面上字却没转向，是常见的半失效。"""
+    import math
+
+    for el in C.all_elements(page):
+        if el.get("type") not in TEXT_TYPES:
+            continue
+        rot = float(el.get("rotation") or 0) % 360
+        if min(rot, 360 - rot) < C.LIMITS["render_check"]["rotation_min_deg"]:
+            continue
+        box = boxes.get(str(el.get("id")))
+        if box is None:
+            continue
+        here = [ln for ln in lines if _inside(box, ln["bbox"], 0.25)]
+        if not here:
+            continue
+        want = (math.cos(math.radians(rot)), math.sin(math.radians(rot)))
+        got = max((ln["dir"] for ln in here), key=lambda d: abs(d[0]) + abs(d[1]))
+        diff = math.degrees(math.acos(max(-1.0, min(1.0, want[0] * got[0] + want[1] * got[1]))))
+        if diff > C.LIMITS["render_check"]["rotation_tol_deg"]:
+            f.add("SOFT", "V-ROT", f"{pid}/{el.get('id')}",
+                  f"声明旋转 {rot:.0f}°，渲染字向 {round(got[0], 2), round(got[1], 2)}（差 {diff:.0f}°）："
+                  f"可能只转了框，没有转字")
+
+
 def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path, f: C.Report) -> Dict[str, Any]:
     import pymupdf
     from PIL import Image
@@ -887,7 +1101,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
     doc = pymupdf.open(str(pdf))
     w_in, h_in = C.canvas(plan)
     dpi = C.LIMITS["preview"]["dpi"]
-    facts: Dict[str, Any] = {"pages": doc.page_count, "dpi": dpi, "pngs": [], "fonts": {}}
+    facts: Dict[str, Any] = {"pages": doc.page_count, "dpi": dpi, "pngs": [], "fonts": {}, "text_checks": 0}
     if doc.page_count != len(plan["pages"]):
         f.add("HARD", "V-PAGES", "渲染", f"PDF {doc.page_count} 页 ≠ plan {len(plan['pages'])} 页")
 
@@ -898,8 +1112,13 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
     for index, pdf_page in enumerate(doc):
         spec_page = plan["pages"][index] if index < len(plan["pages"]) else {"id": f"p{index + 1}", "elements": []}
         pid = spec_page["id"]
-        boxes = [(el.get("id"), float(el["x"]), float(el["y"]), float(el["w"]), float(el["h"]))
-                 for el in C.all_elements(spec_page) if el.get("type") in TEXT_TYPES + ("chart",) and "x" in el]
+        # 声明框按旋转后的外接框算：文字转 -90° 之后，字的落点本来就不在原框里。
+        # 用原框做归属会把它判成"不在任何元素范围内"——那是量错了，不是设计错了。
+        boxes: Dict[str, Tuple[float, float, float, float]] = {}
+        for el in C.all_elements(spec_page):
+            if el.get("type") in TEXT_TYPES + ("chart",) and "x" in el:
+                boxes[str(el.get("id"))] = C.rot_box(
+                    (float(el["x"]), float(el["y"]), float(el["w"]), float(el["h"])), el.get("rotation"))
         page_w = round(pdf_page.rect.width / 72, 3)
         page_h = round(pdf_page.rect.height / 72, 3)
         if abs(page_w - w_in) > 0.05 or abs(page_h - h_in) > 0.05:
@@ -922,34 +1141,36 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
 
         page_box = (0.0, 0.0, page_w, page_h)
         fonts_here: set = set()
-        for block in pdf_page.get_text("dict")["blocks"]:
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span["text"].strip()
-                    if not text:
-                        continue
-                    fonts_here.add(font_family_base(span["font"]))
-                    x0, y0, x1, y1 = span["bbox"]
-                    sx0, sy0, sx1, sy1 = x0 / 72, y0 / 72, x1 / 72, y1 / 72
-                    if sx0 < -0.02 or sy0 < -0.02 or sx1 > page_box[2] + 0.02 or sy1 > page_box[3] + 0.02:
-                        f.add("HARD", "V-CLIP", pid, f"文字超出页面：{text[:24]}")
-                        continue
-                    tol = max(0.06, 0.15 * (sy1 - sy0))
-                    if any(sx0 >= bx - tol and sy0 >= by - tol and sx1 <= bx + bw + tol and sy1 <= by + bh + tol
-                           for _, bx, by, bw, bh in boxes):
-                        continue
-                    if pn is not None and pn["x"] - 0.05 <= sx0 and sx1 <= pn["x"] + pn["w"] + 0.05 \
-                            and pn["y"] - 0.05 <= sy0 and sy1 <= pn["y"] + pn["h"] + 0.05:
-                        continue  # 页码由 V-PAGENO 单独查；按区域放过，不按"是不是数字"放过
-                    host = max(boxes, key=lambda b: _overlap_area((sx0, sy0, sx1 - sx0, sy1 - sy0),
-                                                                  (b[1], b[2], b[3], b[4])), default=None)
-                    if host is not None and _overlap_area((sx0, sy0, sx1 - sx0, sy1 - sy0),
-                                                          (host[1], host[2], host[3], host[4])) > 0:
-                        f.add("SOFT", "V-OVERFLOW", pid,
-                              f"「{text[:20]}」超出了 {host[0]} 的声明框（框太小或字体被替换）；"
-                              f"按真实渲染放大框或改文案，不要压字号")
-                    else:
-                        f.add("SOFT", "V-OVERFLOW", pid, f"「{text[:20]}」不在任何声明元素的范围里")
+        lines, spans = _render_text(pdf_page)
+        for span in spans:
+            text = span["text"].strip()
+            if not text:
+                continue
+            fonts_here.add(font_family_base(span["font"]))
+            sx0, sy0, sx1, sy1 = span["bbox"]
+            if sx0 < -0.02 or sy0 < -0.02 or sx1 > page_box[2] + 0.02 or sy1 > page_box[3] + 0.02:
+                f.add("HARD", "V-CLIP", pid, f"文字超出页面：{text[:24]}")
+                continue
+            tol = max(0.06, 0.15 * (sy1 - sy0))
+            if any(sx0 >= bx - tol and sy0 >= by - tol and sx1 <= bx + bw + tol and sy1 <= by + bh + tol
+                   for bx, by, bw, bh in boxes.values()):
+                continue
+            if pn is not None and pn["x"] - 0.05 <= sx0 and sx1 <= pn["x"] + pn["w"] + 0.05 \
+                    and pn["y"] - 0.05 <= sy0 and sy1 <= pn["y"] + pn["h"] + 0.05:
+                continue  # 页码由 V-PAGENO 单独查；按区域放过，不按"是不是数字"放过
+            host = max(boxes.items(), key=lambda kv: _overlap_area(
+                (sx0, sy0, sx1 - sx0, sy1 - sy0), kv[1]), default=None)
+            if host is not None and _overlap_area((sx0, sy0, sx1 - sx0, sy1 - sy0), host[1]) > 0:
+                f.add("SOFT", "V-OVERFLOW", pid,
+                      f"「{text[:20]}」超出了 {host[0]} 的声明框（框太小或字体被替换）；"
+                      f"按真实渲染放大框或改文案，不要压字号")
+            else:
+                f.add("SOFT", "V-OVERFLOW", pid, f"「{text[:20]}」不在任何声明元素的范围里")
+
+        page_key = _norm_key("".join(ln["text"] for ln in lines))
+        facts["text_checks"] += _check_render_text(spec_page, lines, boxes, page_key, pid, f)
+        _check_typography(spec_page, lines, boxes, pid, f)
+        _check_render_rotation(spec_page, lines, boxes, pid, f)
 
         if pn is not None:
             want = str(cfg["start"] + index)
@@ -1049,22 +1270,43 @@ def main(argv: Optional[List[str]] = None) -> int:
     facts: Dict[str, Any] = {"pptx": str(pptx), "sha256": sha, "bytes": len(key), "render": {"done": False}}
     asset_root = plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent
     facts["asset_root"] = str(asset_root)
-    facts.update(verify_objects(plan, pptx, asset_root, f))
+
+    # 两层各自出结论，不合并：合并之后"渲染没跑"会被"对象都对"盖掉。
+    obj_rep = C.Report()
+    facts.update(verify_objects(plan, pptx, asset_root, obj_rep))
     for issue in C.design_signals(plan).items:
-        f.items.append(issue)
+        obj_rep.items.append(issue)
+    facts["structure"] = verify_structure(plan, pptx, facts, obj_rep)
 
     # 每份 pptx 一个子目录：同一目录里核验两份稿时，PNG 与缩略总览不会互相覆盖。
     render_dir = Path(args.render_dir).resolve() if args.render_dir else pptx.parent / "render" / pptx.stem
-    pdf = render(pptx, render_dir, f)
+    render_rep = C.Report()
+    pdf = render(pptx, render_dir, render_rep)
     if pdf is not None:
         facts["render"] = {"done": True, "pdf": str(pdf)}
-        facts["render"].update(verify_render(plan, pptx, pdf, render_dir, f))
+        facts["render"].update(verify_render(plan, pptx, pdf, render_dir, render_rep))
+    f.extend(obj_rep)
+    f.extend(render_rep)
 
     for issue in f.items:
         print(issue)
 
-    status = "BLOCK" if f.blocked else "READY"
-    print(f"\n对象与渲染核验：{status}   硬问题 {f.count('HARD')}｜设计提示 {f.count('SOFT')}｜说明 {f.count('INFO')}")
+    # READY 的含义是"对象与渲染都核验通过"，不是"设计通过"：渲染缺失时只能是 PARTIAL。
+    objects = "FAIL" if obj_rep.blocked else "PASS"
+    render_state = "SKIP" if pdf is None else ("FAIL" if render_rep.blocked else "PASS")
+    if f.blocked:
+        status = "BLOCK"
+    elif render_state == "PASS":
+        status = "READY"
+    else:
+        status = "PARTIAL"
+    facts["layers"] = {"objects": objects, "render": render_state, "human": "NOT REVIEWED"}
+    print(f"\n对象核对：{objects}（硬 {obj_rep.count('HARD')}）｜渲染核对：{render_state}"
+          f"｜提示 {f.count('SOFT')}｜说明 {f.count('INFO')}｜状态：{status}")
+    print("READY 只说明对象与渲染一致，不说明设计成立；PARTIAL 说明视觉判断没有任何机器依据。")
+    st = facts.get("structure") or {}
+    print(f"文件结构：slide {st.get('slides')}｜原生图表 {st.get('charts')}｜内嵌工作簿 {st.get('embeddings')}"
+          f"｜media {st.get('media')}")
     brief = plan.get("brief") or {}
     if brief:
         print(f"概念：{str(brief.get('concept', ''))[:80]}")
@@ -1073,7 +1315,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if facts["render"].get("done"):
         print(f"渲染：{facts['render']['pdf']}")
         print(f"渲染字体：{facts['render'].get('fonts_all')}")
-        print(f"缩略总览：{render_dir / 'contact_sheet.png'}")
+        print(f"逐元素文字核对：{facts['render'].get('text_checks', 0)} 处"
+              f"｜缩略总览：{render_dir / 'contact_sheet.png'}")
         print("机器能证明的到此为止：构图、主次、概念是否成立，必须自己看 PNG 并在目标 PowerPoint 复核。")
     else:
         print("未渲染：视觉相关判断一律没有依据。不要声称「已预览」「版面无溢出」「断行正常」。")

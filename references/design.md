@@ -284,3 +284,18 @@
 | 8 效率与交付 | 每个元素说得出职责，删掉任一都有损失；真实渲染无裁切错位替字，可编辑性与环境风险已说明 | 装饰条、重复数字、无关图标、卡片套卡片；未渲染却声称已预览 |
 
 **否决项不可抵消**：语义错误、数据失真、无证因果、关键内容不可读，先修，且不能被其他维度的表现、总分或机器通过率掩盖。第 7、8 项不能由机器回答，必须看图并写出依据。
+
+**机器证据只覆盖上表的一部分。** 诊断码按维度归口，别跨维引用——尤其别拿 `V-TEXT` 去支持"语义正确"：
+
+| 维度 | 会给出机器事实的诊断码 |
+| --- | --- |
+| 1 语义与事实 | 无。`V-TEXT`／`V-TEXT-RENDER` 只证明文字与 plan 一致、渲染没掉字，不证明内容为真 |
+| 2 层级与阅读路径 | `W-MONOTONY`、`W-CLAIM`、`W-EMPTY`（报形态，读不读得到主张要你看图） |
+| 3 构图与空间 | `V-GEOM`、`V-CLIP`、`V-OVERFLOW`、`E-OVERLAP`、`W-EMPTY`、`V-BLANK` |
+| 4 图形与数据 | `V-CHART`、`E-CHART`、`W-CHART`、`W-NOTE`、`W-PPI` |
+| 5 排版 | `V-TEXT`、`V-RUNS`、`V-FONT`、`V-PUNCT`、`V-ORPHAN`、`V-ROT`、`W-FIT`、`W-PT` |
+| 6 色彩 | `V-STYLE`、`V-CONTRAST`、`W-CONTRAST`、`W-CROP` |
+| 7 概念与整稿 | 无。brief 字段填满不等于概念成立 |
+| 8 效率与交付 | `V-PARTS`、`V-PAGES`、`status`（`READY`／`PARTIAL`／`BLOCK`）、`W-IMG-REUSE`、`I-OPEN`、`revise.py` 的 `E-PRESERVE`／`W-RUNS` |
+
+`PARTIAL` 的定义就是"第 2、3、5、6 维里依赖渲染的那部分没有依据"。此时只能写 `NOT VERIFIED`，不能因为对象核对通过就记 `PASS`。

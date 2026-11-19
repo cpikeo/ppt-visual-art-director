@@ -36,7 +36,8 @@ qn = C.qn
 
 OPS = ("text", "box", "style", "fill", "line", "order", "image", "chart_data", "delete", "background")
 # 这些字段一旦出现在操作里，就说明它有意改样式；只改字时一个都不该有。
-STYLE_KEYS = ("font", "font_ea", "font_size", "bold", "color", "letter_spacing_pt")
+STYLE_KEYS = ("font", "font_ea", "font_size", "bold", "color", "letter_spacing_pt",
+              "align", "line_spacing", "pad_in", "valign")
 EMU = C.EMU
 
 
@@ -76,34 +77,54 @@ def resolve(shape_list, op: Dict[str, Any]) -> Any:
 # ---------------------------------------------------------------- 文本
 
 
-def base_style(shape) -> Dict[str, Any]:
-    """取第一个 run 的**显式**样式；没有声明的字段就是 None。
+def run_style(run) -> Dict[str, Any]:
+    """一个 run 的**显式**样式；没声明的字段是 None。
 
     None 表示"继承自版式或主题"，不能替它编一个值——真实稿的标题多半是 44pt 主题样式、
     run 上什么都没有，编成 18pt 等于把设计改坏，而保留核对不会响。
     """
     from pptx.enum.dml import MSO_COLOR_TYPE
 
+    color = None
+    try:
+        if run.font.color and run.font.color.type == MSO_COLOR_TYPE.RGB:
+            color = f"#{run.font.color.rgb}"
+    except (AttributeError, ValueError):
+        color = None
+    rPr = run._r.find(qn("a:rPr"))
+    ea = None
+    if rPr is not None and rPr.find(qn("a:ea")) is not None:
+        ea = rPr.find(qn("a:ea")).get("typeface")
+    spc = rPr.get("spc") if rPr is not None else None
+    return {"font": run.font.name, "font_ea": ea,
+            "size": run.font.size.pt if run.font.size else None,
+            "bold": run.font.bold, "color": color,
+            "spacing": int(spc) / 100.0 if spc else None}
+
+
+def paragraph_styles(shape) -> List[Dict[str, Any]]:
+    """逐段：该段的 run 样式列表，加上段落级对齐与行距。
+
+    只取第一段的第一个 run 是"改一处、坏一处"的根源：多段标题、副题、灰色眉题
+    各有各的字级，用第一个 run 的样式重写全部，等于把整块文字压成一种。
+    """
+    out: List[Dict[str, Any]] = []
     for para in shape.text_frame.paragraphs:
-        for run in para.runs:
-            color = None
-            try:
-                if run.font.color and run.font.color.type == MSO_COLOR_TYPE.RGB:
-                    color = f"#{run.font.color.rgb}"
-            except (AttributeError, ValueError):
-                color = None
-            rPr = run._r.find(qn("a:rPr"))
-            ea = None
-            if rPr is not None and rPr.find(qn("a:ea")) is not None:
-                ea = rPr.find(qn("a:ea")).get("typeface")
-            spc = rPr.get("spc") if rPr is not None else None
-            return {"font": run.font.name, "font_ea": ea,
-                    "size": run.font.size.pt if run.font.size else None,
-                    "bold": run.font.bold, "color": color,
-                    "spacing": int(spc) / 100.0 if spc else None,
-                    "align": str(para.alignment).split(" ")[0].lower() if para.alignment is not None else None,
-                    "line_spacing": para.line_spacing}
-    return {}
+        out.append({
+            "runs": [run_style(run) for run in para.runs],
+            "align": str(para.alignment).split(" ")[0].lower() if para.alignment is not None else None,
+            "line_spacing": para.line_spacing,
+        })
+    return out
+
+
+def base_style(shape) -> Dict[str, Any]:
+    """兼容旧调用：第一段第一个 run 的样式与段落属性。"""
+    paras = paragraph_styles(shape)
+    if not paras:
+        return {}
+    first = paras[0]["runs"][0] if paras[0]["runs"] else {}
+    return {**first, "align": paras[0]["align"], "line_spacing": paras[0]["line_spacing"]}
 
 
 def _first(*values: Any) -> Any:
@@ -115,7 +136,7 @@ def _first(*values: Any) -> Any:
 
 
 def _write_run(run, piece: Dict[str, Any], op: Dict[str, Any], base: Dict[str, Any]) -> None:
-    """run 级 > 操作级 > 原稿显式值；三层都没有就不写，让继承继续生效。"""
+    """run 级 > 操作级 > 原稿该 run 的显式值；三层都没有就不写，让继承继续生效。"""
     C.set_run_attrs(
         run,
         font=_first(piece.get("font"), op.get("font"), base.get("font")),
@@ -127,12 +148,24 @@ def _write_run(run, piece: Dict[str, Any], op: Dict[str, Any], base: Dict[str, A
     )
 
 
-def write_text(shape, op: Dict[str, Any]) -> None:
+def _mixed(runs: List[Dict[str, Any]]) -> bool:
+    """同一段里是否存在两种以上不同的 run 样式（混排）。"""
+    sigs = {(r.get("size"), r.get("bold"), r.get("font"), r.get("font_ea"), r.get("color")) for r in runs}
+    return len(sigs) > 1
+
+
+def write_text(shape, op: Dict[str, Any], rep: C.Report, page: int, name: str) -> None:
+    """换字，同时守住原有排版：逐段对齐/行距、逐 run 字号字重字色字族能继承就继承。
+
+    保真规则：新段落 i 的样式基线取原稿第 i 段；若该段新 run 数与原 run 数一致，
+    就按位置一一继承（深色主句 + 灰色括注这种混排不会被压平）。数量对不上时整段
+    退回该段首个 run 的样式，并在报告里披露——混排被统一了，读者该知道。
+    """
     from pptx.enum.text import PP_ALIGN
     from pptx.util import Pt
 
     tf = shape.text_frame
-    base = base_style(shape)
+    old = paragraph_styles(shape)
     content = str(op.get("content", ""))
     runs = op.get("runs")
     if runs and "".join(str(r.get("text", "")) for r in runs) != content:
@@ -140,6 +173,9 @@ def write_text(shape, op: Dict[str, Any]) -> None:
     paras = C.paragraph_runs({"content": content, "runs": runs})
     if paras is None:
         raise C.BadOp("runs 分段与 content 对不上")
+
+    fallback = old[0]["runs"][0] if old and old[0]["runs"] else {}
+    collapsed: List[int] = []
 
     for extra in list(tf.paragraphs)[1:]:
         extra._p.getparent().remove(extra._p)
@@ -149,17 +185,31 @@ def write_text(shape, op: Dict[str, Any]) -> None:
 
     for idx, (seg, pieces) in enumerate(paras):
         para = first if idx == 0 else tf.add_paragraph()
-        if base.get("align"):
+        src = old[idx] if idx < len(old) else old[0] if old else {"runs": [], "align": None, "line_spacing": None}
+        align = op.get("align") or src.get("align")
+        if align:
             para.alignment = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
-                              "right": PP_ALIGN.RIGHT, "justify": PP_ALIGN.JUSTIFY}[base["align"]]
-        if base.get("line_spacing"):
-            para.line_spacing = base["line_spacing"]
+                              "right": PP_ALIGN.RIGHT, "justify": PP_ALIGN.JUSTIFY}[align]
+        spacing = float(op["line_spacing"]) if op.get("line_spacing") else src.get("line_spacing")
+        if spacing:
+            para.line_spacing = spacing
         if op.get("space_after_pt"):
             para.space_after = Pt(float(op["space_after_pt"]))
-        for piece in pieces or ([{"text": seg}] if seg else []):
+
+        src_runs = src.get("runs") or []
+        if src_runs and _mixed(src_runs) and len(pieces or [{"text": seg}]) != len(src_runs):
+            collapsed.append(idx + 1)
+        for j, piece in enumerate(pieces or ([{"text": seg}] if seg else [])):
+            base = src_runs[j] if len(src_runs) == len(pieces or []) and j < len(src_runs) else \
+                (src_runs[0] if src_runs else fallback)
             run = para.add_run()
             run.text = piece.get("text", "")
             _write_run(run, piece, op, base)
+
+    if collapsed:
+        rep.soft("W-RUNS", f"第 {page} 页 {name}",
+                 f"第 {collapsed} 段原有混排（同一段内字号/字色/字重不同），新内容 run 数与之不同，"
+                 f"已统一为该段首个 run 的样式；要保留分区样式请用 runs 明确写出")
 
 
 def apply_style(shape, op: Dict[str, Any]) -> None:
@@ -175,7 +225,8 @@ def apply_style(shape, op: Dict[str, Any]) -> None:
         if op.get("line_spacing"):
             para.line_spacing = float(op["line_spacing"])
         for run in para.runs:
-            C.set_run_attrs(run, font=op.get("font"), font_ea=op.get("font_ea"),
+            # 显式声明 font 就是要换字族：连东亚字族一起写，否则中文仍留在原字族上。
+            C.set_run_attrs(run, font=op.get("font"), font_ea=op.get("font_ea") or op.get("font"),
                             size=op.get("font_size"), color=op.get("color"),
                             bold=op.get("bold"), spacing=op.get("letter_spacing_pt"))
     if op.get("valign"):
@@ -263,6 +314,8 @@ def apply_chart(shape, op: Dict[str, Any]) -> None:
     if not getattr(shape, "has_chart", False):
         raise C.BadOp("目标不是图表对象")
     chart = shape.chart
+    if len(chart.plots) > 1:
+        raise C.BadOp("该图有多个图层（组合图）：改数据会同时打乱两层格式，请整稿重建")
     data = op.get("data") or {}
     cats, series = data.get("categories") or [], data.get("series") or []
     if not cats or not series:
@@ -296,9 +349,32 @@ def apply_background(slide, op: Dict[str, Any]) -> None:
 # ---------------------------------------------------------------- 主流程
 
 
-def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str, Any]]) -> Tuple[set, set]:
+def _chart_parts(shape) -> set:
+    """图表改数会重写自己的 chart 部件与内嵌工作簿：这两个部件因此可以变。
+
+    只放行"这个图表自己的"部件，别的图表被顺手改写照样会报——放行整片
+    `ppt/charts/` 就等于关掉了这条检查。
+    """
+    out: set = set()
+    try:
+        part = shape.chart.part
+    except (AttributeError, ValueError):
+        return out
+    out.add(str(part.partname).lstrip("/"))
+    for rel in getattr(part, "rels", {}).values():
+        target = getattr(rel, "target_part", None)
+        name = str(getattr(target, "partname", "") or "").lstrip("/")
+        if name:
+            out.add(name)
+    return out
+
+
+def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str, Any]],
+            rep: C.Report) -> Tuple[set, set, set, set]:
     touched: set = set()
     bg_touched: set = set()
+    deleted: set = set()
+    movable: set = set()
     for n, op in enumerate(ops, 1):
         where = f"op{n}"
         kind = op.get("op")
@@ -319,7 +395,7 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
                 raise C.BadOp(f"{where}: text 需要 content")
             style_free = not any(op.get(k) is not None for k in STYLE_KEYS) and not any(
                 k in r for r in (op.get("runs") or []) for k in STYLE_KEYS)
-            write_text(shape, op)
+            write_text(shape, op, rep, int(op["page"]), shape.name)
         elif kind == "box":
             if not any(op.get(k) is not None for k in ("x", "y", "w", "h")):
                 raise C.BadOp(f"{where}: box 至少给 x/y/w/h 之一")
@@ -341,13 +417,16 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
             apply_image(shape, path)
         elif kind == "chart_data":
             apply_chart(shape, op)
+            movable |= _chart_parts(shape)
         elif kind == "order":
             apply_order(shape, op)
         elif kind == "delete":
             shape._element.getparent().remove(shape._element)
+            deleted.add((int(op["page"]), shape.name))
         log.append({"op": n, "kind": kind, "page": op["page"], "target": shape.name,
-                    "note": op.get("note", ""), "style_free": style_free})
-    return touched, bg_touched
+                    "note": op.get("note", ""), "style_free": style_free,
+                    "styled": [k for k in STYLE_KEYS if op.get(k) is not None] if kind == "style" else []})
+    return touched, bg_touched, deleted, movable
 
 
 def ink_box(obj: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
@@ -411,23 +490,101 @@ def post_check(after: Dict[str, Any], f: C.Report) -> None:
                     break
 
 
-def _text_sig(obj: Dict[str, Any]):
-    """第一个 run 的样式签名：只改字时，它必须一字不差。"""
+_SIG_FIELDS = ("font_size", "bold", "font", "font_ea", "color", "align", "line_spacing")
+
+
+def _text_sig(obj: Dict[str, Any]) -> Optional[List[set]]:
+    """逐段样式签名：每段用到的（字号、字重、西文/东亚字族、墨色、对齐、行距）集合。
+
+    只看第一个 run 会放过"第二段被压成 32pt"这种最常见的漂移——副题、眉题、括注
+    在真实稿里各有各的字级。按段比对而不是按 run 位置比对：换行与增删 run 是内容
+    编辑，压平整段样式才是改设计。段落级属性也进签名：只改字的操作顺手改掉对齐，
+    是同一类漂移，只是发生在上层。
+    """
     paras = (obj.get("styles") or {}).get("paragraphs") or []
-    runs = paras[0].get("runs") if paras else None
-    if not runs:
+    out: List[set] = []
+    for para in paras:
+        align = para.get("align")
+        spacing = para.get("line_spacing")
+        out.append({(r.get("size_pt"), r.get("bold"), r.get("font"), r.get("ea"), r.get("color"),
+                     align, spacing) for r in para.get("runs") or []})
+    return out or None
+
+
+def _mask(sigs: set, allowed: frozenset) -> set:
+    """把"本操作合法声明过"的字段抹平，只留没被授权的位。"""
+    return {tuple(None if _SIG_FIELDS[i] in allowed else v for i, v in enumerate(s)) for s in sigs}
+
+
+def _style_drift(old: Optional[List[set]], new: Optional[List[set]], allowed: frozenset = frozenset()):
+    """只改字的操作不许给任何一段换一套样式：新段落用到的样式必须是它原来就有的。
+
+    允许"少用"（内容删掉了那句灰色括注），不允许"新出现"（14pt 副题被压成 32pt，
+    或继承的 44pt 被写死成 18pt）。同一目标上另有 `style` 操作显式声明过的字段不参与
+    判定——否则"先换字、再改字号"这种正常写法会被自己的闸拦住。
+    """
+    if not old or not new:
         return None
-    r = runs[0]
-    return (r.get("size_pt"), r.get("bold"), r.get("font"), r.get("ea"), r.get("color"))
+    olds = [_mask(s, allowed) for s in old]
+    news = [_mask(s, allowed) for s in new]
+
+    def ref_for(index: int) -> Optional[set]:
+        # 段落数变多时用相邻段作参照：新增的那一段没有"原来的样式"可比。
+        for j in range(min(index, len(olds) - 1), -1, -1):
+            if olds[j]:
+                return olds[j]
+        for j in range(index + 1, len(olds)):
+            if olds[j]:
+                return olds[j]
+        return None
+
+    for i, sigs in enumerate(news):
+        if not sigs:
+            continue
+        ref = ref_for(i)
+        if not ref:
+            continue
+        stray = sigs - ref
+        if stray:
+            return i + 1, sorted(ref, key=str), sorted(stray, key=str)
+    return None
+
+
+def _object_fp(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """未被点名对象的可观察属性指纹：外观、裁切、图片字节、图表/表格载荷。
+
+    只比类型/几何/文字，会漏掉"填色被改成白色""图片被换成另一张"——这两类
+    改动不会动任何几何，却直接改变成品。
+    """
+    styles = obj.get("styles") or {}
+    return {
+        "fill": obj.get("fill"),
+        "stroke": obj.get("stroke"),
+        "stroke_pt": obj.get("stroke_pt"),
+        "crop": obj.get("crop"),
+        "sha256": obj.get("sha256"),
+        "px": obj.get("px"),
+        "ppi": obj.get("ppi"),
+        "chart_type": obj.get("chart_type"),
+        "plots": obj.get("plots"),
+        "grid": obj.get("grid"),
+        "has_legend": obj.get("has_legend"),
+        "styles": {
+            "paragraphs": [{k: v for k, v in p.items() if k != "text"} for p in styles.get("paragraphs") or []],
+        } if styles else None,
+        "n_objects": len(obj.get("children") or []),
+    }
 
 
 def compare(before: Dict[str, Any], after: Dict[str, Any], touched: set, bg_touched: set,
-            f: C.Report, plain_text: Optional[set] = None) -> Dict[str, Any]:
+            f: C.Report, plain_text: Optional[set] = None,
+            deleted: Optional[set] = None,
+            styled: Optional[Dict[Tuple[int, str], set]] = None) -> Dict[str, Any]:
     """保留核对：结构层逐项相等，未点名的对象逐项一致。这是"没有顺手改坏别处"的唯一证据。
 
-    `plain_text` 是"只换字、没有声明任何样式"的操作；这类改动之后第一段的字级必须原样。
-    真实稿的标题多半继承版式（run 上没有显式字级），把继承值写死会把它从 44pt 压成 18pt，
-    而页数、母版、几何全都对得上——只比"文字"字段是发现不了的。
+    `plain_text` 是"只换字、没有声明任何样式"的操作（按解析后的对象名记）；这类改动
+    之后用到的样式集合必须原样。`deleted` 是显式 delete 操作点名过的对象——除此之外
+    任何对象消失都是意外删除。
     """
     for key, label in (("slides", "页数"), ("masters", "母版数"), ("layouts", "版式数"), ("macros", "宏")):
         if before.get(key) != after.get(key):
@@ -436,7 +593,9 @@ def compare(before: Dict[str, Any], after: Dict[str, Any], touched: set, bg_touc
         f.hard("E-PRESERVE", "主题字体", "改动前后不一致")
 
     plain_text = plain_text or set()
-    deleted = 0
+    deleted = deleted or set()
+    styled = styled or {}
+    removed = 0
     for i, b_page in enumerate(before["pages"]):
         a_page = after["pages"][i] if i < len(after["pages"]) else None
         if a_page is None:
@@ -448,22 +607,84 @@ def compare(before: Dict[str, Any], after: Dict[str, Any], touched: set, bg_touc
             f.hard("E-PRESERVE", f"第 {i + 1} 页", f"未点名的底色被改动：{b_page.get('background')} → {a_page.get('background')}")
         b_objs = {o["name"]: o for o in b_page["objects"]}
         a_objs = {o["name"]: o for o in a_page["objects"]}
-        deleted += len([n for n in b_objs if n not in a_objs])
+        for name in b_objs:
+            if name in a_objs:
+                continue
+            removed += 1
+            if (i + 1, name) not in deleted:
+                f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", "对象消失，但没有任何 delete 操作点名它")
+        for name in a_objs:
+            if name not in b_objs:
+                f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", "出现原稿没有的对象；定点编辑不新增任何对象")
         for name, obj in b_objs.items():
             if name not in a_objs:
                 continue
             twin = a_objs[name]
             if (i + 1, name) in touched:
                 if (i + 1, name) in plain_text:
-                    old_sig, new_sig = _text_sig(obj), _text_sig(twin)
-                    if old_sig and new_sig and old_sig != new_sig:
+                    allowed = frozenset(styled.get((i + 1, name), ()))
+                    drift = _style_drift(_text_sig(obj), _text_sig(twin), allowed)
+                    if drift:
+                        para_no, ref, stray = drift
                         f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}",
-                               f"只改文字的操作用改了样式：{old_sig} → {new_sig}")
+                               f"只改文字的操作用改了样式：第 {para_no} 段出现原稿没有的 "
+                               f"（字号, 粗体, 西文字族, 东亚字族, 墨色, 对齐, 行距）="
+                               f"{stray}（该段原有 {ref}）")
                 continue
             for field, label in (("kind", "类型"), ("box_in", "几何"), ("rotation", "旋转"), ("text", "文字")):
                 if obj.get(field) != twin.get(field):
                     f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", f"未点名的{label}被改动：{obj.get(field)} → {twin.get(field)}")
-    return {"deleted": deleted, "touched": len(touched)}
+            old_fp, new_fp = _object_fp(obj), _object_fp(twin)
+            if old_fp != new_fp:
+                changed = [k for k in old_fp if old_fp[k] != new_fp[k]]
+                f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", f"未点名的外观/载荷被改动：{changed}")
+    return {"deleted": removed, "touched": len(touched)}
+
+
+def compare_parts(before: Dict[str, str], after: Dict[str, str], touched_pages: set,
+                  f: C.Report, movable: Optional[set] = None) -> Dict[str, Any]:
+    """包内部件比对：等价于"原始内容完整性"。
+
+    被点名的页会重写 slideN.xml 与它的 rels，换图会新增 media/ 与 embeddings/，改数会
+    重写那个图表自己的 chart 部件与内嵌工作簿；其余部件必须逐字节一致。母版、主题、
+    备注页、动画所在的 slide 一旦被意外新建或改写，在这里会直接暴露——按"页数、母版数"
+    核对是看不出来的。
+    """
+    import re as _re
+
+    allowed_new = ("ppt/media/", "ppt/embeddings/")
+    movable = movable or set()
+    # 一页的 slide 部件在包里有两个名字：ppt/slides/slideN.xml 与 ppt/slides/_rels/slideN.xml.rels
+    slide_part = _re.compile(r"^ppt/slides/(?:_rels/)?slide(\d+)\.xml(?:\.rels)?$")
+    changed, lost, added, moved = [], [], [], []
+    for name, digest in before.items():
+        if name not in after:
+            lost.append(name)
+            continue
+        if after[name] == digest:
+            continue
+        hit = slide_part.match(name)
+        if name == "[Content_Types].xml" or (hit and int(hit.group(1)) in touched_pages):
+            continue
+        if name in movable:
+            moved.append(name)
+            continue
+        changed.append(name)
+    for name in after:
+        if name in before:
+            continue
+        if name.startswith(allowed_new):
+            continue
+        added.append(name)
+
+    if lost:
+        f.hard("E-PRESERVE", "包内部件", f"部件丢失：{lost[:6]}")
+    if changed:
+        f.hard("E-PRESERVE", "包内部件", f"未点名的部件被改写：{changed[:6]}")
+    if added:
+        f.hard("E-PRESERVE", "包内部件", f"出现原稿没有的部件：{added[:6]}")
+    return {"parts": len(after), "changed": len(changed), "lost": len(lost), "added": len(added),
+            "moved": moved}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -514,9 +735,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     before = I.inspect(src)
+    before_parts = I.structure(src)
     log: List[Dict[str, Any]] = []
     try:
-        touched, bg_touched = run_ops(prs, ops, asset_root, log)
+        touched, bg_touched, declared_deleted, movable = run_ops(prs, ops, asset_root, log, rep)
     except C.BadOp as exc:
         print(f"[HARD] E-OPS 未写入：{exc}")
         return 2
@@ -524,39 +746,56 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"[HARD] E-RUNTIME {type(exc).__name__}: {exc}")
         return 3
 
+    # 先落到临时件：保留核对不通过时，交付路径一个字节都不动。
     tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
     try:
         prs.save(str(tmp))
-        os.replace(tmp, out)
-    finally:
+        after = I.inspect(tmp)
+        after_parts = I.structure(tmp)
+    except Exception as exc:
         if tmp.exists():
             tmp.unlink()
+        print(f"[HARD] E-RUNTIME {type(exc).__name__}: {exc}")
+        return 3
 
-    after = I.inspect(out)
-    styled = {(op.get("page"), op.get("target")) for op in ops
-              if op.get("op") == "style" or any(op.get(k) is not None for k in STYLE_KEYS)}
-    plain_text = {(e["page"], e.get("target")) for e in log if e.get("style_free")} - styled
-    facts = compare(before, after, touched, bg_touched, rep, plain_text)
-    post_check(after, rep)
+    plain_text = {(int(e["page"]), e["target"]) for e in log if e.get("style_free")}
+    styled: Dict[Tuple[int, str], set] = {}
+    for e in log:
+        if e.get("styled"):
+            styled.setdefault((int(e["page"]), e["target"]), set()).update(e["styled"])
+    touched_pages = {int(op["page"]) for op in ops}
+    facts = compare(before, after, touched, bg_touched, rep, plain_text, declared_deleted, styled)
+    facts["parts"] = compare_parts(before_parts, after_parts, touched_pages, rep, movable)
+    if not rep.blocked:
+        post_check(after, rep)
+        os.replace(tmp, out)
+    elif tmp.exists():
+        # 保留核对未通过：把证据留在旁边，交付路径不写。
+        rejected = out.with_name(out.stem + ".preserve-failed.pptx")
+        os.replace(tmp, rejected)
+        facts["rejected"] = str(rejected)
     status = "BLOCK" if rep.blocked else "READY"
 
-    print(f"\n已改写 {out}（{len(ops)} 个操作，{len(after['pages'])} 页）")
+    print(f"\n已改写 {out}（{len(ops)} 个操作，{len(after['pages'])} 页）" if not rep.blocked
+          else f"\n保留核对未通过：{out} 未写入；诊断稿 {facts.get('rejected')}（不是交付物）")
     for item in log:
         print(f"  {item['op']:>2}. {item['kind']:<10} 第 {item['page']} 页"
               f"{' · ' + item['target'] if item.get('target') else ''}")
     for issue in rep.items:
         print(issue)
     print(f"保留核对：{status}   问题 {rep.count('HARD')}")
-    print(f"页数 {len(after['pages'])}｜母版 {after['masters']}｜版式 {after['layouts']}｜宏 {after['macros']}")
+    print(f"页数 {len(after['pages'])}｜母版 {after['masters']}｜版式 {after['layouts']}｜宏 {after['macros']}"
+          f"｜包内 {facts['parts']['parts']} 部件（越界改动 {facts['parts']['changed']}／丢失 {facts['parts']['lost']}"
+          f"／声明过的改写 {len(facts['parts']['moved'])}）")
     if report_path:
         report_path.write_text(json.dumps({
             "status": status,
             "source": str(src), "output": str(out),
-            "sha256": hashlib.sha256(out.read_bytes()).hexdigest(),
+            "sha256": hashlib.sha256(out.read_bytes()).hexdigest() if out.is_file() else None,
             "ops": log, "preservation": facts,
             "issues": rep.to_dict(),
         }, ensure_ascii=False, indent=2), encoding="utf-8")
-    if not src.samefile(out):
+    if not rep.blocked and not src.samefile(out):
         print("原稿未被改动；母版、动画、切换、SmartArt、备注按原样保留。")
     print("机器能证明的到此为止：改动后的版面是否更好看，仍需自己看渲染。")
     return 0 if not rep.blocked else 1

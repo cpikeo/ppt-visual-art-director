@@ -113,7 +113,9 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
         "rotation": round(shape.rotation or 0, 1) if hasattr(shape, "rotation") else 0,
     }
     if kind in ("text", "placeholder"):
-        item["text"] = shape.text_frame.text.replace("\n", "⏎")[:240]
+        # 全文保留：保留核对要比对文字，截断到 240 字等于放过第 241 字之后的任何改动。
+        # 显示层在 to_markdown 里另行截断。
+        item["text"] = shape.text_frame.text.replace("\n", "⏎")
         item["styles"] = run_styles(shape)
         if kind == "placeholder":
             try:
@@ -209,6 +211,18 @@ def slide_background(slide) -> Optional[str]:
         return str(fill.type).split(" ")[0].lower()
     except Exception:
         return None
+
+
+def structure(pptx: Path) -> Dict[str, str]:
+    """包内部件 → 字节哈希。改稿的"原始内容完整性"就靠它：没被点名的部件必须逐字节一致。
+
+    只比页数、母版数、对象字段是不够的——母版主题、备注页、动画所在的 slide 部件
+    被意外重写时，那些字段全都不变。
+    """
+    import zipfile
+
+    with zipfile.ZipFile(Path(pptx)) as zf:
+        return {name: hashlib.sha256(zf.read(name)).hexdigest() for name in zf.namelist()}
 
 
 def slide_flags(slide, objects: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -375,7 +389,7 @@ def to_markdown(data: Dict[str, Any]) -> str:
         if obj["kind"] in ("text", "placeholder"):
             styles = obj.get("styles", {})
             sizes = "/".join(f"{s:g}" for s in styles.get("sizes", []))
-            detail = f"{sizes}pt {'/'.join(styles.get('fonts', []))} 「{obj.get('text', '')}」"
+            detail = f"{sizes}pt {'/'.join(styles.get('fonts', []))} 「{(obj.get('text') or '')[:120]}」"
             if obj.get("ph"):
                 detail = f"{obj['ph']}｜" + detail
         elif obj["kind"] == "picture":
