@@ -71,7 +71,7 @@
       "required": ["source"],
       "properties": {
         "source": {"$ref": "#/$defs/str", "description": "来源：拍摄、机构、URL 或生成工具。"},
-        "generated": {"type": "boolean", "description": "是否为生成图；生成图不得作证据。"},
+        "generated": {"type": "boolean", "description": "与 generation 是否存在必须一致（编译器校验）；生成图不得作证据。"},
         "used_as_evidence": {"type": "boolean"},
         "rights": {"enum": ["cleared", "pending", "blocked"], "description": "版权与肖像/隐私的可确认状态；缺省 pending。"},
         "reference": {"type": "string", "description": "凭据位置（合同、授权页、编号）；rights=cleared 时应有，缺则提示。"},
@@ -83,7 +83,7 @@
     "generation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tool", "prompt", "file", "status"],
+      "required": ["tool", "prompt", "file", "status", "sha256"],
       "properties": {
         "tool": {"$ref": "#/$defs/str"},
         "prompt": {"$ref": "#/$defs/str", "description": "实际提交的完整提示词。"},

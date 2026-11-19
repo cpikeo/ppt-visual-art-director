@@ -1226,6 +1226,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
                        if not any(_font_present(d, {fam}, aliases) for d in declared))
         missing = sorted(d for d in declared if not _font_present(d, fonts_here, aliases))
         if extra or missing:
+            facts["font_substituted"] = True
             f.add("SOFT", "V-FONT", pid,
                   f"声明 {sorted(declared)}，渲染实际 {sorted(fonts_here)}"
                   f"{'；未出现 ' + str(missing) if missing else ''}"
@@ -1297,6 +1298,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\nplan 本身不合契约：先修 plan，核验才有意义。")
         return 2
 
+    problems = C.package_problems(pptx)
+    if problems:
+        for problem in problems:
+            print(f"[HARD] V-FORMAT {pptx}：{problem}")
+        print("\n核验中止：成品不是合格的无宏 .pptx（PPTM 与扩展名不符的包都不接受）。")
+        return 1
+
     f = C.Report()
     key = pptx.read_bytes()
     sha = hashlib.sha256(key).hexdigest()
@@ -1324,17 +1332,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     for issue in f.items:
         print(issue)
 
-    # READY 的含义是"对象与渲染都核验通过"，不是"设计通过"：渲染缺失时只能是 PARTIAL。
+    # READY = 对象一致 + 渲染完成 + 声明字体都真实参与渲染。任一缺失只能是 PARTIAL：
+    # 渲染缺失或字体被替换时，断行与宽度都只代表替代字体，不是目标环境结论。
     objects = "FAIL" if obj_rep.blocked else "PASS"
     render_state = "SKIP" if pdf is None else ("FAIL" if render_rep.blocked else "PASS")
+    substituted = bool(facts["render"].get("font_substituted"))
     if f.blocked:
         status = "BLOCK"
-    elif render_state == "PASS":
+    elif render_state == "PASS" and not substituted:
         status = "READY"
     else:
         status = "PARTIAL"
-    facts["layers"] = {"objects": objects, "render": render_state, "human": "NOT REVIEWED"}
-    print(f"\n对象核对：{objects}（硬 {obj_rep.count('HARD')}）｜渲染核对：{render_state}"
+    fonts_state = "SUBSTITUTED" if substituted else ("OK" if render_state == "PASS" else "NOT CHECKED")
+    facts["layers"] = {"objects": objects, "render": render_state, "fonts": fonts_state,
+                       "human": "NOT REVIEWED"}
+    if substituted:
+        print("字体替换：声明字体未全部参与渲染，断行与宽度只代表替代字体，状态不能是 READY。")
+    print(f"\n对象核对：{objects}（硬 {obj_rep.count('HARD')}）｜渲染核对：{render_state}｜字体：{fonts_state}"
           f"｜提示 {f.count('SOFT')}｜说明 {f.count('INFO')}｜状态：{status}")
     print("READY 只说明对象与渲染一致，不说明设计成立；PARTIAL 说明视觉判断没有任何机器依据。")
     st = facts.get("structure") or {}

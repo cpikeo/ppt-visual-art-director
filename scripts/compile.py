@@ -967,31 +967,49 @@ def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]
 
 
 def check_asset(loc: str, image_id: str, asset: Dict[str, Any], asset_root: Path, rep: Report) -> None:
+    """素材来源与证据边界。唯一事实来源是 generation 记录：有它就是生成图，没有就是真实素材。
+
+    generated 字段只能是对这一事实的声明；两者矛盾（例如 generated: false 却登记了生成记录）直接阻断，
+    不允许靠字段组合绕过证据限制。
+    """
+    if not asset.get("source"):
+        rep.hard("E-ASSET", loc, f"{image_id} 缺少 source（来源）")
+    gen = asset.get("generation")
+    is_generated = gen is not None
+    declared = asset.get("generated")
+    if declared is not None and bool(declared) != is_generated:
+        rep.hard("E-ASSET", loc, f"{image_id} 的 generated={declared} 与 generation "
+                                 f"{'有记录' if is_generated else '无记录'}矛盾；生成图必须登记 generation，真实素材不得登记")
     rights = asset.get("rights", "pending")
-    generated = bool(asset.get("generated"))
     if rights == "blocked":
         rep.hard("E-ASSET", loc, f"{image_id} 权利状态 blocked，不得使用")
     elif rights == "pending":
         rep.soft("W-ASSET", loc, f"{image_id} 权利未确认（pending）；交付前确认或改用已清权素材")
     elif rights == "cleared" and not asset.get("reference"):
         rep.soft("W-ASSET", loc, f"{image_id} 声明已清权但没有 reference（授权页/合同/编号）")
-    if generated and asset.get("used_as_evidence"):
+    if is_generated and asset.get("used_as_evidence"):
         rep.hard("E-ASSET", loc, f"{image_id} 是生成图，不能作证据")
-    gen = asset.get("generation")
-    if not gen:
+    if not is_generated:
+        if asset.get("used_as_evidence") and rights != "cleared":
+            rep.soft("W-ASSET", loc, f"{image_id} 作证据但权利未确认")
+        return
+    if not isinstance(gen, dict):
+        rep.hard("E-ASSET", loc, f"{image_id} 的 generation 必须是对象")
         return
     if gen.get("status") != "generated":
         rep.hard("E-ASSET", loc, f"{image_id} 生成记录 status={gen.get('status')}，不得作为正式素材")
+    for key in ("tool", "prompt", "file", "sha256"):
+        if not gen.get(key):
+            rep.hard("E-ASSET", loc, f"{image_id} 生成记录缺少 {key}")
     path = resolve_asset(asset_root, image_id)
-    gfile = resolve_asset(asset_root, gen.get("file", ""))
-    if path and gfile and path.resolve() != gfile.resolve():
+    gfile = resolve_asset(asset_root, str(gen.get("file", "")))
+    if path is None:
+        rep.hard("E-ASSET", loc, f"{image_id} 找不到素材文件")
+        return
+    if gfile is None or path.resolve() != gfile.resolve():
         rep.hard("E-ASSET", loc, f"{image_id} 与 generation.file={gen.get('file')} 不是同一物理文件")
-    if path and not gen.get("sha256"):
-        rep.soft("W-ASSET", loc, f"{image_id} 是生成图但没有登记 sha256，无法证明用的是哪一次结果")
-    if path and gen.get("sha256"):
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
-        if actual.lower() != str(gen["sha256"]).lower():
-            rep.hard("E-ASSET", loc, f"{image_id} 实际 SHA-256 与登记不符")
+    elif str(gen.get("sha256", "")).lower() != hashlib.sha256(path.read_bytes()).hexdigest():
+        rep.hard("E-ASSET", loc, f"{image_id} 实际 SHA-256 与登记不符")
 
 
 # ---------------------------------------------------------------- 绘图底件
@@ -2072,6 +2090,35 @@ def write_error_deck(out: Path, message: str) -> None:
     prs.save(str(out))
 
 
+PPTX_MAIN_CT = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
+
+
+def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
+    """文件是否真的是无宏 .pptx：扩展名、主部件内容类型与包内部件必须一致。
+
+    PPTM（宏启用）与扩展名不符的包都在这里拦下；返回空列表才算合格。
+    """
+    import zipfile
+
+    path = Path(path)
+    problems: List[str] = []
+    if check_suffix and path.suffix.lower() != ".pptx":
+        problems.append(f"扩展名 {path.suffix or '(无)'} 不是 .pptx")
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            types = etree.fromstring(zf.read("[Content_Types].xml"))
+    except (OSError, KeyError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
+        return problems + [f"不是可读的 OOXML 包：{type(exc).__name__}"]
+    overrides = {o.get("PartName"): o.get("ContentType") or "" for o in types if o.get("PartName")}
+    main_ct = overrides.get("/ppt/presentation.xml")
+    if main_ct != PPTX_MAIN_CT:
+        problems.append(f"主部件内容类型为 {main_ct}，不是 .pptx 格式（可能是宏启用或其他格式）")
+    if any("vbaProject" in n for n in names) or any("macroEnabled" in v for v in overrides.values()):
+        problems.append("含宏部件（vbaProject）或宏启用内容类型")
+    return problems
+
+
 def utf8_stdio() -> None:
     """控制台代码页不是 UTF-8 时（Windows 中文终端很常见），中文与 ⏎ 会抛 UnicodeEncodeError。"""
     for stream in (sys.stdout, sys.stderr):
@@ -2104,8 +2151,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             rep.hard("E-EXIST", str(target), f"{label}与 plan 同路径，会覆盖源文件")
     if report_path is not None and report_path == out_path:
         rep.hard("E-EXIST", str(out_path), "--report 与输出文件同路径，会互相覆盖")
-    if out_path.suffix.lower() not in (".pptx", ".pptm"):
-        rep.hard("E-EXIST", str(out_path), f"输出文件名应以 .pptx 结尾，收到 {out_path.name!r}")
+    if out_path.suffix.lower() != ".pptx":
+        rep.hard("E-FORMAT", str(out_path), f"只输出 .pptx；收到 {out_path.name!r}（不支持 .pptm 等宏格式）")
     if out_path.exists() and not args.force:
         rep.hard("E-EXIST", str(out_path), "目标文件已存在，未写入；确认要替换就加 --force")
     if out_path.is_dir():
@@ -2138,6 +2185,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {exc}\n诊断文件：{error_path}（不是交付物）")
         return 3
 
+    problems = package_problems(out_path)
+    if problems:
+        print(f"[HARD] E-FORMAT 成品包不合格：{'；'.join(problems)}")
+        return 3
     print(f"\n已写出 {out_path}（{len(plan['pages'])} 页，{canvas(plan)[0]}×{canvas(plan)[1]} in）"
           f"  警告 {rep.count('SOFT')}，提示 {rep.count('INFO')}")
     if args.report:
