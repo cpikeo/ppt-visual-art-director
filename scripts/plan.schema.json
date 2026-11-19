@@ -4,20 +4,21 @@
   "description": "plan.json 的唯一数据契约：字段形状、必填与类型专属条件。技术数值见 limits.json；跨对象一致性（ID、引用、锚点、几何、重叠、图表口径、素材权利）由 compile.py 确定性检查。",
   "type": "object",
   "additionalProperties": false,
-  "required": ["deck_id", "title", "audience", "goal", "core_claim", "visual_concept", "pages"],
+  "required": ["deck_id", "title", "audience", "goal", "core_claim", "brief", "pages"],
   "properties": {
     "deck_id": {"$ref": "#/$defs/str"},
     "title": {"$ref": "#/$defs/str"},
     "audience": {"$ref": "#/$defs/str", "description": "受众、已知与怀疑什么、观看环境与时长。"},
     "goal": {"$ref": "#/$defs/str", "description": "观众离场后应理解、记住或决定什么。"},
     "core_claim": {"$ref": "#/$defs/str", "description": "整稿最重要的一条主张。"},
-    "visual_concept": {"$ref": "#/$defs/str", "description": "由哪条洞察推出哪个视觉概念，以及它否决了什么。"},
+    "brief": {"$ref": "#/$defs/brief"},
     "rhythm": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "整稿乐谱：按页一句叙事动作与重量，条数与页数一致。"},
     "palette": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/color"}, "description": "图表消费色，按系列/类别顺序取用；缺省用 limits.json。"},
     "fonts": {
       "type": "object",
       "additionalProperties": false,
-      "properties": {"heading": {"$ref": "#/$defs/str"}, "body": {"$ref": "#/$defs/str"}}
+      "properties": {"heading": {"$ref": "#/$defs/str"}, "body": {"$ref": "#/$defs/str"},
+                     "number": {"$ref": "#/$defs/str", "description": "关键数字的字族；缺省同 heading。等宽或窄体数字常与标题字族分开。"}}
     },
     "aspect_ratio": {"enum": ["16:9", "4:3"]},
     "page_numbers": {"$ref": "#/$defs/pageNumbers"},
@@ -28,6 +29,31 @@
     "str": {"type": "string", "minLength": 1, "pattern": "\\S"},
     "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"},
     "textType": {"enum": ["title", "body", "text", "number", "caption", "footer"]},
+
+    "brief": {
+      "type": "object", "additionalProperties": false,
+      "required": ["insight", "concept", "veto"],
+      "properties": {
+        "insight": {"$ref": "#/$defs/str", "description": "观众原本以为什么、证据说明什么、差距在哪。写不出就不是洞察。"},
+        "concept": {"$ref": "#/$defs/str", "description": "用什么视觉关系让这条洞察被看见。"},
+        "veto": {
+          "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/str"},
+          "description": "据此否决的具体做法（某张图、某个配色、某种版式）。否决不了任何东西的概念没有指导力。"
+        },
+        "art": {
+          "type": "object", "additionalProperties": false,
+          "required": ["light", "lens", "material", "gamut", "grain"],
+          "properties": {
+            "light": {"$ref": "#/$defs/str", "description": "硬光/柔光、方向、色温。"},
+            "lens": {"$ref": "#/$defs/str", "description": "视角与景别：平视/俯视/微距；全景/中景/特写。"},
+            "material": {"$ref": "#/$defs/str", "description": "材质与表面：石、纸、金属、织物；哑或亮。"},
+            "gamut": {"$ref": "#/$defs/str", "description": "主色相范围、饱和度上限、是否允许纯黑纯白。"},
+            "grain": {"$ref": "#/$defs/str", "description": "干净数码/细颗粒/浅景深/长焦压缩。"}
+          }
+        },
+        "motif": {"type": "array", "items": {"$ref": "#/$defs/str"}, "description": "一到两个跨页复现的装置；多了就不成母题。"}
+      }
+    },
 
     "pageNumbers": {
       "type": "object",
@@ -108,13 +134,15 @@
         "valign": {"enum": ["top", "middle", "bottom"]},
         "align": {"enum": ["left", "center", "right", "justify"]},
         "bold": {"type": "boolean"},
+        "pad_in": {"type": "number", "minimum": 0, "maximum": 1, "description": "文本框内边距（英寸，四边同值）。贴网格轴线的文字写 0，缺省 0.05/0.03。"},
         "color": {"$ref": "#/$defs/color", "description": "文本为墨色；shape/divider/path 为填充色。"},
         "runs": {
           "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/run"},
-          "description": "单段内联片段；拼接须与 content 逐字相等且 content 不含换行。"
+          "description": "内联片段，可含 \\n 分段；拼接须与 content 逐字相等。"
         },
 
         "shape_kind": {"enum": ["rect", "round_rect", "oval", "triangle", "diamond", "chevron", "arrow_right", "arrow_up"]},
+        "corner_in": {"type": "number", "minimum": 0, "maximum": 6, "description": "仅 round_rect：圆角半径（英寸），按短边裁剪。不给就用渲染器默认（约 16.7%）。"},
         "stroke": {"$ref": "#/$defs/stroke"},
         "gradient": {"$ref": "#/$defs/gradient"},
         "fill_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
@@ -131,6 +159,11 @@
         "image_role": {"enum": ["background", "subject", "detail", "evidence", "texture"]},
         "crop_focus": {"$ref": "#/$defs/crop"},
         "alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1, "description": "图片不透明度。"},
+        "duotone": {
+          "type": "object", "additionalProperties": false, "required": ["dark", "light"],
+          "properties": {"dark": {"$ref": "#/$defs/color"}, "light": {"$ref": "#/$defs/color"}},
+          "description": "把图压进整稿色域：暗部与亮部各一个颜色。原生可编辑，随时可摘；PowerPoint 生效，LibreOffice 只做去饱和。"
+        },
         "asset_reason": {"$ref": "#/$defs/str", "description": "这张图承担什么职责；删掉会损失什么。"},
 
         "chart": {"$ref": "#/$defs/chart"}
@@ -220,9 +253,10 @@
         "unit": {"type": "string", "description": "数量级+量纲；写进图题与核验。"},
         "period": {"type": "string"},
         "basis": {"type": "string", "description": "口径/分母/统计方式。"},
-        "shared_basis": {"type": "boolean", "description": "多系列口径一致（分母、样本、统计方式）的显式确认；不能用于绕过单位或期间不一致。"},
         "show_title": {"type": "boolean"},
-        "data_labels": {"type": "boolean"},
+        "legend": {"type": "boolean", "description": "图例开关；缺省两个以上系列时显示。能直标就不要图例。"},
+        "data_labels": {"type": "boolean", "description": "柱/线/面积/饼/环的直标；组合图只作用于柱层。"},
+        "combo_line_labels": {"type": "boolean", "description": "仅组合图：给折线层加直标。标签会落在柱体上，通常不要开。"},
         "horizontal": {"type": "boolean", "description": "仅 bar：横向条形。"},
         "stacked": {"oneOf": [{"type": "boolean"}, {"const": "percent"}], "description": "仅 bar/area：堆叠；percent 为百分比堆叠（仅 bar）。"},
         "combo_line_series": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/str"}, "description": "仅 bar：这些系列改画折线（共用数值轴）。"},

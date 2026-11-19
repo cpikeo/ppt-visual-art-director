@@ -6,8 +6,11 @@ plan.json → 原生可编辑 PPTX。
 用法：
     python scripts/compile.py plan.json out.pptx [--assets DIR] [--report report.json] [--force]
 
-只做确定性执行：校验契约、按 plan 建对象、写出文件。不做审美判断，不自动缩字、
-换色、补数据或联网取图。硬错误（E-）在写文件前阻断；目标文件已存在时默认不动它，
+只做确定性执行：校验契约、按 plan 建对象、写出文件。不自动缩字、换色、补数据或联网取图。
+除对象级检查外，还会报整稿层面的模式信号（连续同构、标题下细线、无功能标签、素材复用、
+待主张页、满幅图开场）——它们只指出位置，是否接受由人判断。
+
+硬错误（E-）在写文件前阻断；输出与报告都不得指向 plan 自己。目标文件已存在时默认不动，
 确认要替换才加 --force。先写临时文件再原子替换，失败不留半成品；运行期异常另写
 <名称>.error.pptx 供排查，该文件不是交付物。
 """
@@ -19,6 +22,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,8 +131,9 @@ def _em_width(ch: str) -> float:
     return 0.6
 
 
-def fit_lines(text: str, pt: float, box_w: float) -> int:
-    usable = max(box_w - 2 * LIMITS["type"]["inset_in"]["x"], 0.05)
+def fit_lines(text: str, pt: float, box_w: float, pad_x: Optional[float] = None) -> int:
+    inset = LIMITS["type"]["inset_in"]["x"] if pad_x is None else pad_x
+    usable = max(box_w - 2 * inset, 0.05)
     cap = usable / (pt / 72.0)
     total = 0
     for seg in text.split("\n"):
@@ -137,9 +142,10 @@ def fit_lines(text: str, pt: float, box_w: float) -> int:
     return max(1, total)
 
 
-def fit_height_in(text: str, pt: float, box_w: float, line_spacing: float) -> float:
+def fit_height_in(text: str, pt: float, box_w: float, line_spacing: float,
+                  pad_x: Optional[float] = None) -> float:
     pitch = LIMITS["type"]["line_pitch_em"]
-    return fit_lines(text, pt, box_w) * pt * pitch * line_spacing / 72.0
+    return fit_lines(text, pt, box_w, pad_x) * pt * pitch * line_spacing / 72.0
 
 
 def hex_rgb(hex_color: str) -> Tuple[int, int, int]:
@@ -369,15 +375,27 @@ def resolve_asset(asset_root: Path, image_id: str) -> Optional[Path]:
 # ---------------------------------------------------------------- 文本式样
 
 
+def text_pad(el: Dict[str, Any]) -> Tuple[float, float]:
+    """文本框内边距：缺省 0.05/0.03 in。贴网格轴线的文字写 pad_in: 0，否则光学边缘会偏 0.05in。"""
+    if el.get("pad_in") is not None:
+        pad = float(el["pad_in"])
+        return pad, pad
+    return LIMITS["type"]["inset_in"]["x"], LIMITS["type"]["inset_in"]["y"]
+
+
 def text_style(plan: Dict[str, Any], page: Dict[str, Any], el: Dict[str, Any]) -> Dict[str, Any]:
     kind = el["type"]
     size = float(el.get("font_size") or LIMITS["type"]["default_pt"].get(kind, 18))
     fonts = plan.get("fonts") or {}
-    family = el.get("font") or fonts.get("heading" if kind in ("title", "number") else "body") \
-        or LIMITS["defaults"]["fonts"]["heading" if kind in ("title", "number") else "body"]
+    if kind == "number":
+        family = el.get("font") or fonts.get("number") or fonts.get("heading")
+    else:
+        family = el.get("font") or fonts.get("heading" if kind == "title" else "body")
+    family = family or LIMITS["defaults"]["fonts"]["heading" if kind in ("title", "number") else "body"]
     color = el.get("color")
     if not color:
         color = LIMITS["defaults"]["ink_on_dark"] if is_dark(page_bg(page)) else LIMITS["defaults"]["ink"]
+    pad_x, pad_y = text_pad(el)
     return {
         "size": size,
         "family": family,
@@ -387,7 +405,34 @@ def text_style(plan: Dict[str, Any], page: Dict[str, Any], el: Dict[str, Any]) -
         "align": el.get("align", "left"),
         "valign": el.get("valign", "top"),
         "spacing": float(el.get("letter_spacing_pt") or 0),
+        "pad": (pad_x, pad_y),
     }
+
+
+def paragraph_runs(el: Dict[str, Any]) -> Optional[List[Tuple[str, List[Dict[str, Any]]]]]:
+    """把 content 与 runs 归一成 [(段文本, [run…]), …]。
+
+    runs 里的 \\n 就是分段：内联样式可以跨段，标题第一行深墨、第二行强调色不必拆成两个文本框。
+    拼接与 content 不等时返回 None，由校验报错，不猜。
+    """
+    content = str(el.get("content", ""))
+    paras = content.split("\n")
+    runs = el.get("runs")
+    if not runs:
+        return [(seg, [{"text": seg}] if seg else []) for seg in paras]
+    if "".join(str(r.get("text", "")) for r in runs) != content:
+        return None
+    buckets: List[List[Dict[str, Any]]] = [[]]
+    for spec in runs:
+        style = {k: v for k, v in spec.items() if k != "text"}
+        for i, piece in enumerate(str(spec.get("text", "")).split("\n")):
+            if i:
+                buckets.append([])
+            if piece:
+                buckets[-1].append({**style, "text": piece})
+    if len(buckets) != len(paras):
+        return None
+    return [(paras[i], buckets[i]) for i in range(len(paras))]
 
 
 # ---------------------------------------------------------------- 校验
@@ -408,6 +453,12 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
     rhythm = plan.get("rhythm")
     if rhythm and len(rhythm) != len(pages):
         rep.soft("W-RHYTHM", "整稿", f"rhythm 有 {len(rhythm)} 条，页数 {len(pages)}；按页一一对应")
+    brief = plan.get("brief") or {}
+    uses_images = any(el.get("type") == "image" for p in pages for el in all_elements(p))
+    if uses_images and not brief.get("art"):
+        rep.info("I-ART", "brief", "本稿有图像，但没有写艺术指导五参数（光/景别/材质/色域/颗粒）：图的选法没有共同世界")
+    if brief.get("art") and not uses_images:
+        rep.info("I-ART", "brief", "写了图像世界但没有用图：确认这是纯排版稿，或补上素材")
     page_ids = {p.get("id") for p in pages}
     for hidden in pn_cfg["hide"]:
         if hidden not in page_ids:
@@ -451,14 +502,14 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                 rep.hard("E-GEOM", eloc, f"元素完全在画布外：x={x} y={y} w={ew} h={eh}")
             elif kind in TEXT_TYPES + ("chart",) and (x < -tol or y < -tol or x + ew > w + tol or y + eh > h + tol):
                 what = "文本框" if kind in TEXT_TYPES else "图表"
-                rep.soft("E-GEOM", eloc, f"{what}伸出画布（{w}×{h}），边缘内容会被裁掉")
+                rep.soft("W-GEOM", eloc, f"{what}伸出画布（{w}×{h}），边缘内容会被裁掉")
 
             if el.get("overlap_allowed") and kind not in CARRIERS and not (
                     kind == "image" and el.get("image_role") in ("background", "texture")):
                 rep.hard("E-OVERLAP", eloc,
                          "overlap_allowed 只能声明在承载层（背景图/蒙版/色块/闭合路径）上；被压的元素不能自我豁免")
             if kind == "divider" and eh > 0.2:
-                rep.soft("E-GEOM", eloc, f"divider 高 {eh:.2f}in，已经是一块色块；用 shape 更清楚")
+                rep.soft("W-GEOM", eloc, f"divider 高 {eh:.2f}in，已经是一块色块；用 shape 更清楚")
             if kind == "group":
                 kids = el.get("elements") or []
                 if not kids:
@@ -497,7 +548,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                 elif el["type"] == "image":
                     rep.info("I-PAGE", where, "图片压到页码角区：用 page_number_tone 声明实际明暗，并确认页码可读")
                 elif el["type"] != "path":
-                    rep.soft("E-PAGE", where, "色块压到页码角区：确认页码在它上面可读，必要时换角区")
+                    rep.soft("W-PAGE", where, "色块压到页码角区：确认页码在它上面可读，必要时换角区")
 
     # 跨元素：实质重叠（叠放顺序即声明顺序）。同一 group 内部的叠放是设计许可的，不查。
     for page in pages:
@@ -525,14 +576,10 @@ def check_text(plan, page, el, loc, ew, eh, rep: Report) -> None:
     content = el.get("content", "")
     if not str(content).strip():
         rep.hard("E-TEXT", loc, "文本内容为空；删掉这个元素，或写入内容")
-    runs = el.get("runs")
-    if runs:
-        if "\n" in content:
-            rep.hard("E-REF", loc, "runs 与 content 并存时 content 不能含换行")
-        if "".join(r.get("text", "") for r in runs) != content:
-            rep.hard("E-REF", loc, "runs 拼接与 content 不一致")
+    if paragraph_runs(el) is None:
+        rep.hard("E-REF", loc, "runs 拼接与 content 不一致（含 \\n）；分段要对得上")
     st = text_style(plan, page, el)
-    need = fit_height_in(str(content), st["size"], ew, st["line_spacing"])
+    need = fit_height_in(str(content), st["size"], ew, st["line_spacing"], st["pad"][0])
     if need > eh * LIMITS["type"]["fit_tolerance"]:
         rep.soft("W-FIT", loc, f"按 {st['size']:g}pt 估算需 {need:.2f}in，框高 {eh:.2f}in：先编辑文案，再加宽/拆页")
     minimum = LIMITS["type"]["min_pt"].get(el["type"], 0)
@@ -576,7 +623,7 @@ def check_path(page: Dict[str, Any], el, loc, boxes, rep: Report) -> None:
     if len({(round(a, 4), round(b, 4)) for a, b in pts}) < 2:
         rep.hard("E-GEOM", loc, "路径长度为零：至少要有两个不同的点")
     if el.get("closed") and el.get("arrow") and el["arrow"] != "none":
-        rep.soft("E-SHAPE", loc, "闭合路径的箭头没有意义，会被忽略")
+        rep.soft("W-SHAPE", loc, "闭合路径的箭头没有意义，会被忽略")
     chains = rotated_ancestors(page)
     own = set(chains.get(str(el.get("id")), ()))
     for point in raw:
@@ -585,7 +632,7 @@ def check_path(page: Dict[str, Any], el, loc, boxes, rep: Report) -> None:
         target_id = str(point.get("el"))
         target = boxes.get(target_id)
         if target is not None and (target[2] == 0 or target[3] == 0):
-            rep.soft("E-REF", loc, "锚点目标宽度或高度为 0，锚点位置可能不稳定")
+            rep.soft("W-REF", loc, "锚点目标宽度或高度为 0，锚点位置可能不稳定")
         stray = set(chains.get(target_id, ())) - own
         if stray:
             rep.soft("W-ANCHOR", loc,
@@ -612,7 +659,7 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
             if len(row) != len(headers):
                 rep.hard("E-CHART", loc, f"第 {r + 1} 行 {len(row)} 列 ≠ 表头 {len(headers)} 列")
         if chart.get("title"):
-            rep.soft("E-CHART", loc, "表格不画图题；用页面 title 或 caption 承担结论")
+            rep.soft("W-CHART", loc, "表格不画图题；用页面 title 或 caption 承担结论")
         return
 
     series = data.get("series") or []
@@ -621,7 +668,7 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
             rep.hard("E-CHART", loc, "scatter 的 data 需为 series[].points=[[x,y],…]")
             return
         if len(series) > 6:
-            rep.soft("E-CHART", loc, f"散点有 {len(series)} 个系列，靠颜色区分会失效；考虑合并或标注重点")
+            rep.soft("W-CHART", loc, f"散点有 {len(series)} 个系列，靠颜色区分会失效；考虑合并或标注重点")
         if not (chart.get("axis_titles") or {}):
             rep.soft("W-CHART", loc, "散点没有轴名：两个轴各是什么量、什么单位，读者无从判断")
     else:
@@ -638,8 +685,10 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
             for s in series:
                 if any(v < 0 for v in s["values"]):
                     rep.hard("E-CHART", loc, "饼/环不能有负值")
+            if not chart.get("data_labels") and chart.get("legend") is False:
+                rep.hard("E-CHART", loc, "饼/环既没有直标也没有图例：读者不知道每一块是什么")
 
-    # 单位与期间：不一致就不能共轴。shared_basis 只确认口径，不豁免单位与期间。
+    # 单位与期间：不一致就不能共轴。口径不同也不能，必须统一措辞或拆图。
     units = {str(s["unit"]).strip() for s in series if s.get("unit")}
     periods = {str(s["period"]).strip() for s in series if s.get("period")}
     bases = {str(s["basis"]).strip() for s in series if s.get("basis")}
@@ -647,10 +696,8 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
         rep.hard("E-CHART", loc, f"多系列单位不一致 {sorted(units)}；同一张图只画同一单位，或换算后改 unit")
     if len(periods) > 1:
         rep.hard("E-CHART", loc, f"多系列期间不一致 {sorted(periods)}；不能在同一坐标轴上比较")
-    if len(bases) > 1 and not chart.get("shared_basis"):
-        rep.hard("E-CHART", loc, f"多系列口径不一致 {sorted(bases)}；写清统一口径，或拆图")
-    if chart.get("shared_basis") and not bases and not chart.get("basis"):
-        rep.soft("E-CHART", loc, "shared_basis 没有任何口径文字支撑，等于没有说清")
+    if len(bases) > 1:
+        rep.hard("E-CHART", loc, f"多系列口径不一致 {sorted(bases)}；同一张图只比较同一口径，写清或拆图")
     if chart.get("unit") and units and str(chart["unit"]).strip() not in units:
         rep.hard("E-CHART", loc, f"图表级 unit「{chart['unit']}」与系列单位 {sorted(units)} 矛盾")
     if chart.get("period") and periods and str(chart["period"]).strip() not in periods:
@@ -659,11 +706,11 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
         rep.hard("E-CHART", loc, f"图表级 basis「{chart['basis']}」与系列口径 {sorted(bases)} 矛盾")
     if kind != "scatter":
         if not chart.get("unit") and not units and chart.get("stacked") != "percent":
-            rep.soft("E-CHART", loc, "没有声明单位；读者无法判断数值量纲")
+            rep.soft("W-CHART", loc, "没有声明单位；读者无法判断数值量纲")
         if not chart.get("period") and not periods:
-            rep.soft("E-CHART", loc, "没有声明期间；数值图的时效无从判断")
+            rep.soft("W-CHART", loc, "没有声明期间；数值图的时效无从判断")
     if not chart.get("basis") and not bases:
-        rep.soft("E-CHART", loc, "没有声明口径（分母/样本/统计方式）；读者无法核对一致性")
+        rep.soft("W-CHART", loc, "没有声明口径（分母/样本/统计方式）；读者无法核对一致性")
 
     stacked = chart.get("stacked")
     if stacked:
@@ -680,10 +727,11 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
                 if abs(total - 100) > 0.5:
                     bad.append(f"{data['categories'][j]}={total:g}")
             if bad:
-                level = "硬" if chart.get("data_labels") else "提示"
-                reporter = rep.hard if chart.get("data_labels") else rep.soft
-                reporter("E-CHART", loc,
-                         f"百分比堆叠要求每列合计 100，实际 {bad}；图形会归一化而直标仍是原值（{level}）")
+                message = f"百分比堆叠要求每列合计 100，实际 {bad}；图形会归一化而直标仍是原值"
+                if chart.get("data_labels"):
+                    rep.hard("E-CHART", loc, message)
+                else:
+                    rep.soft("W-CHART", loc, message)
     if chart.get("horizontal") and kind != "bar":
         rep.hard("E-CHART", loc, "horizontal 只用于 bar")
     combo = chart.get("combo_line_series") or []
@@ -699,11 +747,11 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
         if len(combo) >= len(names):
             rep.hard("E-CHART", loc, "combo_line_series 不能把全部系列都改成折线")
         if stacked:
-            rep.soft("E-CHART", loc, "堆叠柱上的折线读不出量级；确认这是有意为之")
+            rep.soft("W-CHART", loc, "堆叠柱上的折线读不出量级；确认这是有意为之")
 
     need = len(data.get("categories") or []) if kind in ("pie", "donut") else len(series)
     if len(palette) < need:
-        rep.soft("E-CHART", loc, f"palette 只有 {len(palette)} 色，需要 {need}；将循环取色")
+        rep.soft("W-CHART", loc, f"palette 只有 {len(palette)} 色，需要 {need}；将循环取色")
     if chart.get("axis_labels") is False and not chart.get("data_labels"):
         rep.hard("E-CHART", loc, "axis_labels=false 时必须 data_labels=true，否则无读数")
     hi = chart.get("highlight_category")
@@ -719,6 +767,94 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
         rep.hard("E-CHART", loc, "value_axis 的 max 不大于 min")
     if axis.get("min") is not None and axis["min"] > 0 and not axis.get("note"):
         rep.hard("E-CHART", loc, "数值轴不从零起时必须用 value_axis.note 写明起点，否则读者会把截轴当全量")
+
+
+CAPS_LABEL = re.compile(r"^[A-Z][A-Z0-9 &/·.\-–—]{2,23}$")
+
+
+def design_signals(plan: Dict[str, Any]) -> Report:
+    """整稿层面的模式信号：指出"这一处该由你看一眼"，不是评分，也不下审美结论。
+
+    只报能说出位置与可核对事实的东西：连续同构、标题下装饰线、无功能英文标签、
+    素材复用、待主张页、满幅图开场。判为可接受就在交付说明里写理由。
+    """
+    rep = Report()
+    pages = plan.get("pages") or []
+    if len(pages) < 2:
+        return rep
+    w, h = canvas(plan)
+    canvas_area = max(w * h, 1e-6)
+
+    vague = [p.get("id") for p in pages if p.get("role") not in ("open", "breathe")
+             and not str(p.get("claim") or "").strip()]
+    if vague:
+        rep.soft("W-CLAIM", "整稿", f"{vague} 没有写 claim：页题是话题还是论断？说不清就是未决")
+
+    prints: List[Tuple] = []
+    rule_pages: List[str] = []
+    label_pages: List[str] = []
+    image_use: Dict[str, List[str]] = {}
+    for page in pages:
+        boxes = page_geometry(page)
+        items = flatten(page)
+        sig = []
+        for item in items:
+            el, box = item["el"], boxes.get(str(item["el"].get("id")))
+            if box is None:
+                continue
+            sig.append((el.get("type"), round(box[0] / 0.5), round(box[1] / 0.5),
+                        round(box[2] / 0.5), round(box[3] / 0.5)))
+        prints.append(tuple(sorted(sig)))
+
+        titles = [(el, boxes.get(str(el.get("id")))) for el in all_elements(page)
+                  if el.get("type") == "title" and boxes.get(str(el.get("id")))]
+        for el in all_elements(page):
+            box = boxes.get(str(el.get("id")))
+            if box is None:
+                continue
+            thin = el.get("type") == "divider" or (el.get("type") == "shape" and box[3] <= 0.08)
+            if thin:
+                for _t, tb in titles:
+                    if tb is None:
+                        continue
+                    if (tb[1] + tb[3] - 0.15 <= box[1] <= tb[1] + tb[3] + 0.5
+                            and abs(box[0] - tb[0]) <= 0.8 and box[2] <= 3.2):
+                        rule_pages.append(str(page.get("id")))
+                        break
+            if el.get("type") in TEXT_TYPES:
+                text = str(el.get("content") or "").strip()
+                if CAPS_LABEL.match(text):
+                    label_pages.append(str(page.get("id")))
+            if el.get("type") == "image":
+                image_use.setdefault(str(el.get("image_id")), []).append(str(page.get("id")))
+
+    span = 1
+    for i in range(1, len(prints)):
+        span = span + 1 if prints[i] == prints[i - 1] else 1
+        if span == 3:
+            rep.soft("W-MONOTONY", f"{pages[i - 2].get('id')}–{pages[i].get('id')}",
+                     "连续三页的元素类型与位置几乎相同：这是同轴比较，还是同一骨架套了三遍？")
+
+    if len(set(rule_pages)) >= max(3, int(len(pages) * 0.6)):
+        rep.soft("W-RULE", "整稿", f"{len(set(rule_pages))} 页在标题下同位置放了细线：它在承担分隔，还是逐页复制的装饰？")
+
+    if len(set(label_pages)) >= 3:
+        rep.soft("W-LABEL", "整稿", f"{len(set(label_pages))} 页出现全大写英文短标签（如 OVERVIEW）：是导航需要，还是模板气质？")
+
+    reused = {k: v for k, v in image_use.items() if len(v) >= 3}
+    if reused:
+        detail = "；".join(f"{k} 用于 {len(v)} 页" for k, v in reused.items())
+        rep.soft("W-IMG-REUSE", "整稿", f"{detail}：同一素材重复出现，读者会以为是在填充版面")
+
+    first = pages[0]
+    first_full = [el for el in all_elements(first) if el.get("type") == "image"]
+    for el in first_full:
+        box = page_geometry(first).get(str(el.get("id")))
+        centered = [t for t in all_elements(first) if t.get("type") == "title" and t.get("align") == "center"]
+        if box and box[2] * box[3] >= 0.7 * canvas_area and centered:
+            rep.info("I-OPEN", str(first.get("id")), "开场是满幅图＋居中标题：这是默认做法，先确认它不是习惯")
+            break
+    return rep
 
 
 def resolve_bg(page: Dict[str, Any], target: Dict[str, Any]) -> Optional[str]:
@@ -770,9 +906,9 @@ def check_asset(loc: str, image_id: str, asset: Dict[str, Any], asset_root: Path
     if rights == "blocked":
         rep.hard("E-ASSET", loc, f"{image_id} 权利状态 blocked，不得使用")
     elif rights == "pending":
-        rep.soft("E-ASSET", loc, f"{image_id} 权利未确认（pending）；交付前确认或改用已清权素材")
+        rep.soft("W-ASSET", loc, f"{image_id} 权利未确认（pending）；交付前确认或改用已清权素材")
     elif rights == "cleared" and not asset.get("reference"):
-        rep.soft("E-ASSET", loc, f"{image_id} 声明已清权但没有 reference（授权页/合同/编号）")
+        rep.soft("W-ASSET", loc, f"{image_id} 声明已清权但没有 reference（授权页/合同/编号）")
     if generated and asset.get("used_as_evidence"):
         rep.hard("E-ASSET", loc, f"{image_id} 是生成图，不能作证据")
     gen = asset.get("generation")
@@ -785,7 +921,7 @@ def check_asset(loc: str, image_id: str, asset: Dict[str, Any], asset_root: Path
     if path and gfile and path.resolve() != gfile.resolve():
         rep.hard("E-ASSET", loc, f"{image_id} 与 generation.file={gen.get('file')} 不是同一物理文件")
     if path and not gen.get("sha256"):
-        rep.soft("E-ASSET", loc, f"{image_id} 是生成图但没有登记 sha256，无法证明用的是哪一次结果")
+        rep.soft("W-ASSET", loc, f"{image_id} 是生成图但没有登记 sha256，无法证明用的是哪一次结果")
     if path and gen.get("sha256"):
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
         if actual.lower() != str(gen["sha256"]).lower():
@@ -847,6 +983,39 @@ def _apply_gradient(shape, grad: Dict[str, Any]) -> None:
     lin.set("ang", str(int(round((float(grad.get("angle", 0)) % 360) * 60000))))
     lin.set("scaled", "0")
     grad_fill.insert(1, lin)
+
+
+def _set_corner_radius(shape, radius_in: float, box: Box) -> None:
+    """圆角矩形的圆角半径：adj 是短边的百分比（0.5 即胶囊）。默认 16.7% 常常过圆或过方。"""
+    from pptx.oxml.ns import qn
+    from lxml import etree
+    short = max(min(box[2], box[3]), 1e-6)
+    adj = int(round(min(max(radius_in / short, 0.0), 0.5) * 100000))
+    prst = shape._element.spPr.find(qn("a:prstGeom"))
+    if prst is None:
+        return
+    for old in prst.findall(qn("a:avLst")):
+        prst.remove(old)
+    av = etree.SubElement(prst, qn("a:avLst"))
+    gd = etree.SubElement(av, qn("a:gd"))
+    gd.set("name", "adj")
+    gd.set("fmla", f"val {adj}")
+
+
+def _apply_duotone(pic, duo: Dict[str, Any]) -> None:
+    """把图压进整稿色域：暗部→一个色、亮部→另一个色。原生可编辑，随时可摘。"""
+    from pptx.oxml.ns import qn
+    from lxml import etree
+    blip = pic._element.blipFill.find(qn("a:blip"))
+    if blip is None:
+        return
+    for old in blip.findall(qn("a:duotone")):
+        blip.remove(old)
+    node = etree.Element(qn("a:duotone"))
+    for key in ("dark", "light"):
+        clr = etree.SubElement(node, qn("a:srgbClr"))
+        clr.set("val", str(duo[key]).lstrip("#").upper())
+    blip.insert(0, node)
 
 
 def _apply_stroke(shape, stroke: Optional[Dict[str, Any]], arrow: str = "none") -> None:
@@ -924,21 +1093,19 @@ def add_text(slide, plan, page, el):
     tf = frame.text_frame
     tf.word_wrap = True
     tf.auto_size = MSO_AUTO_SIZE.NONE
-    inset = LIMITS["type"]["inset_in"]
-    tf.margin_left = tf.margin_right = Inches(inset["x"])
-    tf.margin_top = tf.margin_bottom = Inches(inset["y"])
+    pad_x, pad_y = st["pad"]
+    tf.margin_left = tf.margin_right = Inches(pad_x)
+    tf.margin_top = tf.margin_bottom = Inches(pad_y)
     tf.vertical_anchor = {"top": MSO_ANCHOR.TOP, "middle": MSO_ANCHOR.MIDDLE, "bottom": MSO_ANCHOR.BOTTOM}[st["valign"]]
     align = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT, "justify": PP_ALIGN.JUSTIFY}[st["align"]]
 
-    paragraphs = el["content"].split("\n")
-    runs_override = el.get("runs")
-    for idx, seg in enumerate(paragraphs):
+    paragraphs = paragraph_runs(el) or [(str(el.get("content", "")), [{"text": str(el.get("content", ""))}])]
+    for idx, (seg, pieces) in enumerate(paragraphs):
         para = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
         para.alignment = align
         para.line_spacing = st["line_spacing"]
         if el.get("space_after_pt"):
             para.space_after = Pt(float(el["space_after_pt"]))
-        pieces = runs_override if (runs_override and idx == 0) else [{"text": seg}]
         for piece in pieces:
             run = para.add_run()
             run.text = piece.get("text", "")
@@ -979,6 +1146,8 @@ def add_shape(slide, page, el):
     _apply_stroke(shape, el.get("stroke"))
     if el.get("rotation"):
         shape.rotation = float(el["rotation"])
+    if el.get("corner_in") is not None:
+        _set_corner_radius(shape, float(el["corner_in"]), box)
     if shape.has_text_frame:
         shape.text_frame.text = ""
     return shape
@@ -1032,6 +1201,8 @@ def add_image(slide, page, el, asset_root: Path):
     l, r, t, b = _crop_geometry(src_w, src_h, box[2], box[3], el.get("crop_focus"))
     if any(v > 0 for v in (l, r, t, b)):
         pic.crop_left, pic.crop_right, pic.crop_top, pic.crop_bottom = l, r, t, b
+    if el.get("duotone"):
+        _apply_duotone(pic, el["duotone"])
     if el.get("alpha") and float(el["alpha"]) < 1:
         blip = pic._element.blipFill.find(qn("a:blip"))
         if blip is not None:
@@ -1172,15 +1343,16 @@ def add_chart(slide, plan, page, el, palette: List[str]):
     stacked = bool(chart.get("stacked"))
 
     if kind in ("pie", "donut"):
-        obj.has_legend = True
-        _style_legend(obj, style, family)
+        obj.has_legend = bool(chart.get("legend", False))
+        if obj.has_legend:
+            _style_legend(obj, style, family)
         for j, point in enumerate(plot.series[0].points):
             point.format.fill.solid()
             point.format.fill.fore_color.rgb = RGBColor.from_string(colors[j % len(colors)].lstrip("#"))
             point.format.line.color.rgb = RGBColor.from_string(bg.lstrip("#"))
     elif kind == "scatter":
         from pptx.enum.chart import XL_MARKER_STYLE
-        obj.has_legend = len(series) > 1
+        obj.has_legend = bool(chart.get("legend", len(series) > 1))
         for i, s in enumerate(plot.series):
             color = RGBColor.from_string(colors[i].lstrip("#"))
             s.format.line.fill.background()  # 散点不连线：连线会暗示不存在的顺序
@@ -1191,7 +1363,7 @@ def add_chart(slide, plan, page, el, palette: List[str]):
             s.marker.format.line.color.rgb = color
     else:
         from pptx.enum.chart import XL_MARKER_STYLE
-        obj.has_legend = len(series) > 1
+        obj.has_legend = bool(chart.get("legend", len(series) > 1))
         for i, s in enumerate(plot.series):
             color = RGBColor.from_string(colors[i].lstrip("#"))
             if kind == "line":
@@ -1238,7 +1410,9 @@ def add_chart(slide, plan, page, el, palette: List[str]):
         _flip_category_axis(obj)
 
     label_format = _label_format(chart)
-    if chart.get("data_labels") and kind == "scatter":
+    if kind in ("pie", "donut") and chart.get("data_labels"):
+        _pie_labels(plot, chart, style, family, bg)
+    elif chart.get("data_labels") and kind == "scatter":
         _add_dlbls(plot._element, style, label_format)
     elif chart.get("data_labels"):
         plot.has_data_labels = True
@@ -1253,7 +1427,7 @@ def add_chart(slide, plan, page, el, palette: List[str]):
 
     if combo:
         line_plot = _split_combo(obj, combo, names, colors)
-        if line_plot is not None and chart.get("data_labels"):
+        if line_plot is not None and chart.get("combo_line_labels"):
             _add_dlbls(line_plot, style, label_format, "t")
 
     title = chart.get("title")
@@ -1299,7 +1473,7 @@ def _label_position(kind: str, stacked: bool):
 def _style_axes(obj, chart, style, family, kind: str) -> None:
     from pptx.util import Pt
     from pptx.dml.color import RGBColor
-    from pptx.enum.chart import XL_TICK_LABEL_POSITION
+    from pptx.enum.chart import XL_TICK_LABEL_POSITION, XL_TICK_MARK
     axis_on = chart.get("axis_labels", True)
     axis_cfg = chart.get("value_axis") or {}
 
@@ -1335,6 +1509,11 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
         _ensure_family(ca.tick_labels.font, family)
         ca.tick_labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
         ca.format.line.color.rgb = RGBColor.from_string(style["rule"].lstrip("#"))
+        if kind == "bar" and chart.get("horizontal"):
+            # 横条图的类别轴是左侧一条竖脊，只承载标签：留下脊线与刻度只会像残留物。
+            ca.format.line.fill.background()
+            ca.major_tick_mark = XL_TICK_MARK.NONE
+            ca.minor_tick_mark = XL_TICK_MARK.NONE
         try:
             ca.tick_labels.position = XL_TICK_LABEL_POSITION.LOW
         except Exception:
@@ -1409,6 +1588,73 @@ def _label_format(chart: Dict[str, Any]) -> str:
     if len(unit) <= 3:
         return base + '" ' + unit + '"'
     return base
+
+
+def _pie_labels(plot, chart: Dict[str, Any], style: Dict[str, str], family: str, bg: str) -> None:
+    """饼与环的直标：饼图放到扇区外并带类别名；环图放在环带内、只留数值并按扇区明度换墨色。
+
+    饼的薄片放不下字，所以外置；环带够宽，标签落在带内就得按带色取墨，
+    否则深底上压深字——这是渲染器无关的读法。
+    """
+    from pptx.util import Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.chart import XL_LABEL_POSITION
+
+    kind = chart["kind"]
+    plot.has_data_labels = True
+    labels = plot.data_labels
+    labels.number_format = _label_format(chart)
+    labels.number_format_is_linked = False
+    labels.font.size = Pt(LIMITS["chart"]["font_pt"]["label"])
+    _ensure_family(labels.font, family)
+    labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
+    labels.position = XL_LABEL_POSITION.OUTSIDE_END if kind == "pie" else XL_LABEL_POSITION.INSIDE_END
+    _force_show_values(plot)
+    _patch_dlbls(plot, show_cat_name=(kind == "pie"), separator=" ")
+
+    if kind != "donut":
+        return
+    for point in plot.series[0].points:
+        try:
+            slice_hex = "#" + str(point.format.fill.fore_color.rgb).upper()
+        except (AttributeError, TypeError, ValueError):
+            continue
+        ink = _best_ink(slice_hex, style, bg)
+        dl = point.data_label
+        dl.font.size = Pt(LIMITS["chart"]["font_pt"]["label"])
+        _ensure_family(dl.font, family)
+        dl.font.color.rgb = RGBColor.from_string(ink.lstrip("#"))
+
+
+def _best_ink(surface: str, style: Dict[str, str], bg: str) -> str:
+    """在给定表面上，深墨与白墨哪个对比更高就用哪个。只在这两档之间选，不发明第三种颜色。"""
+    dark, light = style["title"], "#FFFFFF"
+    return dark if contrast_ratio(dark, surface) >= contrast_ratio(light, surface) else light
+
+
+def _patch_dlbls(plot, show_cat_name: bool = False, separator: Optional[str] = None) -> None:
+    """按 CT_DLbls 的元素顺序改开关与分隔符；顺序错了 PowerPoint 会拒绝打开。"""
+    from pptx.oxml.ns import qn
+    from lxml import etree
+
+    dlbls = plot._element.find(qn("c:dLbls"))
+    if dlbls is None:
+        return
+    cat = dlbls.find(qn("c:showCatName"))
+    if cat is None:
+        cat = etree.SubElement(dlbls, qn("c:showCatName"))
+    cat.set("val", "1" if show_cat_name else "0")
+    sep = dlbls.find(qn("c:separator"))
+    if separator is None:
+        return
+    if sep is None:
+        sep = etree.Element(qn("c:separator"))
+        anchor = dlbls.find(qn("c:showLeaderLines"))
+        if anchor is not None:
+            anchor.addprevious(sep)
+        else:
+            dlbls.append(sep)
+    sep.text = separator
 
 
 def _force_show_values(plot) -> None:
@@ -1655,7 +1901,8 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
 
     prs.core_properties.title = plan.get("title", "")
     prs.core_properties.author = "ppt-visual-art-director"
-    prs.core_properties.comments = (plan.get("visual_concept") or "")[:500]
+    brief = plan.get("brief") or {}
+    prs.core_properties.comments = (brief.get("concept") or "")[:500]
     # 临时文件名带进程号：既不覆盖用户同名文件，也不会两次并发编译互相踩踏。
     tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
     try:
@@ -1707,14 +1954,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent)
 
     rep = Report()
+    report_path = Path(args.report).resolve() if args.report else None
+    # 源文件与交付物分家：输出、报告都不得落在 plan 上，报告也不得落在成品上。
+    for label, target in (("输出文件", out_path), ("--report", report_path)):
+        if target is not None and target == plan_path:
+            rep.hard("E-EXIST", str(target), f"{label}与 plan 同路径，会覆盖源文件")
+    if report_path is not None and report_path == out_path:
+        rep.hard("E-EXIST", str(out_path), "--report 与输出文件同路径，会互相覆盖")
+    if out_path.suffix.lower() not in (".pptx", ".pptm"):
+        rep.hard("E-EXIST", str(out_path), f"输出文件名应以 .pptx 结尾，收到 {out_path.name!r}")
     if out_path.exists() and not args.force:
         rep.hard("E-EXIST", str(out_path), "目标文件已存在，未写入；确认要替换就加 --force")
     if out_path.is_dir():
         rep.hard("E-EXIST", str(out_path), "输出路径是目录")
     elif not out_path.parent.is_dir():
         rep.hard("E-EXIST", str(out_path.parent), "输出目录不存在，先建目录再编译")
-    if args.report and Path(args.report).resolve() == out_path:
-        rep.hard("E-EXIST", str(out_path), "--report 与输出文件同路径，会互相覆盖")
     plan = load_plan(plan_path, rep)
     if plan is None or rep.blocked:
         for issue in rep.items:
@@ -1723,6 +1977,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     rep.extend(validate(plan, asset_root))
+    rep.extend(design_signals(plan))
     for issue in rep.items:
         print(issue)
     if rep.blocked:

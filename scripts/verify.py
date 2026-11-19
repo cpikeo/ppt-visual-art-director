@@ -36,34 +36,12 @@ EMU = C.EMU
 TEXT_TYPES = C.TEXT_TYPES
 
 
-class Findings:
-    def __init__(self) -> None:
-        self.items: List[C.Issue] = []
-
-    def add(self, level: str, code: str, where: str, message: str) -> None:
-        self.items.append(C.Issue(level, code, where, message))
-
-    @property
-    def blocked(self) -> bool:
-        return any(i.level == "HARD" for i in self.items)
-
-    def count(self, level: str) -> int:
-        return sum(1 for i in self.items if i.level == level)
-
-    def dump(self) -> List[Dict[str, str]]:
-        return [{"level": i.level, "code": i.code, "where": i.where, "message": i.message} for i in self.items]
-
-
 def _in(value: Optional[int]) -> Optional[float]:
     return None if value is None else round(value / EMU, 3)
 
 
 def _norm_ws(text: str) -> str:
     return " ".join(text.replace("\r\n", "\n").split())
-
-
-def _paras(text: str) -> List[str]:
-    return text.replace("\r\n", "\n").split("\n")
 
 
 # ---------------------------------------------------------------- 对象核对
@@ -87,7 +65,7 @@ def _collect(shapes) -> Dict[str, Any]:
     return {"index": index, "order": order}
 
 
-def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: Findings) -> Dict[str, Any]:
+def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: C.Report) -> Dict[str, Any]:
     from pptx import Presentation
 
     prs = Presentation(str(pptx))
@@ -150,7 +128,7 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: Findin
     return facts
 
 
-def verify_background(page: Dict[str, Any], slide, pid: str, f: Findings) -> None:
+def verify_background(page: Dict[str, Any], slide, pid: str, f: C.Report) -> None:
     from pptx.oxml.ns import qn
     bg = slide._element.find(qn("p:cSld")).find(qn("p:bg"))
     value = None
@@ -172,8 +150,7 @@ def verify_background(page: Dict[str, Any], slide, pid: str, f: Findings) -> Non
 def _expected_runs(plan, page, el) -> List[Dict[str, Any]]:
     st = C.text_style(plan, page, el)
     out = []
-    for idx, seg in enumerate(_paras(el["content"])):
-        pieces = el.get("runs") if (el.get("runs") and idx == 0) else [{"text": seg}]
+    for seg, pieces in (C.paragraph_runs(el) or [(str(el.get("content", "")), [{"text": str(el.get("content", ""))}])]):
         for piece in pieces:
             out.append({
                 "text": piece.get("text", ""),
@@ -202,7 +179,7 @@ def _angle_diff(a: float, b: float) -> float:
     return min(d, 360 - d)
 
 
-def verify_text(plan, page, el, shape, name, f: Findings) -> None:
+def verify_text(plan, page, el, shape, name, f: C.Report) -> None:
     from pptx.enum.dml import MSO_COLOR_TYPE
     from pptx.oxml.ns import qn
 
@@ -215,15 +192,22 @@ def verify_text(plan, page, el, shape, name, f: Findings) -> None:
 
     st = C.text_style(plan, page, el)
     paragraphs = shape.text_frame.paragraphs
-    if len(paragraphs) != len(_paras(el["content"])):
-        f.add("HARD", "V-TEXT", name, f"段落数 {len(paragraphs)} ≠ plan {len(_paras(el['content']))}")
-    for i, para in enumerate(paragraphs[: len(_paras(el["content"]))]):
+    want_paras = C.paragraph_runs(el) or [(el["content"], [])]
+    if len(paragraphs) != len(want_paras):
+        f.add("HARD", "V-TEXT", name, f"段落数 {len(paragraphs)} ≠ plan {len(want_paras)}")
+    for i, para in enumerate(paragraphs[: len(want_paras)]):
         got_align = str(para.alignment).split(" ")[0] if para.alignment is not None else "NONE"
         if got_align.upper() != st["align"].upper():
             f.add("HARD", "V-STYLE", f"{name}#p{i + 1}", f"对齐 {got_align} ≠ {st['align']}")
         if para.line_spacing is not None and abs(float(para.line_spacing) - st["line_spacing"]) > 0.02:
             f.add("SOFT", "V-STYLE", f"{name}#p{i + 1}",
                   f"行距 {float(para.line_spacing):.2f} ≠ plan {st['line_spacing']:.2f}")
+
+    pad_x, pad_y = st["pad"]
+    for side, want_pad in (("left", pad_x), ("right", pad_x), ("top", pad_y), ("bottom", pad_y)):
+        got_pad = getattr(shape.text_frame, f"margin_{side}")
+        if got_pad is None or abs(got_pad / EMU - want_pad) > 0.005:
+            f.add("SOFT", "V-STYLE", name, f"{side} 内边距 {None if got_pad is None else round(got_pad / EMU, 3)}in ≠ {want_pad}in")
 
     anchor = shape.text_frame.vertical_anchor
     want_anchor = {"top": "TOP", "middle": "MIDDLE", "bottom": "BOTTOM"}[st["valign"]]
@@ -260,7 +244,7 @@ def verify_text(plan, page, el, shape, name, f: Findings) -> None:
             f.add("HARD", "V-STYLE", tag, f"字距 {got_spc}pt ≠ {want['spacing']}pt")
 
 
-def verify_shape(page, el, shape, name, f: Findings) -> None:
+def verify_shape(page, el, shape, name, f: C.Report) -> None:
     from pptx.enum.dml import MSO_COLOR_TYPE
     from pptx.oxml.ns import qn
 
@@ -301,9 +285,31 @@ def verify_shape(page, el, shape, name, f: Findings) -> None:
                 f.add("HARD", "V-STYLE", name, f"声明了虚线 {el['stroke']['dash']}，成品没有")
     if el.get("rotation") is not None and _angle_diff(float(shape.rotation or 0), float(el["rotation"])) > 0.2:
         f.add("HARD", "V-STYLE", name, f"旋转 {shape.rotation}° ≠ {el['rotation']}°")
+    if el.get("corner_in") is not None:
+        want = _want_adj(float(el["corner_in"]), float(el["w"]), float(el["h"]))
+        got = _got_adj(shape)
+        if got is None or abs(got - want) > 400:
+            f.add("HARD", "V-STYLE", name, f"圆角 adj {got} ≠ 期望 {want}（半径 {el['corner_in']}in）")
 
 
-def verify_gradient(grad: Dict[str, Any], shape, name: str, f: Findings) -> None:
+def _want_adj(radius_in: float, w: float, h: float) -> int:
+    short = max(min(w, h), 1e-6)
+    return int(round(min(max(radius_in / short, 0.0), 0.5) * 100000))
+
+
+def _got_adj(shape) -> Optional[int]:
+    from pptx.oxml.ns import qn
+    gd = shape._element.spPr.find(".//" + qn("a:avLst") + "/" + qn("a:gd"))
+    if gd is None or gd.get("name") != "adj":
+        return None
+    fmla = str(gd.get("fmla") or "")
+    try:
+        return int(fmla.split()[-1])
+    except (IndexError, ValueError):
+        return None
+
+
+def verify_gradient(grad: Dict[str, Any], shape, name: str, f: C.Report) -> None:
     from pptx.oxml.ns import qn
 
     node = shape._element.find(".//" + qn("a:gradFill"))
@@ -341,7 +347,7 @@ def _fill_alpha(shape) -> float:
     return 1.0 if alpha is None else int(alpha.get("val")) / 100000.0
 
 
-def verify_path(page, el, shape, name, f: Findings) -> None:
+def verify_path(page, el, shape, name, f: C.Report) -> None:
     from pptx.oxml.ns import qn
 
     pts = C.resolve_points(el, C.page_geometry(page))
@@ -375,7 +381,7 @@ def verify_path(page, el, shape, name, f: Findings) -> None:
         f.add("HARD", "V-STYLE", name, "声明了两端箭头，成品只有一端")
 
 
-def verify_image(plan, el, shape, name, facts, asset_root: Path, f: Findings) -> None:
+def verify_image(plan, el, shape, name, facts, asset_root: Path, f: C.Report) -> None:
     from PIL import Image
     import io
 
@@ -412,6 +418,19 @@ def verify_image(plan, el, shape, name, facts, asset_root: Path, f: Findings) ->
     if abs(got_alpha - want_alpha) > 0.02:
         f.add("HARD", "V-STYLE", name, f"图片透明度 {got_alpha:.2f} ≠ {want_alpha:.2f}")
 
+    duo = el.get("duotone")
+    got_duo = blip.find(qn("a:duotone")) if blip is not None else None
+    if duo:
+        if got_duo is None:
+            f.add("HARD", "V-STYLE", name, "声明了双色调，成品的图片没有该效果")
+        else:
+            colors = ["#" + (c.get("val") or "").upper() for c in got_duo.findall(qn("a:srgbClr"))]
+            want = ["#" + str(duo["dark"]).lstrip("#").upper(), "#" + str(duo["light"]).lstrip("#").upper()]
+            if colors != want:
+                f.add("HARD", "V-STYLE", name, f"双色调 {colors} ≠ {want}（暗部在前、亮部在后）")
+    elif got_duo is not None:
+        f.add("SOFT", "V-STYLE", name, "未声明双色调，成品图片却有该效果")
+
 
 def _series_from_xml(shape) -> List[Dict[str, Any]]:
     """跨 plot 读取全部系列：组合图里柱与线分属两个 plot，按名称核对才可靠。"""
@@ -440,7 +459,7 @@ def _series_from_xml(shape) -> List[Dict[str, Any]]:
     return out
 
 
-def verify_chart(plan, page, el, shape, name, f: Findings) -> None:
+def verify_chart(plan, page, el, shape, name, f: C.Report) -> None:
     from pptx.oxml.ns import qn
     spec = el["chart"]
     kind = spec["kind"]
@@ -586,7 +605,7 @@ def _ser_name(ser) -> str:
     return node.text if node is not None and node.text else ""
 
 
-def verify_chart_style(plan, el, shape, name, f: Findings) -> None:
+def verify_chart_style(plan, el, shape, name, f: C.Report) -> None:
     """着色、柱宽、轴开关与轴名：这些决定读者能不能读出数，且全部来自 plan。"""
     from pptx.oxml.ns import qn
 
@@ -670,9 +689,52 @@ def verify_chart_style(plan, el, shape, name, f: Findings) -> None:
         got = [_ser_name(ser) for ser in line.findall(qn("c:ser"))] if line is not None else []
         if sorted(got) != sorted(str(c) for c in combo):
             f.add("HARD", "V-CHART", name, f"折线层系列 {got} ≠ plan {combo}")
+        want_line_labels = bool(spec.get("combo_line_labels"))
+        if _labels_on(line) != want_line_labels:
+            f.add("SOFT", "V-CHART", name,
+                  f"折线层直标 {_labels_on(line)} ≠ plan {want_line_labels}（柱的直标不自动扩展到折线）")
+
+    series_spec = spec["data"].get("series") or []
+    if kind in ("pie", "donut"):
+        want_legend = bool(spec.get("legend", False))
+    else:
+        want_legend = bool(spec.get("legend", len(series_spec) > 1))
+    if bool(obj.has_legend) != want_legend:
+        f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
+
+    if kind in ("pie", "donut") and spec.get("data_labels"):
+        dlbls = obj.plots[0]._element.find(qn("c:dLbls"))
+        pos = dlbls.find(qn("c:dLblPos")) if dlbls is not None else None
+        want_pos = "outEnd" if kind == "pie" else "inEnd"
+        if pos is None or pos.get("val") != want_pos:
+            f.add("SOFT", "V-CHART", name, f"直标位置 {None if pos is None else pos.get('val')} ≠ {want_pos}")
+        cat = dlbls.find(qn("c:showCatName")) if dlbls is not None else None
+        want_cat = kind == "pie"
+        got_cat = cat is not None and cat.get("val") in ("1", "true")
+        if got_cat != want_cat:
+            f.add("SOFT", "V-CHART", name,
+                  f"类别名开关 {got_cat} ≠ {want_cat}"
+                  f"（{'饼图外置直标要带类别名' if want_cat else '环带内的直标只留数值，类别交给图例'}）")
+        if kind == "donut":
+            labels = [d for d in obj._chartSpace.iter(qn("c:dLbl")) if d.find(qn("c:idx")) is not None]
+            for lbl in labels:
+                idx = int(lbl.find(qn("c:idx")).get("val"))
+                fill = lbl.find(".//" + qn("a:solidFill") + "/" + qn("a:srgbClr"))
+                if fill is None:
+                    f.add("SOFT", "V-CHART", name, f"环图第 {idx + 1} 个标签没有指定墨色，可能压在环带上读不出")
+                    continue
+                slices = [d for d in obj._chartSpace.iter(qn("c:dPt"))]
+                surface = None
+                for dpt in slices:
+                    if dpt.find(qn("c:idx")) is not None and int(dpt.find(qn("c:idx")).get("val")) == idx:
+                        s = dpt.find(".//" + qn("a:srgbClr"))
+                        surface = "#" + s.get("val") if s is not None else None
+                if surface and C.contrast_ratio("#" + fill.get("val"), surface) < 2.5:
+                    f.add("SOFT", "V-CHART", name,
+                          f"环图第 {idx + 1} 个标签墨色对环带仅 {C.contrast_ratio('#' + fill.get('val'), surface):.2f}:1")
 
 
-def verify_page_number(plan, page, book, index, pid, f: Findings) -> None:
+def verify_page_number(plan, page, book, index, pid, f: C.Report) -> None:
     cfg = C.page_numbers(plan)
     pn = book["index"].get("_page_number")
     if pid in cfg["hide"]:
@@ -722,7 +784,7 @@ def find_soffice() -> Optional[str]:
     return None
 
 
-def render(pptx: Path, render_dir: Path, f: Findings) -> Optional[Path]:
+def render(pptx: Path, render_dir: Path, f: C.Report) -> Optional[Path]:
     soffice = find_soffice()
     if soffice is None:
         f.add("INFO", "V-RENDER", "环境", "找不到 LibreOffice；页尺寸、断行、字体替换与溢出均未核验")
@@ -763,13 +825,24 @@ def _declared_families(plan, page) -> set:
     return families
 
 
+def _is_declared(rendered: str, declared: set, aliases: Dict[str, List[str]]) -> bool:
+    """渲染器报的是字体文件名（microsoftyahei），plan 写的是字族名（微软雅黑）；按别名表核对。"""
+    for fam in declared:
+        keys = aliases.get(fam.lower()) or []
+        if any(key in rendered for key in keys):
+            return True
+        if fam.lower().replace(" ", "") == rendered:
+            return True
+    return False
+
+
 def _overlap_area(a, b) -> float:
     ix = max(0.0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
     iy = max(0.0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
     return ix * iy
 
 
-def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path, f: Findings) -> Dict[str, Any]:
+def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path, f: C.Report) -> Dict[str, Any]:
     import pymupdf
     from PIL import Image
 
@@ -794,14 +867,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         if abs(page_w - w_in) > 0.05 or abs(page_h - h_in) > 0.05:
             f.add("HARD", "V-PAGES", pid, f"页面尺寸 {page_w}×{page_h}in ≠ 画布 {w_in}×{h_in}in")
 
-        fonts_here = {font_family_base(font[3]) for font in pdf_page.get_fonts()}
-        facts["fonts"][pid] = sorted(fonts_here)
-        all_fonts |= fonts_here
         declared = _declared_families(plan, spec_page)
-        if len(fonts_here) > max(len(declared), 1):
-            f.add("SOFT", "V-FONT", pid,
-                  f"渲染出现 {len(fonts_here)} 套字族 {sorted(fonts_here)}，本页只声明 {sorted(declared)}；"
-                  f"有字体被替换，断行与字宽不可信")
 
         pix = pdf_page.get_pixmap(dpi=dpi)
         png_path = render_dir / f"p{index + 1:02d}.png"
@@ -815,12 +881,14 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
                 f.add("SOFT", "V-BLANK", pid, f"页面近乎空白（墨迹占比 {ink:.4%}）")
 
         page_box = (0.0, 0.0, page_w, page_h)
+        fonts_here: set = set()
         for block in pdf_page.get_text("dict")["blocks"]:
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
                     text = span["text"].strip()
                     if not text:
                         continue
+                    fonts_here.add(font_family_base(span["font"]))
                     x0, y0, x1, y1 = span["bbox"]
                     sx0, sy0, sx1, sy1 = x0 / 72, y0 / 72, x1 / 72, y1 / 72
                     if sx0 < -0.02 or sy0 < -0.02 or sx1 > page_box[2] + 0.02 or sy1 > page_box[3] + 0.02:
@@ -856,6 +924,14 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
                         break
             if not hit:
                 f.add("HARD", "V-PAGENO", pid, f"渲染里角区找不到页码「{want}」")
+
+        facts["fonts"][pid] = sorted(fonts_here)
+        all_fonts |= fonts_here
+        extra = sorted(fam for fam in fonts_here if not _is_declared(fam, declared, aliases))
+        if extra:
+            f.add("SOFT", "V-FONT", pid,
+                  f"渲染里出现未声明的字族 {extra}（本页声明 {sorted(declared)}）；"
+                  f"该页断行只代表替代字体，不能当作目标机结论")
 
         missing = [fam for fam in declared
                    if fam.lower() in aliases and not any(a in " ".join(fonts_here) for a in aliases[fam.lower()])]
@@ -928,13 +1004,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\nplan 本身不合契约：先修 plan，核验才有意义。")
         return 2
 
-    f = Findings()
+    f = C.Report()
     key = pptx.read_bytes()
     sha = hashlib.sha256(key).hexdigest()
     facts: Dict[str, Any] = {"pptx": str(pptx), "sha256": sha, "bytes": len(key), "render": {"done": False}}
     asset_root = plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent
     facts["asset_root"] = str(asset_root)
     facts.update(verify_objects(plan, pptx, asset_root, f))
+    for issue in C.design_signals(plan).items:
+        f.items.append(issue)
 
     # 每份 pptx 一个子目录：同一目录里核验两份稿时，PNG 与缩略总览不会互相覆盖。
     render_dir = Path(args.render_dir).resolve() if args.render_dir else pptx.parent / "render" / pptx.stem
@@ -948,6 +1026,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     status = "BLOCK" if f.blocked else "READY"
     print(f"\n对象与渲染核验：{status}   硬问题 {f.count('HARD')}｜设计提示 {f.count('SOFT')}｜说明 {f.count('INFO')}")
+    brief = plan.get("brief") or {}
+    if brief:
+        print(f"概念：{str(brief.get('concept', ''))[:80]}")
+        print(f"否决：{'；'.join(str(v) for v in brief.get('veto') or [])[:120]}")
     print(f"PPTX SHA-256：{sha}")
     if facts["render"].get("done"):
         print(f"渲染：{facts['render']['pdf']}")
@@ -958,7 +1040,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("未渲染：视觉相关判断一律没有依据。不要声称「已预览」「版面无溢出」「断行正常」。")
 
     if args.report:
-        Path(args.report).write_text(json.dumps({"status": status, **facts, "findings": f.dump()},
+        Path(args.report).write_text(json.dumps({"status": status, **facts, "findings": f.to_dict()},
                                                 ensure_ascii=False, indent=2), encoding="utf-8")
     return 0 if not f.blocked else 1
 
