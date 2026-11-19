@@ -32,7 +32,11 @@ sys.path.insert(0, str(HERE))
 import compile as C  # noqa: E402  诊断类型、字体写入、颜色与几何工具共用一份实现
 import inspect_pptx as I  # noqa: E402  保留核对复用只读解析器
 
+qn = C.qn
+
 OPS = ("text", "box", "style", "fill", "line", "order", "image", "chart_data", "delete", "background")
+# 这些字段一旦出现在操作里，就说明它有意改样式；只改字时一个都不该有。
+STYLE_KEYS = ("font", "font_ea", "font_size", "bold", "color", "letter_spacing_pt")
 EMU = C.EMU
 
 
@@ -73,9 +77,12 @@ def resolve(shape_list, op: Dict[str, Any]) -> Any:
 
 
 def base_style(shape) -> Dict[str, Any]:
-    """改动前取第一个 run 的样式作为底：只改文字时，样子不该变。"""
+    """取第一个 run 的**显式**样式；没有声明的字段就是 None。
+
+    None 表示"继承自版式或主题"，不能替它编一个值——真实稿的标题多半是 44pt 主题样式、
+    run 上什么都没有，编成 18pt 等于把设计改坏，而保留核对不会响。
+    """
     from pptx.enum.dml import MSO_COLOR_TYPE
-    from pptx.oxml.ns import qn
 
     for para in shape.text_frame.paragraphs:
         for run in para.runs:
@@ -86,32 +93,38 @@ def base_style(shape) -> Dict[str, Any]:
             except (AttributeError, ValueError):
                 color = None
             rPr = run._r.find(qn("a:rPr"))
-            ea = rPr.find(qn("a:ea")).get("typeface") if (rPr is not None and rPr.find(qn("a:ea")) is not None) else None
-            return {"font": run.font.name, "ea": ea,
+            ea = None
+            if rPr is not None and rPr.find(qn("a:ea")) is not None:
+                ea = rPr.find(qn("a:ea")).get("typeface")
+            spc = rPr.get("spc") if rPr is not None else None
+            return {"font": run.font.name, "font_ea": ea,
                     "size": run.font.size.pt if run.font.size else None,
                     "bold": run.font.bold, "color": color,
+                    "spacing": int(spc) / 100.0 if spc else None,
                     "align": str(para.alignment).split(" ")[0].lower() if para.alignment is not None else None,
                     "line_spacing": para.line_spacing}
     return {}
 
 
-def merge_run(op_run: Dict[str, Any], op: Dict[str, Any], base: Dict[str, Any]) -> Dict[str, Any]:
-    """run 级 > 操作级 > 原稿第一个 run。op 的字段名是 font_size，内部叫 size，这里做映射。"""
-    def pick(name: str, *aliases: str) -> Any:
-        for key in (name,) + aliases:
-            if op_run.get(key) is not None:
-                return op_run[key]
-        for key in (name,) + aliases:
-            if op.get(key) is not None:
-                return op[key]
-        return base.get(name)
+def _first(*values: Any) -> Any:
+    """第一个非 None 的值。False 与 0 都是合法值，不能用 or 链代替。"""
+    for value in values:
+        if value is not None:
+            return value
+    return None
 
-    bold = pick("bold")
-    return {"font": pick("font") or base.get("ea") or "微软雅黑",
-            "size": float(pick("size", "font_size") or base.get("size") or 18),
-            "bold": bool(bold) if bold is not None else False,
-            "color": str(pick("color") or base.get("color") or C.LIMITS["defaults"]["ink"]).upper(),
-            "spacing": float(pick("spacing", "letter_spacing_pt") or 0)}
+
+def _write_run(run, piece: Dict[str, Any], op: Dict[str, Any], base: Dict[str, Any]) -> None:
+    """run 级 > 操作级 > 原稿显式值；三层都没有就不写，让继承继续生效。"""
+    C.set_run_attrs(
+        run,
+        font=_first(piece.get("font"), op.get("font"), base.get("font")),
+        font_ea=_first(piece.get("font_ea"), op.get("font_ea"), base.get("font_ea")),
+        size=_first(piece.get("font_size"), op.get("font_size"), base.get("size")),
+        color=_first(piece.get("color"), op.get("color"), base.get("color")),
+        bold=_first(piece.get("bold"), op.get("bold"), base.get("bold")),
+        spacing=_first(piece.get("letter_spacing_pt"), op.get("letter_spacing_pt"), base.get("spacing")),
+    )
 
 
 def write_text(shape, op: Dict[str, Any]) -> None:
@@ -146,16 +159,15 @@ def write_text(shape, op: Dict[str, Any]) -> None:
         for piece in pieces or ([{"text": seg}] if seg else []):
             run = para.add_run()
             run.text = piece.get("text", "")
-            st = merge_run(piece, op, base)
-            C._set_run_font(run, st["font"], st["size"], st["color"], st["bold"], st["spacing"])
+            _write_run(run, piece, op, base)
 
 
 def apply_style(shape, op: Dict[str, Any]) -> None:
+    """只改声明的属性。一个 color 操作不该顺手把字号、字重、字距也重写一遍。"""
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
     from pptx.util import Pt
 
     tf = shape.text_frame
-    base = base_style(shape)
     for para in tf.paragraphs:
         if op.get("align"):
             para.alignment = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER,
@@ -163,10 +175,9 @@ def apply_style(shape, op: Dict[str, Any]) -> None:
         if op.get("line_spacing"):
             para.line_spacing = float(op["line_spacing"])
         for run in para.runs:
-            st = merge_run({}, op, base)
-            if op.get("letter_spacing_pt") is not None:
-                st["spacing"] = float(op["letter_spacing_pt"])
-            C._set_run_font(run, st["font"], st["size"], st["color"], st["bold"], st["spacing"])
+            C.set_run_attrs(run, font=op.get("font"), font_ea=op.get("font_ea"),
+                            size=op.get("font_size"), color=op.get("color"),
+                            bold=op.get("bold"), spacing=op.get("letter_spacing_pt"))
     if op.get("valign"):
         tf.vertical_anchor = {"top": MSO_ANCHOR.TOP, "middle": MSO_ANCHOR.MIDDLE,
                               "bottom": MSO_ANCHOR.BOTTOM}[op["valign"]]
@@ -187,7 +198,6 @@ def apply_box(shape, op: Dict[str, Any]) -> None:
 
 def apply_fill(shape, op: Dict[str, Any]) -> None:
     from pptx.dml.color import RGBColor
-    from pptx.oxml.ns import qn
     from lxml import etree
 
     color = op.get("color")
@@ -237,7 +247,6 @@ def apply_order(shape, op: Dict[str, Any]) -> None:
 
 
 def apply_image(shape, path: Path) -> None:
-    from pptx.oxml.ns import qn
 
     if not path.is_file():
         raise C.BadOp(f"素材不存在：{path}")
@@ -303,10 +312,13 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
             continue
         shape = resolve(slide.shapes, op)
         touched.add((op["page"], shape.name))
+        style_free = False
 
         if kind == "text":
             if op.get("content") is None:
                 raise C.BadOp(f"{where}: text 需要 content")
+            style_free = not any(op.get(k) is not None for k in STYLE_KEYS) and not any(
+                k in r for r in (op.get("runs") or []) for k in STYLE_KEYS)
             write_text(shape, op)
         elif kind == "box":
             if not any(op.get(k) is not None for k in ("x", "y", "w", "h")):
@@ -334,7 +346,7 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
         elif kind == "delete":
             shape._element.getparent().remove(shape._element)
         log.append({"op": n, "kind": kind, "page": op["page"], "target": shape.name,
-                    "note": op.get("note", "")})
+                    "note": op.get("note", ""), "style_free": style_free})
     return touched, bg_touched
 
 
@@ -399,14 +411,31 @@ def post_check(after: Dict[str, Any], f: C.Report) -> None:
                     break
 
 
-def compare(before: Dict[str, Any], after: Dict[str, Any], touched: set, bg_touched: set, f: C.Report) -> Dict[str, Any]:
-    """保留核对：结构层逐项相等，未点名的对象逐项一致。这是"没有顺手改坏别处"的唯一证据。"""
+def _text_sig(obj: Dict[str, Any]):
+    """第一个 run 的样式签名：只改字时，它必须一字不差。"""
+    paras = (obj.get("styles") or {}).get("paragraphs") or []
+    runs = paras[0].get("runs") if paras else None
+    if not runs:
+        return None
+    r = runs[0]
+    return (r.get("size_pt"), r.get("bold"), r.get("font"), r.get("ea"), r.get("color"))
+
+
+def compare(before: Dict[str, Any], after: Dict[str, Any], touched: set, bg_touched: set,
+            f: C.Report, plain_text: Optional[set] = None) -> Dict[str, Any]:
+    """保留核对：结构层逐项相等，未点名的对象逐项一致。这是"没有顺手改坏别处"的唯一证据。
+
+    `plain_text` 是"只换字、没有声明任何样式"的操作；这类改动之后第一段的字级必须原样。
+    真实稿的标题多半继承版式（run 上没有显式字级），把继承值写死会把它从 44pt 压成 18pt，
+    而页数、母版、几何全都对得上——只比"文字"字段是发现不了的。
+    """
     for key, label in (("slides", "页数"), ("masters", "母版数"), ("layouts", "版式数"), ("macros", "宏")):
         if before.get(key) != after.get(key):
             f.hard("E-PRESERVE", label, f"{before.get(key)} → {after.get(key)}")
     if before.get("theme_fonts") != after.get("theme_fonts"):
         f.hard("E-PRESERVE", "主题字体", "改动前后不一致")
 
+    plain_text = plain_text or set()
     deleted = 0
     for i, b_page in enumerate(before["pages"]):
         a_page = after["pages"][i] if i < len(after["pages"]) else None
@@ -421,9 +450,16 @@ def compare(before: Dict[str, Any], after: Dict[str, Any], touched: set, bg_touc
         a_objs = {o["name"]: o for o in a_page["objects"]}
         deleted += len([n for n in b_objs if n not in a_objs])
         for name, obj in b_objs.items():
-            if (i + 1, name) in touched or name not in a_objs:
+            if name not in a_objs:
                 continue
             twin = a_objs[name]
+            if (i + 1, name) in touched:
+                if (i + 1, name) in plain_text:
+                    old_sig, new_sig = _text_sig(obj), _text_sig(twin)
+                    if old_sig and new_sig and old_sig != new_sig:
+                        f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}",
+                               f"只改文字的操作用改了样式：{old_sig} → {new_sig}")
+                continue
             for field, label in (("kind", "类型"), ("box_in", "几何"), ("rotation", "旋转"), ("text", "文字")):
                 if obj.get(field) != twin.get(field):
                     f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", f"未点名的{label}被改动：{obj.get(field)} → {twin.get(field)}")
@@ -497,7 +533,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             tmp.unlink()
 
     after = I.inspect(out)
-    facts = compare(before, after, touched, bg_touched, rep)
+    styled = {(op.get("page"), op.get("target")) for op in ops
+              if op.get("op") == "style" or any(op.get(k) is not None for k in STYLE_KEYS)}
+    plain_text = {(e["page"], e.get("target")) for e in log if e.get("style_free")} - styled
+    facts = compare(before, after, touched, bg_touched, rep, plain_text)
     post_check(after, rep)
     status = "BLOCK" if rep.blocked else "READY"
 

@@ -2,6 +2,7 @@
 python-pptx>=1.0.2,<2
 jsonschema>=4.18,<5
 Pillow>=10,<13
+lxml>=5          # compile.py / verify.py 直接读写 OOXML；python-pptx 也会带上它，这里显式声明
 
 # 渲染核验（PDF → 页尺寸、词框、字体的读取与 PNG 导出）；缺失时 verify.py 会跳过渲染核对
 pymupdf>=1.24

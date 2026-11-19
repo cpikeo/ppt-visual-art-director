@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from lxml import etree
+
 HERE = Path(__file__).resolve().parent
 LIMITS: Dict[str, Any] = json.loads((HERE / "limits.json").read_text(encoding="utf-8-sig"))
 SCHEMA: Dict[str, Any] = json.loads((HERE / "plan.schema.json").read_text(encoding="utf-8-sig"))
@@ -38,6 +40,20 @@ EMU = 914400.0
 PT_EMU = 12700.0
 
 Box = Tuple[float, float, float, float]
+
+# OOXML 命名空间。自己拼簇名而不用 pptx.oxml.ns.qn：那会把 pptx 提升为导入期依赖，
+# 而本模块要先能在"只校验 plan"的场景下单独运行。
+_NS = {
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "p": "http://schemas.openxmlformats.org/presentationml/2006/main",
+    "c": "http://schemas.openxmlformats.org/drawingml/2006/chart",
+    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+}
+
+
+def qn(tag: str) -> str:
+    prefix, local = tag.split(":")
+    return "{%s}%s" % (_NS[prefix], local)
 
 
 # ---------------------------------------------------------------- 诊断
@@ -361,18 +377,21 @@ def substantive_overlap(a: Box, b: Box) -> bool:
 
 
 def resolve_asset(asset_root: Path, image_id: str) -> Optional[Path]:
+    """image_id → 素材文件：先按原名，再补常见扩展名。只认这两个规则。
+
+    不做"同名不同扩展名"的兜底：那会在 hero.png 与 hero-2.jpg 并存时悄悄取到另一张图，
+    而核验器用的是同一个解析函数，两边一起错，谁也发现不了。
+    """
     direct = asset_root / image_id
     if direct.is_file():
         return direct
+    known = {".png", ".jpg", ".jpeg", ".webp"}
+    if direct.suffix.lower() in known:
+        return None
     for ext in (".png", ".jpg", ".jpeg", ".webp", ".PNG", ".JPG", ".JPEG", ".WEBP"):
         candidate = asset_root / (image_id + ext)
         if candidate.is_file():
             return candidate
-    stem = Path(image_id).stem
-    if asset_root.is_dir():
-        for f in sorted(asset_root.iterdir()):
-            if f.is_file() and f.stem == stem:
-                return f
     return None
 
 
@@ -476,6 +495,8 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
         seen_pages.add(pid)
 
         elements = page.get("elements") or []
+        if not elements:
+            rep.soft("W-EMPTY", pid, "本页没有任何元素：成品只有页码，确认这是有意的空页")
         ids: set = set()
         for el in all_elements(page):
             eid = el.get("id", "?")
@@ -904,7 +925,8 @@ def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]
         return None, None
     left, right, top, bottom = _crop_geometry(px_w, px_h, w, h, focus)
     loss = 1 - (1 - left - right) * (1 - top - bottom)
-    return min(px_w / w, px_h / h), loss
+    # 有效分辨率按"最终留在画面里的那部分像素"算：裁得越紧，同样的框里 ppi 越高。
+    return min(px_w * (1 - left - right) / w, px_h * (1 - top - bottom) / h), loss
 
 
 def check_asset(loc: str, image_id: str, asset: Dict[str, Any], asset_root: Path, rep: Report) -> None:
@@ -941,22 +963,18 @@ def check_asset(loc: str, image_id: str, asset: Dict[str, Any], asset_root: Path
 def _strip_style(shape) -> None:
     """删掉 p:style：主题的 effectRef 会带来投影，LibreOffice 与 PowerPoint 表现还不一致。
     形状的填充与描边全部由 plan 显式给出，不需要主题引用。"""
-    from pptx.oxml.ns import qn
     style = shape._element.find(qn("p:style"))
     if style is not None:
         shape._element.remove(style)
 
 
 def _alpha_on(color_node, alpha: float) -> None:
-    from pptx.oxml.ns import qn
-    from lxml import etree
     for old in color_node.findall(qn("a:alpha")):
         color_node.remove(old)
     etree.SubElement(color_node, qn("a:alpha")).set("val", str(int(round(alpha * 100000))))
 
 
 def _apply_fill_alpha(shape, alpha: float) -> None:
-    from pptx.oxml.ns import qn
     solid = shape.fill._xPr.find(qn("a:solidFill"))
     if solid is None:
         return
@@ -966,8 +984,6 @@ def _apply_fill_alpha(shape, alpha: float) -> None:
 def _apply_gradient(shape, grad: Dict[str, Any]) -> None:
     """两停线性渐变：两端各自可声明透明度。用于压图蒙版、光带与大面积色场过渡。"""
     from pptx.dml.color import RGBColor
-    from pptx.oxml.ns import qn
-    from lxml import etree
 
     shape.fill.gradient()
     grad_fill = shape.fill._xPr.find(qn("a:gradFill"))
@@ -992,12 +1008,15 @@ def _apply_gradient(shape, grad: Dict[str, Any]) -> None:
     grad_fill.insert(1, lin)
 
 
+def corner_adj(radius_in: float, w: float, h: float) -> int:
+    """圆角半径 → adj（短边的百分比，0.5 即胶囊）。编译与核验共用这一个换算。"""
+    short = max(min(w, h), 1e-6)
+    return int(round(min(max(radius_in / short, 0.0), 0.5) * 100000))
+
+
 def _set_corner_radius(shape, radius_in: float, box: Box) -> None:
-    """圆角矩形的圆角半径：adj 是短边的百分比（0.5 即胶囊）。默认 16.7% 常常过圆或过方。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
-    short = max(min(box[2], box[3]), 1e-6)
-    adj = int(round(min(max(radius_in / short, 0.0), 0.5) * 100000))
+    """默认 16.7% 常常过圆或过方；圆角半径按英寸声明，按短边换算后写入 adj。"""
+    adj = corner_adj(radius_in, box[2], box[3])
     prst = shape._element.spPr.find(qn("a:prstGeom"))
     if prst is None:
         return
@@ -1011,8 +1030,6 @@ def _set_corner_radius(shape, radius_in: float, box: Box) -> None:
 
 def _apply_duotone(pic, duo: Dict[str, Any]) -> None:
     """把图压进整稿色域：暗部→一个色、亮部→另一个色。原生可编辑，随时可摘。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
     blip = pic._element.blipFill.find(qn("a:blip"))
     if blip is None:
         return
@@ -1028,8 +1045,6 @@ def _apply_duotone(pic, duo: Dict[str, Any]) -> None:
 def _apply_stroke(shape, stroke: Optional[Dict[str, Any]], arrow: str = "none") -> None:
     from pptx.util import Pt
     from pptx.dml.color import RGBColor
-    from pptx.oxml.ns import qn
-    from lxml import etree
 
     if not stroke:
         shape.line.fill.background()
@@ -1053,8 +1068,6 @@ def _apply_stroke(shape, stroke: Optional[Dict[str, Any]], arrow: str = "none") 
 
 def _ensure_family(font, family: str) -> None:
     """图表文字也要写东亚字体：只写 latin 时，中文会被渲染器换掉，整稿字族就断了。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
     font.name = family
     rPr = getattr(font, "_rPr", None)
     if rPr is None:
@@ -1066,24 +1079,43 @@ def _ensure_family(font, family: str) -> None:
         node.set("typeface", family)
 
 
-def _set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0) -> None:
+def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = None,
+                  size: Optional[float] = None, color: Optional[str] = None,
+                  bold: Optional[bool] = None, spacing: Optional[float] = None) -> None:
+    """只写已知属性；None 表示"不知道"，留空让目标文件继续继承。
+
+    改稿通路的全部意义是"只改被点名的东西"。把继承值写成显式值，会把 44pt 的标题
+    压成 18pt、把主题粗体改成常规，而保留核对仍然报 READY——这是最坏的一种失败。
+    """
     from pptx.util import Pt
     from pptx.dml.color import RGBColor
-    from pptx.oxml.ns import qn
-    from lxml import etree
-    font = run.font
-    font.size = Pt(size)
-    font.bold = bold
-    font.name = family
-    font.color.rgb = RGBColor.from_string(color.lstrip("#").upper())
-    rPr = run._r.get_or_add_rPr()
-    for tag in ("a:ea", "a:cs"):
-        node = rPr.find(qn(tag))
-        if node is None:
-            node = etree.SubElement(rPr, qn(tag))
-        node.set("typeface", family)
-    if spacing:
-        rPr.set("spc", str(int(round(spacing * 100))))
+
+    font_obj = run.font
+    if size is not None:
+        font_obj.size = Pt(float(size))
+    if bold is not None:
+        font_obj.bold = bool(bold)
+    if font is not None:
+        font_obj.name = font
+    if font is not None or font_ea is not None:
+        rPr = run._r.get_or_add_rPr()
+        for tag in ("a:ea", "a:cs"):
+            node = rPr.find(qn(tag))
+            if node is None:
+                node = etree.SubElement(rPr, qn(tag))
+            node.set("typeface", font_ea or font)
+    if color is not None:
+        font_obj.color.rgb = RGBColor.from_string(color.lstrip("#").upper())
+    if spacing is not None:
+        rPr = run._r.get_or_add_rPr()
+        if spacing:
+            rPr.set("spc", str(int(round(spacing * 100))))
+        else:
+            rPr.attrib.pop("spc", None)
+
+
+def _set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0) -> None:
+    set_run_attrs(run, font=family, size=size, color=color, bold=bold, spacing=spacing)
 
 
 # ---------------------------------------------------------------- 建对象
@@ -1124,8 +1156,6 @@ def add_text(slide, plan, page, el):
                 bool(piece.get("bold", st["bold"])),
                 float(piece.get("letter_spacing_pt", st["spacing"])),
             )
-    if el.get("rotation"):
-        frame.rotation = float(el["rotation"])
     return frame
 
 
@@ -1153,8 +1183,6 @@ def add_shape(slide, page, el):
     else:
         shape.fill.background()
     _apply_stroke(shape, el.get("stroke"))
-    if el.get("rotation"):
-        shape.rotation = float(el["rotation"])
     if el.get("corner_in") is not None:
         _set_corner_radius(shape, float(el["corner_in"]), box)
     if shape.has_text_frame:
@@ -1163,7 +1191,7 @@ def add_shape(slide, page, el):
 
 
 def add_path(slide, page, el, boxes):
-    from pptx.util import Emu, Pt
+    from pptx.util import Emu
     from pptx.enum.shapes import MSO_CONNECTOR
     from pptx.dml.color import RGBColor
 
@@ -1195,8 +1223,6 @@ def add_path(slide, page, el, boxes):
 
 def add_image(slide, page, el, asset_root: Path):
     from pptx.util import Inches
-    from pptx.oxml.ns import qn
-    from lxml import etree
     from PIL import Image
 
     path = resolve_asset(asset_root, el["image_id"])
@@ -1254,8 +1280,6 @@ def _deemphasize(bg: str, kind: str) -> str:
 
 def _left_align_chart_title(obj) -> None:
     """把图表标题框固定到图表区左上：默认 auto layout 会把它居中，与左对齐的轴脱节。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
     title = obj._chartSpace.find(qn("c:chart")).find(qn("c:title"))
     layout = None if title is None else title.find(qn("c:layout"))
     if layout is None:
@@ -1271,8 +1295,6 @@ def _left_align_chart_title(obj) -> None:
 
 def _flip_category_axis(obj) -> None:
     """横向条形图默认把第一个类别放在最下面；阅读顺序应从数据的第一项开始。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
     cat = obj._chartSpace.find(".//" + qn("c:catAx"))
     if cat is None:
         return
@@ -1310,7 +1332,6 @@ def add_chart(slide, plan, page, el, palette: List[str]):
     from pptx.util import Inches, Pt
     from pptx.dml.color import RGBColor
     from pptx.chart.data import CategoryChartData, XyChartData
-    from pptx.enum.chart import XL_LABEL_POSITION
 
     chart = el["chart"]
     kind = chart["kind"]
@@ -1432,7 +1453,7 @@ def add_chart(slide, plan, page, el, palette: List[str]):
         _ensure_family(labels.font, family)
         labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
         labels.position = _label_position(kind, stacked)
-        _force_show_values(plot)
+        _patch_dlbls(plot)
 
     if combo:
         line_plot = _split_combo(obj, combo, names, colors)
@@ -1547,8 +1568,6 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
 
 def _split_combo(obj, combo: set, names: List[str], colors: List[str]):
     """把指定系列从柱图移到折线图：两条 plot 共用同一数值轴。返回折线层元素，供直标使用。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
 
     plot_area = obj._chartSpace.find(qn("c:chart")).find(qn("c:plotArea"))
     bar = plot_area.find(qn("c:barChart"))
@@ -1578,7 +1597,6 @@ def _split_combo(obj, combo: set, names: List[str], colors: List[str]):
 
 def _scatter_marker_only(obj) -> None:
     """默认线型散点会把点连成线，暗示不存在的顺序；散点只留标记。"""
-    from pptx.oxml.ns import qn
     style = obj._chartSpace.find(".//" + qn("c:scatterStyle"))
     if style is not None:
         style.set("val", "marker")
@@ -1618,8 +1636,7 @@ def _pie_labels(plot, chart: Dict[str, Any], style: Dict[str, str], family: str,
     _ensure_family(labels.font, family)
     labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
     labels.position = XL_LABEL_POSITION.OUTSIDE_END if kind == "pie" else XL_LABEL_POSITION.INSIDE_END
-    _force_show_values(plot)
-    _patch_dlbls(plot, show_cat_name=(kind == "pie"), separator=" ")
+    _patch_dlbls(plot, show_cat=(kind == "pie"), separator=" ")
 
     if kind != "donut":
         return
@@ -1642,6 +1659,49 @@ _DLBL_ORDER = ("c:idx", "c:delete", "c:layout", "c:tx", "c:numFmt", "c:spPr", "c
                "c:showPercent", "c:showBubbleSize", "c:separator", "c:extLst")
 
 
+_DLBL_ORDER = ("c:idx", "c:delete", "c:layout", "c:tx", "c:numFmt", "c:spPr", "c:txPr",
+               "c:dLblPos", "c:showLegendKey", "c:showVal", "c:showCatName", "c:showSerName",
+               "c:showPercent", "c:showBubbleSize", "c:separator", "c:extLst")
+
+
+def _insert_ordered(parent, node, order=_DLBL_ORDER) -> None:
+    """按 schema 顺序插入。dLbl 与 dLbls 共用一张顺序表：两者共有的子元素相对次序一致，
+    写错了 PowerPoint 会拒绝打开——这是直标相关代码唯一的顺序来源。"""
+    rank = order.index("c:" + etree.QName(node).localname)
+    for i, child in enumerate(parent):
+        tag = "c:" + etree.QName(child).localname
+        if tag in order and order.index(tag) > rank:
+            parent.insert(i, node)
+            return
+    parent.append(node)
+
+
+def _dlbl_flag(dlbls, tag: str, on: bool) -> None:
+    node = dlbls.find(qn(tag))
+    if node is None:
+        node = etree.Element(qn(tag))
+        node.set("val", "1" if on else "0")
+        _insert_ordered(dlbls, node)
+    else:
+        node.set("val", "1" if on else "0")
+
+
+def _patch_dlbls(plot, *, show_cat: Optional[bool] = None, separator: Optional[str] = None) -> None:
+    """补正 python-pptx 写出的 dLbls：环图默认 showVal=0，等于声明了直标却一个数都不显示。"""
+    dlbls = plot._element.find(qn("c:dLbls"))
+    if dlbls is None:
+        return
+    _dlbl_flag(dlbls, "c:showVal", True)
+    if show_cat is not None:
+        _dlbl_flag(dlbls, "c:showCatName", show_cat)
+    if separator is not None:
+        sep = dlbls.find(qn("c:separator"))
+        if sep is None:
+            sep = etree.Element(qn("c:separator"))
+            _insert_ordered(dlbls, sep)
+        sep.text = separator
+
+
 def _point_numfmt(point: Any, fmt: str) -> None:
     """逐点 dLbl 一旦存在就不再继承 plot 级 numFmt，单位会静默丢掉（环图上只剩“47”）。
 
@@ -1649,11 +1709,7 @@ def _point_numfmt(point: Any, fmt: str) -> None:
     指向的是 c:ser 而不是 c:dLbl——直接往那儿写会造出 PowerPoint 报修的顺序错误。
     所以按 idx 找到真正的 c:dLbl，再按 CT_DLbl 的子元素顺序插 c:numFmt。
     """
-    from pptx.oxml.ns import qn
-    from lxml import etree
-
-    series = point._ser
-    dlbls = series.find(qn("c:dLbls"))
+    dlbls = point._ser.find(qn("c:dLbls"))
     if dlbls is None:
         return
     for d in dlbls.findall(qn("c:dLbl")):
@@ -1663,14 +1719,7 @@ def _point_numfmt(point: Any, fmt: str) -> None:
         node = d.find(qn("c:numFmt"))
         if node is None:
             node = etree.Element(qn("c:numFmt"))
-            rank = _DLBL_ORDER.index("c:numFmt")
-            pos = len(d)
-            for i, child in enumerate(d):
-                tag = "c:" + etree.QName(child).localname
-                if tag in _DLBL_ORDER and _DLBL_ORDER.index(tag) > rank:
-                    pos = i
-                    break
-            d.insert(pos, node)
+            _insert_ordered(d, node)
         node.set("formatCode", fmt)
         node.set("sourceLinked", "0")
         return
@@ -1682,62 +1731,8 @@ def _best_ink(surface: str, style: Dict[str, str], bg: str) -> str:
     return dark if contrast_ratio(dark, surface) >= contrast_ratio(light, surface) else light
 
 
-def _patch_dlbls(plot, show_cat_name: bool = False, separator: Optional[str] = None) -> None:
-    """按 CT_DLbls 的元素顺序改开关与分隔符；顺序错了 PowerPoint 会拒绝打开。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
-
-    dlbls = plot._element.find(qn("c:dLbls"))
-    if dlbls is None:
-        return
-    cat = dlbls.find(qn("c:showCatName"))
-    if cat is None:
-        cat = etree.SubElement(dlbls, qn("c:showCatName"))
-    cat.set("val", "1" if show_cat_name else "0")
-    sep = dlbls.find(qn("c:separator"))
-    if separator is None:
-        return
-    if sep is None:
-        sep = etree.Element(qn("c:separator"))
-        anchor = dlbls.find(qn("c:showLeaderLines"))
-        if anchor is not None:
-            anchor.addprevious(sep)
-        else:
-            dlbls.append(sep)
-    sep.text = separator
-
-
-def _force_show_values(plot) -> None:
-    """python-pptx 给环图写出的 dLbls 里 showVal=0：声明了直标却一个数都不显示。这里补正。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
-
-    dlbls = plot._element.find(qn("c:dLbls"))
-    if dlbls is None:
-        return
-    node = dlbls.find(qn("c:showVal"))
-    if node is not None:
-        node.set("val", "1")
-        return
-    node = etree.Element(qn("c:showVal"))
-    node.set("val", "1")
-    anchor = None
-    for tag in ("c:showCatName", "c:showSerName", "c:showPercent", "c:showBubbleSize",
-                "c:separator", "c:showLeaderLines"):
-        anchor = dlbls.find(qn(tag))
-        if anchor is not None:
-            break
-    if anchor is not None:
-        anchor.addprevious(node)
-    else:
-        dlbls.append(node)
-
-
 def _add_dlbls(plot_element, style: Dict[str, str], number_format: str, position: Optional[str] = None) -> None:
-    """python-pptx 没有散点/折线混排的直标入口，直接写 XML；顺序必须符合 schema。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
-
+    """python-pptx 没有散点/折线混排的直标入口，整块直接写 XML。"""
     for old in plot_element.findall(qn("c:dLbls")):
         plot_element.remove(old)
     labels = etree.Element(qn("c:dLbls"))
@@ -1745,7 +1740,7 @@ def _add_dlbls(plot_element, style: Dict[str, str], number_format: str, position
     fmt.set("formatCode", number_format)
     fmt.set("sourceLinked", "0")
     txPr = etree.SubElement(labels, qn("c:txPr"))
-    body = etree.SubElement(txPr, qn("a:bodyPr"))
+    etree.SubElement(txPr, qn("a:bodyPr"))
     etree.SubElement(txPr, qn("a:lstStyle"))
     para = etree.SubElement(txPr, qn("a:p"))
     pPr = etree.SubElement(para, qn("a:pPr"))
@@ -1775,8 +1770,6 @@ def _add_dlbls(plot_element, style: Dict[str, str], number_format: str, position
 
 def _add_line_marker(ser, colors: List[str]) -> None:
     """折线上的小圆点：让读者在类别轴上定位读数。marker 必须插在 cat/val 之前。"""
-    from pptx.oxml.ns import qn
-    from lxml import etree
     order = ser.find(qn("c:order"))
     idx = int(order.get("val")) if order is not None and order.get("val") else 0
     color = str(colors[idx % len(colors)]).lstrip("#").upper()
@@ -1799,11 +1792,8 @@ def _add_line_marker(ser, colors: List[str]) -> None:
 
 
 def add_table(slide, plan, page, el, style, family):
-    from pptx.util import Inches, Pt
-    from pptx.dml.color import RGBColor
+    from pptx.util import Inches
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-    from pptx.oxml.ns import qn
-    from lxml import etree
 
     chart = el["chart"]
     headers = chart["data"]["headers"]
@@ -1947,29 +1937,31 @@ def add_page_number(slide, plan, page, index):
 
 def build_element(slide, plan, page, el, boxes, asset_root: Path):
     kind = el["type"]
+    obj = None
     if kind in TEXT_TYPES:
-        return add_text(slide, plan, page, el)
-    if kind in ("shape", "divider"):
-        return add_shape(slide, page, el)
-    if kind == "path":
-        return add_path(slide, page, el, boxes)
-    if kind == "image":
-        return add_image(slide, page, el, asset_root)
-    if kind == "chart":
-        return add_chart(slide, plan, page, el, deck_palette(plan))
-    if kind == "group":
+        obj = add_text(slide, plan, page, el)
+    elif kind in ("shape", "divider"):
+        obj = add_shape(slide, page, el)
+    elif kind == "path":
+        obj = add_path(slide, page, el, boxes)
+    elif kind == "image":
+        obj = add_image(slide, page, el, asset_root)
+    elif kind == "chart":
+        obj = add_chart(slide, plan, page, el, deck_palette(plan))
+    elif kind == "group":
         children = [build_element(slide, plan, page, child, boxes, asset_root) for child in el["elements"]]
-        group = slide.shapes.add_group_shape([c for c in children if c is not None])
-        group.name = f"{page['id']}.{el['id']}"
-        if el.get("rotation"):
-            group.rotation = float(el["rotation"])
-        return group
-    raise ValueError(f"未知元素类型：{kind}")
+        obj = slide.shapes.add_group_shape([c for c in children if c is not None])
+        obj.name = f"{page['id']}.{el['id']}"
+    else:
+        raise ValueError(f"未知元素类型：{kind}")
+    # 旋转在出口处统一应用：只有一处写 rot，也就不可能出现"某种类型忘了转"。
+    if obj is not None and el.get("rotation"):
+        obj.rotation = float(el["rotation"])
+    return obj
 
 
 def _reorder(slide, built: List[Any]) -> None:
     """叠放顺序就是声明顺序。python-pptx 把组合插入到末尾，这里按声明重排一次。"""
-    from pptx.oxml.ns import qn
     tree = slide.shapes._spTree
     keep_tags = {qn("p:sp"), qn("p:pic"), qn("p:graphicFrame"), qn("p:grpSp"), qn("p:cxnSp")}
     kids = [c for c in tree if c.tag in keep_tags]
