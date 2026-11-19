@@ -1662,9 +1662,7 @@ def _label_format(chart: Dict[str, Any]) -> str:
         return base
     if unit == "%":
         return base + '"%"'
-    if len(unit) <= 3:
-        return base + '" ' + unit + '"'
-    return base
+    return base + '" ' + unit + '"'  # 长单位也要写进直标；不再静默丢弃
 
 
 def _pie_labels(plot, chart: Dict[str, Any], style: Dict[str, str], family: str, bg: str) -> None:

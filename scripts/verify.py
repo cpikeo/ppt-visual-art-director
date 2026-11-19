@@ -994,7 +994,42 @@ def expected_text(el: Dict[str, Any]) -> List[str]:
     for series in data.get("series") or []:
         if chart.get("legend") or len(data.get("series") or []) > 1:
             out.append(str(series.get("name") or ""))
+    out.extend(_label_pieces(chart))
     return [piece for piece in out if _norm_key(piece)]
+
+
+def _label_pieces(chart: Dict[str, Any]) -> List[str]:
+    """直标的预期文字：默认数字格式（#,##0.###）加图表级单位，与 compile 的 _label_format 对齐。
+
+    自定义数字格式、百分比堆叠与饼环不在此核对（它们的文字规则不同），留给人看渲染。
+    """
+    if chart.get("kind") not in ("bar", "line") or not chart.get("data_labels"):
+        return []
+    if (chart.get("value_axis") or {}).get("number_format") or chart.get("stacked") == "percent":
+        return []
+    unit = str(chart.get("unit") or "").strip()
+    out: List[str] = []
+    for series in (chart.get("data") or {}).get("series") or []:
+        for value in series.get("values") or []:
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                out.append(f"{float(value):,.3f}".rstrip("0").rstrip(".") + unit)
+    return out
+
+
+def _owners(lines: List[Dict[str, Any]], boxes: Dict[str, Tuple[float, float, float, float]]
+            ) -> Dict[str, List[Dict[str, Any]]]:
+    """每一行渲染文字只归属一个元素：中心落在的最小声明框。
+
+    一行字若同时落在大框和小框里，两边都算，大框的核对就会借小框的字过关。
+    """
+    tol = C.LIMITS["render_check"]["span_tol_in"]
+    owned: Dict[str, List[Dict[str, Any]]] = {}
+    for line in lines:
+        hits = [(w * h, name) for name, (bx, by, w, h) in boxes.items()
+                if _inside((bx, by, w, h), line["bbox"], tol)]
+        if hits:
+            owned.setdefault(min(hits)[1], []).append(line)
+    return owned
 
 
 def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: C.Report) -> int:
@@ -1004,29 +1039,27 @@ def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: C.Report)
     都能让框看起来正好、字却没了。这里比的是字，不是框。
     """
     checks = 0
+    owned = _owners(lines, boxes)
     for el in C.all_elements(page):
         pieces = [p for p in expected_text(el) if _norm_key(p)]
         if not pieces:
             continue
-        box = boxes.get(str(el.get("id")))
-        local = ""
-        if box is not None:
-            tol = C.LIMITS["render_check"]["span_tol_in"]
-            local = _norm_key("".join(ln["text"] for ln in lines if _inside(box, ln["bbox"], tol)))
-        pool = local + page_key
+        pool = _norm_key("".join(ln["text"] for ln in owned.get(str(el.get("id")), [])))
         missing = [p for p in pieces if _norm_key(p) not in pool]
         checks += 1
         if not missing:
             continue
         where = f"{pid}/{el.get('id')}"
         detail = "、".join(f"「{p[:12]}」" for p in missing[:3])
+        elsewhere = any(_norm_key(p) in page_key for p in missing)
+        why = "（页面别处有这些字，但不在本元素框内：多半是溢出或被挪位）" if elsewhere else ""
         if el.get("type") in TEXT_TYPES:
             f.add("HARD", "V-TEXT-RENDER", where,
-                  f"渲染里读不到声明的文字：{detail}（共缺 {len(missing)}/{len(pieces)} 块）。"
+                  f"渲染里读不到本元素的文字：{detail}（共缺 {len(missing)}/{len(pieces)} 块）{why}。"
                   f"查字体是否存在、是否被上层遮住；不要靠缩字号掩盖")
         else:
             f.add("SOFT", "V-TEXT-RENDER", where,
-                  f"图表/表格里读不到声明的文字：{detail}（共缺 {len(missing)}/{len(pieces)} 块）")
+                  f"图表/表格里读不到本元素的文字：{detail}（共缺 {len(missing)}/{len(pieces)} 块）{why}")
     return checks
 
 

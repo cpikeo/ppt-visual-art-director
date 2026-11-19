@@ -40,6 +40,31 @@ STYLE_KEYS = ("font", "font_ea", "font_size", "bold", "color", "letter_spacing_p
               "align", "line_spacing", "pad_in", "valign")
 EMU = C.EMU
 
+# 操作级属性白名单：每个操作只接受表中的键，拼错或不适用的键直接拒绝（不静默忽略）。
+COMMON_KEYS = {"op", "page", "target", "target_regex", "target_index", "note"}
+OP_KEYS = {
+    "text": {"content", "runs", "space_after_pt"} | (set(STYLE_KEYS) - {"pad_in", "valign"}),
+    "box": {"x", "y", "w", "h"},
+    "style": set(STYLE_KEYS),
+    "fill": {"color", "alpha"},
+    "line": {"color", "width_pt", "dash", "hide"},
+    "order": {"to"},
+    "image": {"image_id"},
+    "chart_data": {"data"},
+    "delete": set(),
+    "background": {"color"},
+}
+# 每种操作授权改动的对象属性（对象指纹的顶层键）。段落样式与文本框字段再按声明收窄。
+GRANT_TOP = {
+    "text": {"text"}, "box": {"box_in"}, "style": set(), "fill": {"fill"},
+    "line": {"stroke", "stroke_pt"}, "image": {"sha256", "px", "ppi", "crop"},
+    "chart_data": {"plots", "payload"}, "order": set(), "delete": set(), "background": set(),
+}
+STYLE_SIG = {"font": "font", "font_ea": "font_ea", "font_size": "font_size", "bold": "bold",
+             "color": "color", "align": "align", "line_spacing": "line_spacing",
+             "letter_spacing_pt": "letter_spacing_pt"}
+STYLE_FRAME = {"pad_in": "ins", "valign": "anchor"}
+
 
 # ---------------------------------------------------------------- 目标解析
 
@@ -369,17 +394,47 @@ def _chart_parts(shape) -> set:
     return out
 
 
+def check_keys(kind: Any, op: Dict[str, Any], where: str) -> None:
+    """操作级白名单：未知操作、拼错或不适用的键一律拒绝。静默忽略的结果是报告写着"已改"、文件里什么都没变。"""
+    if kind not in OP_KEYS:
+        raise C.BadOp(f"{where}: 未知操作 {kind!r}；可用 {', '.join(OPS)}")
+    extra = sorted(set(op) - COMMON_KEYS - OP_KEYS[kind])
+    if extra:
+        raise C.BadOp(f"{where}: {kind} 不接受 {extra}；该操作只认 {sorted(OP_KEYS[kind])}")
+
+
+def empty_grant() -> Dict[str, Any]:
+    return {"top": set(), "sig": set(), "frame": set(), "text": False}
+
+
+def grant_for(kind: str, op: Dict[str, Any]) -> Dict[str, Any]:
+    """一次操作授权改动的属性：顶层键、声明过的段落样式字段、声明过的文本框字段。"""
+    declared = set(op) | {k for run in op.get("runs") or [] for k in run}
+    grant = empty_grant()
+    grant["top"] = set(GRANT_TOP[kind])
+    grant["sig"] = {STYLE_SIG[k] for k in declared if k in STYLE_SIG}
+    grant["frame"] = {STYLE_FRAME[k] for k in declared if k in STYLE_FRAME}
+    grant["text"] = kind == "text"
+    return grant
+
+
+def merge_grant(into: Dict[str, Any], extra: Dict[str, Any]) -> None:
+    for key in ("top", "sig", "frame"):
+        into[key] |= extra[key]
+    into["text"] = into["text"] or extra["text"]
+
+
 def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str, Any]],
-            rep: C.Report) -> Tuple[set, set, set, set]:
-    touched: set = set()
+            rep: C.Report) -> Tuple[Dict[Tuple[int, int], Dict[str, Any]], set, set, set]:
+    """逐条执行操作。对象以 (页, shape id) 为键；返回每个被点名对象的授权清单。"""
+    grants: Dict[Tuple[int, int], Dict[str, Any]] = {}
     bg_touched: set = set()
     deleted: set = set()
     movable: set = set()
     for n, op in enumerate(ops, 1):
         where = f"op{n}"
         kind = op.get("op")
-        if kind not in OPS:
-            raise C.BadOp(f"{where}: 未知操作 {kind!r}；可用 {', '.join(OPS)}")
+        check_keys(kind, op, where)
         slide = slide_at(prs, op.get("page"))
         if kind == "background":
             apply_background(slide, op)
@@ -387,14 +442,11 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
             log.append({"op": n, "kind": kind, "page": op["page"]})
             continue
         shape = resolve(slide.shapes, op)
-        touched.add((op["page"], shape.name))
-        style_free = False
-
+        key = (int(op["page"]), shape.shape_id)
+        merge_grant(grants.setdefault(key, empty_grant()), grant_for(kind, op))
         if kind == "text":
             if op.get("content") is None:
                 raise C.BadOp(f"{where}: text 需要 content")
-            style_free = not any(op.get(k) is not None for k in STYLE_KEYS) and not any(
-                k in r for r in (op.get("runs") or []) for k in STYLE_KEYS)
             write_text(shape, op, rep, int(op["page"]), shape.name)
         elif kind == "box":
             if not any(op.get(k) is not None for k in ("x", "y", "w", "h")):
@@ -422,11 +474,10 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
             apply_order(shape, op)
         elif kind == "delete":
             shape._element.getparent().remove(shape._element)
-            deleted.add((int(op["page"]), shape.name))
+            deleted.add(key)
         log.append({"op": n, "kind": kind, "page": op["page"], "target": shape.name,
-                    "note": op.get("note", ""), "style_free": style_free,
-                    "styled": [k for k in STYLE_KEYS if op.get(k) is not None] if kind == "style" else []})
-    return touched, bg_touched, deleted, movable
+                    "note": op.get("note", "")})
+    return grants, bg_touched, deleted, movable
 
 
 def ink_box(obj: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
@@ -490,7 +541,7 @@ def post_check(after: Dict[str, Any], f: C.Report) -> None:
                     break
 
 
-_SIG_FIELDS = ("font_size", "bold", "font", "font_ea", "color", "align", "line_spacing")
+_SIG_FIELDS = ("font_size", "bold", "font", "font_ea", "color", "align", "line_spacing", "letter_spacing_pt")
 
 
 def _text_sig(obj: Dict[str, Any]) -> Optional[List[set]]:
@@ -507,7 +558,7 @@ def _text_sig(obj: Dict[str, Any]) -> Optional[List[set]]:
         align = para.get("align")
         spacing = para.get("line_spacing")
         out.append({(r.get("size_pt"), r.get("bold"), r.get("font"), r.get("ea"), r.get("color"),
-                     align, spacing) for r in para.get("runs") or []})
+                     align, spacing, r.get("spacing")) for r in para.get("runs") or []})
     return out or None
 
 
@@ -550,130 +601,126 @@ def _style_drift(old: Optional[List[set]], new: Optional[List[set]], allowed: fr
     return None
 
 
-def _object_fp(obj: Dict[str, Any]) -> Dict[str, Any]:
-    """未被点名对象的可观察属性指纹：外观、裁切、图片字节、图表/表格载荷。
-
-    只比类型/几何/文字，会漏掉"填色被改成白色""图片被换成另一张"——这两类
-    改动不会动任何几何，却直接改变成品。
-    """
-    styles = obj.get("styles") or {}
-    return {
-        "fill": obj.get("fill"),
-        "stroke": obj.get("stroke"),
-        "stroke_pt": obj.get("stroke_pt"),
-        "crop": obj.get("crop"),
-        "sha256": obj.get("sha256"),
-        "px": obj.get("px"),
-        "ppi": obj.get("ppi"),
-        "chart_type": obj.get("chart_type"),
-        "plots": obj.get("plots"),
-        "grid": obj.get("grid"),
-        "has_legend": obj.get("has_legend"),
-        "styles": {
-            "paragraphs": [{k: v for k, v in p.items() if k != "text"} for p in styles.get("paragraphs") or []],
-        } if styles else None,
-        "n_objects": len(obj.get("children") or []),
-    }
+def _short(value: Any, n: int = 80) -> str:
+    text = repr(value)
+    return text if len(text) <= n else text[:n] + "…"
 
 
-def compare(before: Dict[str, Any], after: Dict[str, Any], touched: set, bg_touched: set,
-            f: C.Report, plain_text: Optional[set] = None,
-            deleted: Optional[set] = None,
-            styled: Optional[Dict[Tuple[int, str], set]] = None) -> Dict[str, Any]:
-    """保留核对：结构层逐项相等，未点名的对象逐项一致。这是"没有顺手改坏别处"的唯一证据。
+def _object_drift(obj: Dict[str, Any], twin: Dict[str, Any], grant: Optional[Dict[str, Any]],
+                  where: str, f: C.Report) -> None:
+    """对象的改动是否都落在授权之内。未被点名的对象（grant 为 None）必须逐项一致。"""
+    top = grant["top"] if grant else set()
+    for key in sorted((set(obj) | set(twin)) - {"styles", "frame"}):
+        if key not in top and obj.get(key) != twin.get(key):
+            f.hard("E-PRESERVE", where,
+                   f"未授权的属性「{key}」被改动：{_short(obj.get(key))} → {_short(twin.get(key))}")
+    granted_frame = grant["frame"] if grant else set()
+    fb, fa = obj.get("frame") or {}, twin.get("frame") or {}
+    bad = sorted(k for k in set(fb) | set(fa) if k not in granted_frame and fb.get(k) != fa.get(k))
+    if bad:
+        f.hard("E-PRESERVE", where, f"未授权的文本框属性被改动：{bad}")
+    allowed = frozenset(grant["sig"]) if grant else frozenset()
+    sig_b, sig_a = _text_sig(obj), _text_sig(twin)
+    if grant and grant["text"]:
+        drift = _style_drift(sig_b, sig_a, allowed)
+        if drift:
+            para_no, ref, stray = drift
+            f.hard("E-PRESERVE", where,
+                   f"只改文字的操作用改了样式：第 {para_no} 段出现原稿没有的"
+                   f"（字号, 粗体, 西文字族, 东亚字族, 墨色, 对齐, 行距, 字距）={stray}（该段原有 {ref}）")
+    elif [_mask(s, allowed) for s in sig_b or []] != [_mask(s, allowed) for s in sig_a or []]:
+        f.hard("E-PRESERVE", where, "未授权的段落样式被改动（字号/字重/字族/墨色/对齐/行距/字距）")
 
-    `plain_text` 是"只换字、没有声明任何样式"的操作（按解析后的对象名记）；这类改动
-    之后用到的样式集合必须原样。`deleted` 是显式 delete 操作点名过的对象——除此之外
-    任何对象消失都是意外删除。
-    """
+
+FLAG_LABEL = {"hidden": "隐藏", "transition": "切换", "animation": "动画", "smartart": "SmartArt",
+              "ole": "嵌入对象", "media": "音视频", "notes": "备注"}
+
+
+def compare(before: Dict[str, Any], after: Dict[str, Any], grants: Dict[Tuple[int, int], Dict[str, Any]],
+            bg_touched: set, deleted: set, f: C.Report) -> Dict[str, Any]:
+    """保留核对：没有任何操作授权改动的东西，必须与原稿逐项一致。这是"没有顺手改坏别处"的证据。"""
     for key, label in (("slides", "页数"), ("masters", "母版数"), ("layouts", "版式数"), ("macros", "宏")):
         if before.get(key) != after.get(key):
             f.hard("E-PRESERVE", label, f"{before.get(key)} → {after.get(key)}")
     if before.get("theme_fonts") != after.get("theme_fonts"):
         f.hard("E-PRESERVE", "主题字体", "改动前后不一致")
 
-    plain_text = plain_text or set()
-    deleted = deleted or set()
-    styled = styled or {}
     removed = 0
     for i, b_page in enumerate(before["pages"]):
-        a_page = after["pages"][i] if i < len(after["pages"]) else None
-        if a_page is None:
+        where_page = f"第 {i + 1} 页"
+        if i >= len(after["pages"]):
+            f.hard("E-PRESERVE", where_page, "页面丢失")
             continue
-        for flag in ("transition", "animation", "smartart", "ole", "media", "notes"):
-            if b_page["flags"].get(flag) and not a_page["flags"].get(flag):
-                f.hard("E-PRESERVE", f"第 {i + 1} 页", f"{flag} 丢失")
+        a_page = after["pages"][i]
+        # 逐页特性（隐藏、切换、动画、SmartArt、嵌入、音视频、备注）没有任何操作授权改它们
+        for flag in sorted(set(b_page["flags"]) | set(a_page["flags"])):
+            bv, av = b_page["flags"].get(flag), a_page["flags"].get(flag)
+            if bv != av:
+                f.hard("E-PRESERVE", where_page, f"页面特性「{FLAG_LABEL.get(flag, flag)}」被改动：{bv} → {av}")
+        if b_page.get("notes") != a_page.get("notes"):
+            f.hard("E-PRESERVE", where_page, "备注文字被改动")
+        if b_page.get("layout") != a_page.get("layout"):
+            f.hard("E-PRESERVE", where_page, f"版式被改动：{b_page.get('layout')} → {a_page.get('layout')}")
         if i + 1 not in bg_touched and b_page.get("background") != a_page.get("background"):
-            f.hard("E-PRESERVE", f"第 {i + 1} 页", f"未点名的底色被改动：{b_page.get('background')} → {a_page.get('background')}")
-        b_objs = {o["name"]: o for o in b_page["objects"]}
-        a_objs = {o["name"]: o for o in a_page["objects"]}
-        for name in b_objs:
-            if name in a_objs:
+            f.hard("E-PRESERVE", where_page,
+                   f"未点名的底色被改动：{b_page.get('background')} → {a_page.get('background')}")
+
+        b_ids = [o.get("id") for o in b_page["objects"]]
+        a_ids = [o.get("id") for o in a_page["objects"]]
+        if len(set(b_ids)) != len(b_ids) or len(set(a_ids)) != len(a_ids):
+            f.hard("E-PRESERVE", where_page, "对象标识重复，无法逐对象核对；请先在 PowerPoint 中修复重复标识")
+            continue
+        b_objs = dict(zip(b_ids, b_page["objects"]))
+        a_objs = dict(zip(a_ids, a_page["objects"]))
+        for oid, obj in b_objs.items():
+            where = f"{where_page} {obj.get('name')}"
+            if oid not in a_objs:
+                removed += 1
+                if (i + 1, oid) not in deleted:
+                    f.hard("E-PRESERVE", where, "对象消失，但没有任何 delete 操作点名它")
                 continue
-            removed += 1
-            if (i + 1, name) not in deleted:
-                f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", "对象消失，但没有任何 delete 操作点名它")
-        for name in a_objs:
-            if name not in b_objs:
-                f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", "出现原稿没有的对象；定点编辑不新增任何对象")
-        for name, obj in b_objs.items():
-            if name not in a_objs:
-                continue
-            twin = a_objs[name]
-            if (i + 1, name) in touched:
-                if (i + 1, name) in plain_text:
-                    allowed = frozenset(styled.get((i + 1, name), ()))
-                    drift = _style_drift(_text_sig(obj), _text_sig(twin), allowed)
-                    if drift:
-                        para_no, ref, stray = drift
-                        f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}",
-                               f"只改文字的操作用改了样式：第 {para_no} 段出现原稿没有的 "
-                               f"（字号, 粗体, 西文字族, 东亚字族, 墨色, 对齐, 行距）="
-                               f"{stray}（该段原有 {ref}）")
-                continue
-            for field, label in (("kind", "类型"), ("box_in", "几何"), ("rotation", "旋转"), ("text", "文字")):
-                if obj.get(field) != twin.get(field):
-                    f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", f"未点名的{label}被改动：{obj.get(field)} → {twin.get(field)}")
-            old_fp, new_fp = _object_fp(obj), _object_fp(twin)
-            if old_fp != new_fp:
-                changed = [k for k in old_fp if old_fp[k] != new_fp[k]]
-                f.hard("E-PRESERVE", f"第 {i + 1} 页 {name}", f"未点名的外观/载荷被改动：{changed}")
-    return {"deleted": removed, "touched": len(touched)}
+            _object_drift(obj, a_objs[oid], grants.get((i + 1, oid)), where, f)
+        for oid, obj in a_objs.items():
+            if oid not in b_objs:
+                f.hard("E-PRESERVE", f"{where_page} {obj.get('name')}", "出现原稿没有的对象；定点编辑不新增任何对象")
+        # 没被点名的对象，相对前后次序必须不变（order 操作只授权它移动的那一个）
+        kept_b = [oid for oid in b_ids if (i + 1, oid) not in grants and oid in a_objs]
+        kept_a = [oid for oid in a_ids if (i + 1, oid) not in grants and oid in b_objs]
+        if kept_b != kept_a:
+            f.hard("E-PRESERVE", where_page, "未点名对象的层级（前后次序）被改动")
+    return {"deleted": removed, "touched": len(grants)}
 
 
-def compare_parts(before: Dict[str, str], after: Dict[str, str], touched_pages: set,
-                  f: C.Report, movable: Optional[set] = None) -> Dict[str, Any]:
-    """包内部件比对：等价于"原始内容完整性"。
-
-    被点名的页会重写 slideN.xml 与它的 rels，换图会新增 media/ 与 embeddings/，改数会
-    重写那个图表自己的 chart 部件与内嵌工作簿；其余部件必须逐字节一致。母版、主题、
-    备注页、动画所在的 slide 一旦被意外新建或改写，在这里会直接暴露——按"页数、母版数"
-    核对是看不出来的。
-    """
+def compare_parts(before: Dict[str, str], after: Dict[str, str], before_slides: List[str],
+                  after_slides: List[str], touched_pages: set, f: C.Report,
+                  movable: Optional[set] = None) -> Dict[str, Any]:
+    """包内部件比对。slide 按页比对（页序不等于部件名，python-pptx 保存时还会重新编号）；
+    其余部件按名字逐字节比对。被点名页的 slide 与其 rels、改数图表自己的部件可以变，别的不许变。"""
     import re as _re
 
     allowed_new = ("ppt/media/", "ppt/embeddings/")
     movable = movable or set()
-    # 一页的 slide 部件在包里有两个名字：ppt/slides/slideN.xml 与 ppt/slides/_rels/slideN.xml.rels
-    slide_part = _re.compile(r"^ppt/slides/(?:_rels/)?slide(\d+)\.xml(?:\.rels)?$")
+    slide_re = _re.compile(r"^ppt/slides/(?:_rels/)?slide\d+\.xml(?:\.rels)?$")
+
+    def page_bundle(parts: Dict[str, str], slide_name: str) -> Tuple[Any, Any]:
+        rels = slide_name.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels"
+        return parts.get(slide_name), parts.get(rels)
+
     changed, lost, added, moved = [], [], [], []
+    for i in range(min(len(before_slides), len(after_slides))):
+        if i + 1 in touched_pages:
+            continue
+        if page_bundle(before, before_slides[i]) != page_bundle(after, after_slides[i]):
+            changed.append(f"第 {i + 1} 页的 slide 部件")
     for name, digest in before.items():
+        if slide_re.match(name) or name == "[Content_Types].xml":
+            continue
         if name not in after:
             lost.append(name)
-            continue
-        if after[name] == digest:
-            continue
-        hit = slide_part.match(name)
-        if name == "[Content_Types].xml" or (hit and int(hit.group(1)) in touched_pages):
-            continue
-        if name in movable:
-            moved.append(name)
-            continue
-        changed.append(name)
+        elif after[name] != digest:
+            (moved if name in movable else changed).append(name)
     for name in after:
-        if name in before:
-            continue
-        if name.startswith(allowed_new):
+        if name in before or slide_re.match(name) or name.startswith(allowed_new):
             continue
         added.append(name)
 
@@ -685,6 +732,9 @@ def compare_parts(before: Dict[str, str], after: Dict[str, str], touched_pages: 
         f.hard("E-PRESERVE", "包内部件", f"出现原稿没有的部件：{added[:6]}")
     return {"parts": len(after), "changed": len(changed), "lost": len(lost), "added": len(added),
             "moved": moved}
+
+
+# ---------------------------------------------------------------- 主流程
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -736,9 +786,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     before = I.inspect(src)
     before_parts = I.structure(src)
+    before_slides = I.slide_part_names(src)
     log: List[Dict[str, Any]] = []
     try:
-        touched, bg_touched, declared_deleted, movable = run_ops(prs, ops, asset_root, log, rep)
+        grants, bg_touched, declared_deleted, movable = run_ops(prs, ops, asset_root, log, rep)
     except C.BadOp as exc:
         print(f"[HARD] E-OPS 未写入：{exc}")
         return 2
@@ -752,20 +803,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         prs.save(str(tmp))
         after = I.inspect(tmp)
         after_parts = I.structure(tmp)
+        after_slides = I.slide_part_names(tmp)
     except Exception as exc:
         if tmp.exists():
             tmp.unlink()
         print(f"[HARD] E-RUNTIME {type(exc).__name__}: {exc}")
         return 3
 
-    plain_text = {(int(e["page"]), e["target"]) for e in log if e.get("style_free")}
-    styled: Dict[Tuple[int, str], set] = {}
-    for e in log:
-        if e.get("styled"):
-            styled.setdefault((int(e["page"]), e["target"]), set()).update(e["styled"])
+    for label, rec in (("原稿", before), ("改动后", after)):
+        for err in rec.get("errors") or []:
+            rep.hard("E-PRESERVE", label, f"无法完整解析，逐对象核对不可靠：{err}")
     touched_pages = {int(op["page"]) for op in ops}
-    facts = compare(before, after, touched, bg_touched, rep, plain_text, declared_deleted, styled)
-    facts["parts"] = compare_parts(before_parts, after_parts, touched_pages, rep, movable)
+    facts = compare(before, after, grants, bg_touched, declared_deleted, rep)
+    facts["parts"] = compare_parts(before_parts, after_parts, before_slides, after_slides,
+                                   touched_pages, rep, movable)
     if not rep.blocked:
         post_check(after, rep)
         os.replace(tmp, out)

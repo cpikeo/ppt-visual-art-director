@@ -83,8 +83,10 @@ def run_styles(shape) -> Dict[str, Any]:
                     color = "(theme)"
             except (AttributeError, ValueError):
                 pass
+            spc = rPr.get("spc") if rPr is not None else None
             runs.append({"text": run.text, "size_pt": size, "font": run.font.name, "ea": ea,
-                         "bold": bool(run.font.bold), "italic": bool(run.font.italic), "color": color})
+                         "bold": bool(run.font.bold), "italic": bool(run.font.italic), "color": color,
+                         "spacing": int(spc) / 100.0 if spc else None})
             if size:
                 sizes.add(size)
             if color:
@@ -104,9 +106,16 @@ def run_styles(shape) -> Dict[str, Any]:
     return out
 
 
+def _digest(value: Any) -> str:
+    """整份载荷的指纹。显示层会截断，核对层必须比全量，否则第 13 行之后的改动看不见。"""
+    blob = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def describe(shape, depth: int = 0) -> Dict[str, Any]:
     kind = kind_of(shape)
     item: Dict[str, Any] = {
+        "id": shape.shape_id,  # 同一页内稳定的标识；保留核对按它逐对象对应，不按可重名的名字
         "name": shape.name,
         "kind": kind,
         "box_in": [inch(shape.left), inch(shape.top), inch(shape.width), inch(shape.height)],
@@ -117,6 +126,10 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
         # 显示层在 to_markdown 里另行截断。
         item["text"] = shape.text_frame.text.replace("\n", "⏎")
         item["styles"] = run_styles(shape)
+        tf = shape.text_frame
+        item["frame"] = {"ins": [inch(tf.margin_left), inch(tf.margin_top), inch(tf.margin_right),
+                                 inch(tf.margin_bottom)],
+                         "anchor": str(tf.vertical_anchor), "wrap": tf.word_wrap}
         if kind == "placeholder":
             try:
                 item["ph"] = f"{shape.placeholder_format.type} #{shape.placeholder_format.idx}"
@@ -157,11 +170,16 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
             plots.append({"series": series, "categories": categories[:12]})
         item["plots"] = plots
         item["has_legend"] = bool(chart.has_legend)
+        item["payload"] = _digest([item["title"], [
+            [[s.name, list(s.values)] for s in plot.series] + [list(plot.categories or [])]
+            for plot in chart.plots]])
     elif kind == "table":
         table = shape.table
         grid = []
         for r in range(min(len(table.rows), 12)):
             grid.append([table.cell(r, c).text for c in range(len(table.columns))])
+        full = [[table.cell(r, c).text for c in range(len(table.columns))] for r in range(len(table.rows))]
+        item["payload"] = _digest(full)
         item.update({"rows": len(table.rows), "cols": len(table.columns), "grid": grid,
                      "col_widths_in": [round(col.width / EMU, 2) for col in table.columns]})
     elif kind == "group":
@@ -213,6 +231,28 @@ def slide_background(slide) -> Optional[str]:
         return None
 
 
+def part_digest(name: str, data: bytes) -> str:
+    """部件的规范化指纹。XML 去掉排版空白、关系按 Id 排序后做 C14N；其余部件逐字节。
+
+    python-pptx 保存时会重新序列化每个 XML 部件（声明的引号、缩进、关系次序都可能变），
+    逐字节比会把整包都判成"改过"。规范化只抹掉这些形式差异，语义上的改动仍然会被发现。
+    """
+    from lxml import etree
+
+    if not name.endswith((".xml", ".rels")):
+        return hashlib.sha256(data).hexdigest()
+    try:
+        root = etree.fromstring(data, etree.XMLParser(remove_blank_text=True))
+    except etree.XMLSyntaxError:
+        return hashlib.sha256(data).hexdigest()
+    if name.endswith(".rels"):
+        children = sorted(list(root), key=lambda el: el.get("Id") or "")
+        for el in children:
+            root.remove(el)
+            root.append(el)
+    return hashlib.sha256(etree.tostring(root, method="c14n")).hexdigest()
+
+
 def structure(pptx: Path) -> Dict[str, str]:
     """包内部件 → 字节哈希。改稿的"原始内容完整性"就靠它：没被点名的部件必须逐字节一致。
 
@@ -222,7 +262,29 @@ def structure(pptx: Path) -> Dict[str, str]:
     import zipfile
 
     with zipfile.ZipFile(Path(pptx)) as zf:
-        return {name: hashlib.sha256(zf.read(name)).hexdigest() for name in zf.namelist()}
+        return {name: part_digest(name, zf.read(name)) for name in zf.namelist()}
+
+
+def slide_part_names(pptx: Path) -> List[str]:
+    """按页序返回包内每页的 slide 部件名（原始名字）。
+
+    页序由 sldIdLst 决定，部件名不一定是 slideN.xml 的 N：直接按文件名对页会对错页。
+    这里直接读原包，不经过 python-pptx（它访问 slides 时会重新编号）。
+    """
+    import zipfile
+    from lxml import etree
+
+    p_ns = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+    r_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+    with zipfile.ZipFile(Path(pptx)) as zf:
+        pres = etree.fromstring(zf.read("ppt/presentation.xml"))
+        rels = etree.fromstring(zf.read("ppt/_rels/presentation.xml.rels"))
+    target = {r.get("Id"): r.get("Target") for r in rels}
+    names = []
+    for sld in pres.iter(f"{p_ns}sldId"):
+        t = target[sld.get(f"{r_ns}id")].lstrip("/")
+        names.append(t if t.startswith("ppt/") else "ppt/" + t)
+    return names
 
 
 def slide_flags(slide, objects: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -336,7 +398,7 @@ def inspect(pptx: Path) -> Dict[str, Any]:
             "layout": slide.slide_layout.name,
             "background": slide_background(slide),
             "flags": flags,
-            "notes": notes[:400],
+            "notes": notes,  # 全文保留：备注改动也要被保留核对看见
             "objects": objects,
         })
     out["fonts"] = sorted(fonts)

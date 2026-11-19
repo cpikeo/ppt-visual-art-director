@@ -1,0 +1,27 @@
+{
+  "deck_id": "fixture-chart", "title": "图表回归样例",
+  "audience": "内部评审", "goal": "确认直标数值与单位能被真实渲染核验",
+  "core_claim": "华东营收增长最快",
+  "brief": {
+    "insight": "总量最大的区域增长并不最快",
+    "concept": "用同一基线的柱长比较三个区域，让增速差距由柱长直接读出",
+    "veto": ["不用饼图——三个部分的比例不是本页要比的东西"],
+    "art": {"light": "平光", "lens": "正视", "material": "哑光纸",
+            "gamut": "炭黑与纸白，一处赭石", "grain": "细颗粒"},
+    "motif": ["柱顶直标"]
+  },
+  "pages": [{
+    "id": "p1", "role": "build", "claim": "华东营收增长最快",
+    "focus": "先看华东那根柱的直标",
+    "focus_element": "c1",
+    "composition_rationale": "图占满主体，标题在上方左对齐",
+    "elements": [
+      {"id": "t", "type": "title", "content": "华东营收增长最快",
+       "x": 0.9, "y": 0.6, "w": 11.5, "h": 0.9, "font_size": 32, "color": "#14181B", "pad_in": 0},
+      {"id": "c1", "type": "chart", "x": 0.9, "y": 1.8, "w": 11.5, "h": 5.0,
+       "chart": {"kind": "bar", "unit": "亿元", "data_labels": true, "legend": false,
+                 "data": {"categories": ["华东", "华北", "华南"],
+                          "series": [{"name": "营收", "values": [1234.5, 2, 56.789]}]}}}
+    ]
+  }]
+}

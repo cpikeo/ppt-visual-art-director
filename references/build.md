@@ -236,8 +236,8 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--split 5,7] [--
 - **保留核对四层，缺一层就等于没查**：
   1. **结构**：页数、母版数、版式数、主题字体、宏。
   2. **逐页特性**：动画、切换、SmartArt、嵌入对象、音视频、备注是否还在。
-  3. **对象**：未被点名的对象，类型、几何、旋转、**全文**、填色描边、裁切、图片字节、图表载荷、表格逐格逐项一致；**出现原稿没有的对象、或对象消失而没有 `delete` 点名，都算漂移**。
-  4. **包内部件**：除被点名页的 `slideN.xml` 与它的 rels、`[Content_Types].xml`、新增的 `media/`、`embeddings/`，以及**声明过要改的那张图自己的 `chartN.xml` 与它的内嵌工作簿**，其余部件必须逐字节一致。母版主题、备注页被意外重写时，前三层全都对得上。放行是按部件名的：改了 A 图，B 图的部件被重写照样报。
+  3. **对象**：未被点名的对象，所有属性（类型、几何、旋转、全文、填色描边、裁切、图片、图表与表格的全量指纹、组内子对象、文本框边距与锚点）逐项一致；被点名的对象只允许其操作授权的属性改变（`revise.py` 的 `GRANT_TOP`，段落样式与文本框字段再按声明收窄）；**出现原稿没有的对象、或对象消失而没有 `delete` 点名，都算漂移**。
+  4. **包内部件**：除被点名页的 `slideN.xml` 与它的 rels、`[Content_Types].xml`、新增的 `media/`、`embeddings/`，以及**声明过要改的那张图自己的 `chartN.xml` 与它的内嵌工作簿**，其余部件的规范化指纹必须一致（XML 去排版空白并 C14N、关系按 Id 排序；其余部件逐字节）。被点名页按页序对应，不按文件名（页序由 sldIdLst 决定）。母版主题、备注页被意外重写时，前三层全都对得上。放行是按部件的：改了 A 图，B 图的部件被重写照样报。
 - **只改文字的闸**：`text` 操作若没有声明任何样式字段（`font` `font_ea` `font_size` `bold` `color` `letter_spacing_pt` `align` `line_spacing` `pad_in` `valign`），改动后每一段用到的样式必须是它**原来就有**的。允许"少用"（那句灰色括注被删掉了），不允许"新出现"（14pt 副题被压成 32pt，或继承的 44pt 被写死成 18pt）——这类漂移页数、母版、几何全都对得上，只比文字字段是发现不了的。签名含段落级的对齐与行距：顺手改掉对齐是同一类漂移。同一对象上另有 `style` 操作、并显式声明了某个字段的，那个字段不参与判定（否则"先换字、再改字号"会被自己的闸拦住）。原段是混排、新内容 run 数又不同，会记 `W-RUNS` 说明"已统一为该段首个 run 的样式"：这是披露，不是通过。
 - **核对不通过就不落交付路径**：先写临时件，核对通过才原子替换到 `out`；不通过时 `out` 一个字节都不动，证据另存 `<out 名>.preserve-failed.pptx`（不是交付物）。
 - **改完再查版面**：`W-COVER` 报"文字落在上层色块上"（按字的落点算，不按空框），`W-BOUND` 报出画布。这两条只防不可读，不判断好看。
@@ -273,7 +273,7 @@ python scripts/grid.py [--aspect 4:3] [--cols 12] [--span 1:6] [--split 5,7] [--
 | --- | --- |
 | `compile.py` | `blocked`、`output`、`pages`、`sha256`、`issues` |
 | `verify.py` | `status`、`pptx`、`sha256`、`bytes`、`slides`、`expected_slides`、`render`（PDF、PNG、**实际用到的字族**、`text_checks`）、`structure`（slide／原生图表／内嵌工作簿／media 数）、`layers`（`objects`／`render`／`human`）、`asset_root`、`images`、`findings` |
-| `revise.py` | `status`、`source`、`output`、`sha256`、`ops`（每条是否 `style_free`、声明过哪些样式）、`preservation`（`deleted`／`touched`／`parts`＝`parts`·`changed`·`lost`·`added`·`moved`／`rejected`）、`issues` |
+| `revise.py` | `status`、`source`、`output`、`sha256`、`ops`（每条的操作、对象与备注）、`preservation`（`deleted`／`touched`／`parts`＝`parts`·`changed`·`lost`·`added`·`moved`／`rejected`）、`issues` |
 
 两个细节别读错：`verify.py` 的 `layers` 是本次判断的依据分层，`render` 为 `"SKIP"` 时 `status` 只能是 `PARTIAL`；`revise.py` 的保留核对不通过时 `output` 字段仍指向你请求的路径，但那个文件**没有被写入**，`sha256` 为 `null`，证据在 `preservation.rejected`。`preservation.parts.moved` 是"声明过、因此允许被重写"的部件——改数会重写那张图自己的 `chartN.xml` 与内嵌工作簿，它们出现在这里是对的；`changed` 才是越界。
 
