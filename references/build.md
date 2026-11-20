@@ -174,8 +174,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 路径连线 | 有限 | 直线与折线，锚点是编译期坐标，不是连接符绑定 |
 | 图片裁切 | 有限 | 按 `cover`，不保证主体不被裁到 |
 | 图片生成 | 外部依赖 | 工具无关：只登记工具、完整提示词、文件、SHA-256、权利状态；本包不调用任何模型，生成图不作证据 |
-| 渲染核验 | 外部依赖 | LibreOffice + PyMuPDF；缺失给 `PARTIAL` |
-| PowerPoint 实机验证 | 外部依赖 | `dev/compat/powerpoint_check.ps1` 采集事实，结论由人签收；未运行即 `NOT VERIFIED` |
+| 渲染核验 | 外部依赖 | LibreOffice + PyMuPDF（`requirements-render.txt`，可选）；缺失给 `PARTIAL`。Noto CJK 的 `.ttc` 在 PDF 里只能按家族匹配，分不出 SC 与 JP 字面 |
+| PowerPoint 实机验证 | 外部依赖 | 本包从未做过；结论由人在真实 PowerPoint 中签收，未做即 `NOT VERIFIED` |
 | 字体 | 外部依赖 | 只写字体名，不嵌入；目标机缺失会被静默替换 |
 | 动画、切换、嵌入字体、新建 SmartArt、宏 | 不支持 | `.pptm` 一律拒绝 |
 
@@ -196,5 +196,5 @@ revise.py   inspect 与定点编辑 + 保留核对                              
 ## 机器边界
 
 - 编译器与核验器共用同一套 plan 模型与阈值：共用部分有缺陷，两边会一起“一致”。所以对象核对不能替代看图。堆叠柱标签墨色就是一例：对象一致，但深色块上的深字读不出，只有看渲染才发现。
-- 没跑过的检查与通过的检查长得一样。新增检查必须反向构造（故意破坏，确认它会响），见 `dev/tests/test_regression.py`。
+- 没跑过的检查与通过的检查长得一样。新增检查必须反向构造（故意破坏，确认它会响）。标题里的数字与结论不属于任何检查：必须自己用图表数据回算（评测里出现过标题写“少 1 分钟”而数据斜率是 2.3 的错误）。
 - `W-NOTE` 恒为提醒：截轴起点必须由你写进页面可见的 caption、轴名或图题，机器不判断你写没写对。

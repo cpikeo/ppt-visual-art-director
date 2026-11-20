@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：先读懂受众与证据，找出洞察，定原创视觉概念与艺术指导，再排叙事、构图、排版、色彩、图像与图表；把判断写成 brief 与 plan，确定性产出原生可编辑 PPTX，看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 9.0.0
+version: 9.1.0
 ---
 
 # PPT 视觉艺术指导
@@ -74,11 +74,9 @@ python scripts/compile.py plan.json out.pptx                   # 新建：校验
 python scripts/verify.py plan.json out.pptx                    # 新建稿核验，写 render/<名称>/
 python scripts/revise.py inspect 原稿.pptx                      # 改稿：只读解析
 python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定点编辑 + 保留核对
-python -m unittest discover -s dev/tests -v                    # 包自身回归（仓库开发用）
-python dev/evals/run_evals.py --version vN                     # 真实作品评测流水线（仓库开发用）
 ```
 
-依赖：Python 3.9+、`python-pptx`、`jsonschema`、`Pillow`、`lxml`；渲染核验另需 LibreOffice 与 `pymupdf`。缺哪样就如实说缺哪样。
+依赖：Python 3.9+、`python-pptx`、`jsonschema`、`Pillow`、`lxml`（`requirements.txt`）。渲染核验另需 LibreOffice 与可选的 `pymupdf`（`requirements-render.txt`，AGPL-3.0，是否安装由使用者的合规要求决定）。缺哪样就如实说缺哪样。
 
 ## 六、验收：看真实成稿
 
@@ -98,7 +96,7 @@ python dev/evals/run_evals.py --version vN                     # 真实作品评
 
 **停止条件**：S1 清零，无未处置的 S2；每页主角一句话说得清；剩余 S3/S4 已披露。
 
-**验证等级**见 `dev/compat/COMPAT.md`：L0 对象、L1 LibreOffice 渲染、L2 PowerPoint 实机采集、L3 人工签收。`verify.py` 只能到 L1，并在报告里写明渲染环境，PowerPoint 一律 `NOT VERIFIED`。
+**验证等级**：L0 对象、L1 LibreOffice 渲染、L2 PowerPoint 实机、L3 人工签收。`verify.py` 只能到 L1，并在报告里写明渲染环境，PowerPoint 一律 `NOT VERIFIED`。本包的样本与测试也只到 L1（仓库 `dev/compat/COMPAT.md`）。
 
 **不能说的话**：没跑过 PowerPoint 却说“PowerPoint 下正常”；没渲染却说“已预览”“无溢出”“断行正常”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论；替用户声称已在目标 PowerPoint 中验证。
 
@@ -136,5 +134,5 @@ python dev/evals/run_evals.py --version vN                     # 真实作品评
 | 定构图、选版式、画关系图形、选图表 | `references/design.md` 四、五节 |
 | 排版、配色、图像、简报、压进色域 | `references/design.md` 六至八节 |
 | 诊断症状、给评审结论 | `references/design.md` 九、十节 |
-| 想知道真实作品里踩过什么坑 | `references/design.md` 十一节 |
+| 想知道真实渲染里踩过什么坑 | `references/design.md` 十一节 |
 | 写 plan、用元素、读诊断、编译报错、改稿、交付说明 | `references/build.md` |

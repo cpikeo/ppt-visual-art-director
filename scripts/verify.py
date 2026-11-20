@@ -888,7 +888,7 @@ def render(pptx: Path, render_dir: Path, f: M.Report) -> Optional[Path]:
     try:
         import pymupdf  # noqa: F401
     except ImportError:
-        f.add("INFO", "V-RENDER", "环境", "找不到 PyMuPDF（pip install pymupdf）；渲染核对跳过")
+        f.add("INFO", "V-RENDER", "环境", "找不到 PyMuPDF（pip install -r requirements-render.txt）；渲染核对跳过")
         return None
     render_dir.mkdir(parents=True, exist_ok=True)
     for stale in render_dir.glob("*.pdf"):
@@ -1025,7 +1025,8 @@ def expected_text(el: Dict[str, Any]) -> List[str]:
     if kind != "chart":
         return []
     out: List[str] = []
-    if chart.get("show_title", True) and chart.get("title"):
+    # 表格不画图题（checks.py 的 W-CHART 已提示），核验也不能要求渲染里有它。
+    if chart.get("kind") != "table" and chart.get("show_title", True) and chart.get("title"):
         out.append(str(chart["title"]))
     data = chart.get("data") or {}
     out.extend(str(c) for c in data.get("categories") or [])
@@ -1401,7 +1402,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"概念：{str(brief.get('concept', ''))[:80]}")
         print(f"否决：{'；'.join(str(v) for v in brief.get('veto') or [])[:120]}")
     print(f"PPTX SHA-256：{sha}")
-    print(f"验证环境：渲染 = {facts['environment']['renderer']}｜Microsoft PowerPoint = NOT VERIFIED（需在真实环境用 dev/compat 复核）")
+    print(f"验证环境：渲染 = {facts['environment']['renderer']}｜Microsoft PowerPoint = NOT VERIFIED（需由人在真实 PowerPoint 中复核；本包从未做过实机验证）")
     if facts["render"].get("done"):
         print(f"渲染：{facts['render']['pdf']}")
         print(f"渲染字体：{facts['render'].get('fonts_all')}")

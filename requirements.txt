@@ -1,10 +1,6 @@
-# 编译与核验必需（均为宽松许可：MIT / BSD / HPND）
+# 编译、核验（对象层）、改稿的必需依赖，均为宽松许可（MIT / BSD / HPND）。
+# 渲染核验的可选依赖在 requirements-render.txt，默认不安装。
 python-pptx>=1.0.2,<2
 jsonschema>=4.18,<5
 Pillow>=10,<13
 lxml>=5
-
-# 渲染核验可选：PDF → 页尺寸、词框、字体读取与 PNG 导出。
-# 注意：PyMuPDF 为 AGPL-3.0（或商业许可）。本包只把它当作本机可选工具调用、不随包分发；
-# 若你的合规要求不接受 AGPL，请不要安装，verify.py 会给出 PARTIAL 并说明哪些判断没有依据。
-pymupdf>=1.24

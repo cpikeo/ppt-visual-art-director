@@ -74,14 +74,16 @@
   },
 
   "font_aliases": {
-    "_readme": "声明字族 → 可能的字体文件名（小写、去空格）。核验器用它判断“声明的字体是否真的参与了渲染”。只在能确定映射时写，不要猜。",
+    "_readme": "声明字族 → 可能的字体文件名（小写、去空格）。核验器用它判断“声明的字体是否真的参与了渲染”。只在能确定映射时写，不要猜。Noto CJK 以 .ttc 集合分发，LibreOffice 导出的 PDF 里字体名固定带集合首个字面的区域后缀（jp），所以 Noto 只能按到家族前缀匹配、无法在 PDF 里区分 SC/JP 字面。",
     "微软雅黑": ["microsoftyahei", "msyh"],
     "宋体": ["simsun"],
     "黑体": ["simhei"],
     "等线": ["dengxian"],
     "思源黑体": ["sourcehansans", "notosanscjk", "notosanssc"],
     "思源宋体": ["sourcehanserif", "notoserifcjk", "notoserifsc"],
-    "苹方": ["pingfang"]
+    "苹方": ["pingfang"],
+    "noto sans cjk sc": ["notosanscjk"],
+    "noto serif cjk sc": ["notoserifcjk"]
   },
 
   "defaults": {
