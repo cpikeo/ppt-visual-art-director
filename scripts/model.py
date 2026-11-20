@@ -172,9 +172,18 @@ def fit_lines(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> List[int]
         out.append(max(1, math.ceil(_para_width_em(seg, pieces, base) / cap - 1e-9)))
     return out or [1]
 
+def line_pitch_em(family: Optional[str]) -> float:
+    """单倍行距的行高（em）：按字体族名子串匹配 limits.json，未知字体取默认。"""
+    cfg = LIMITS["type"]["line_pitch_em"]
+    key = str(family or "").lower().replace(" ", "")
+    for name, value in cfg["by_font"].items():
+        if name in key:
+            return float(value)
+    return float(cfg["default"])
+
 def fit_height_in(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> float:
     """框高需求（英寸）。行数、字号、行距、段后距都算进去；估不准时以真实渲染为准。"""
-    pitch = LIMITS["type"]["line_pitch_em"]
+    pitch = line_pitch_em(st.get("family"))
     paras = paragraph_runs(el) or [(str(el.get("content", "")), [])]
     lines = fit_lines(el, st, box_w)
     total = 0.0

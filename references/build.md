@@ -18,11 +18,12 @@
 - 字族三分：`fonts.heading`、`fonts.body`（正文、图表、页码）、`fonts.number`（缺省同 heading）。
 - `rotation` 对所有对象生效，按 360 取模。
 - 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
+- `W-FIT` 的行高按字体取值（`limits.json` 的 `type.line_pitch_em.by_font`）：Noto/思源 CJK 1.448、雅黑 1.32、宋体/黑体 1.15，未知字体 1.25。用别的字体且估不准，在 `by_font` 里补一行。
 - 图表与表格内的字号由 `limits.json` 统一给出（表 16、图内标注/轴/图例 14）；要改，改阈值，不逐图改。
 
 ## 叠放、形状、路径、组
 
-- **叠放顺序就是声明顺序**，先写的在下。承载层（底图、蒙版、色块）要有东西压在上面，在自己身上声明 `overlap_allowed: true`；不能写在文字或图表上。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
+- **叠放顺序就是声明顺序**，先写的在下。承载层（底图、蒙版、色块、做底的巨型数字或标题）要有东西压在上面，在自己身上声明 `overlap_allowed: true`；`number` 与 `title` 可以做承载层，`body`、`caption`、`footer` 与图表不能自我豁免。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
 - `shape_kind`：`rect` `round_rect` `oval` `triangle` `diamond` `chevron` `arrow_right` `arrow_up`。`corner_in` 仅用于圆角矩形（半径，英寸）。`fill_alpha` 低于 0.15 基本不可见。
 - `gradient`：`{from, to, angle, from_alpha?, to_alpha?}`，`angle` 0 为左到右、90 为上到下；末端透明度应接近 0。`stroke`：`{color, width_pt, dash, cap}`。
 - 路径顶点为坐标 `[x, y]` 或锚点 `{"el": "n1", "anchor": "right", "at": 0.5}`。两点为直线，三点以上为折线；`closed: true` 加 `color` 为填充。锚点在编译期解析，改形状要重编译；旋转组内的锚点会错位，连线应同组或改用坐标。
@@ -69,7 +70,7 @@
 | `area` | `stacked` | 面积、堆叠面积 |
 | `pie` `donut` | — | 单系列、非负值 |
 | `scatter` | — | `series[].points = [[x, y], …]` |
-| `table` | `column_weights`、`column_align` | 原生表格 |
+| `table` | `column_weights`、`column_align` | 原生表格；数据写 `data: {"headers": [...], "rows": [[...], ...]}`，不是 series |
 
 - `palette`（图级，可选）覆盖整稿 `palette`，用于整稿强调色只属于某类数据、别的图需要中性色阶的场合；compile、checks、verify 共用同一取色规则。
 - 组合图共用一根数值轴（`combo_line_series` 指定系列改画折线）。**没有双数值轴**。
@@ -119,7 +120,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
 | `W-FIT` | 装载估算溢出（行数按字宽折算；`%` `×` `@` 按近全角宽度计） | 先改文案，再加框，不压字号 |
-| `W-SPACE` | 中文与数字/西文之间有手敲空格 | 删空格，依赖字体原生字距 |
+| `W-SPACE` | 中文与数字/西文之间有手敲空格（宽度随渲染器变，常显松散） | 删空格，依赖字体原生字距 |
+| `V-BLEED` | 文字落在声明为出血的元素里，被页边裁掉 | 确认被裁部分不含信息；没声明出血的文字出页仍是 `V-CLIP` 阻断 |
 | `W-CONTRAST` `V-CONTRAST` | 对比不足；文字压图时是对真实像素的量测（达标像素占比低于 `limits.json` 的 `image.zone.min_ok_share`） | 换墨色或落点、改 `crop_focus`、重做简报；不靠浓遮罩 |
 | `W-BUSY` | 图上文字对比够，但下方纹理过强（灰度标准差超限） | 换落字区或重做简报 |
 | `W-PPI` | 有效分辨率低 | 换素材或缩小显示 |
@@ -186,7 +188,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 图片生成 | 外部依赖 | 工具无关：只登记工具、完整提示词、文件、SHA-256、权利状态；本包不调用任何模型，生成图不作证据 |
 | 渲染核验 | 外部依赖 | LibreOffice + PyMuPDF（`requirements-render.txt`，可选）；缺失给 `PARTIAL`。Noto CJK 的 `.ttc` 在 PDF 里只能按家族匹配，分不出 SC 与 JP 字面 |
 | PowerPoint 实机验证 | 外部依赖 | 本包从未做过；结论由人在真实 PowerPoint 中签收，未做即 `NOT VERIFIED` |
-| 字体 | 外部依赖 | 只写字体名，不嵌入；目标机缺失会被静默替换 |
+| 字体 | 外部依赖 | 只写字体名，不嵌入；目标机缺失会被静默替换。主题字体（拉丁与东亚）取 `fonts`，新建 run 带 `lang`（含中文为 zh-CN） |
+| 母版与版式 | 有限 | 默认模板的 4:3 占位符几何按画布宽度横向缩放；只有一套母版，不做自定义版式库 |
 | 动画、切换、嵌入字体、新建 SmartArt、宏 | 不支持 | `.pptm` 一律拒绝 |
 
 ## 模块与依赖

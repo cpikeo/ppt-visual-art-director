@@ -168,5 +168,8 @@ def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = N
             rPr.attrib.pop("spc", None)
 
 def _set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0) -> None:
-    """新建对象一律连东亚字族一起写：只写 latin 时中文会被渲染器换掉，整稿字族就断了。"""
+    """新建对象一律连东亚字族一起写：只写 latin 时中文会被渲染器换掉，整稿字族就断了。
+    同时写 lang：缺省时中文在 PowerPoint 里被当成未标注语言，拼写检查满屏红线，断行规则也不稳。"""
     set_run_attrs(run, font=family, font_ea=family, size=size, color=color, bold=bold, spacing=spacing)
+    has_cjk = any("\u3400" <= ch <= "\u9fff" for ch in (run.text or ""))
+    run._r.get_or_add_rPr().set("lang", "zh-CN" if has_cjk else "en-US")

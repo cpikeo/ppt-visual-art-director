@@ -1035,8 +1035,9 @@ def expected_text(el: Dict[str, Any]) -> List[str]:
         out.extend(str(v) for v in row)
     # 与 compile 一致：legend 缺省时两个以上系列才显示图例；显式 false 就不会渲染系列名。
     show_legend = chart.get("legend", len(data.get("series") or []) > 1)
+    # 饼与环的图例列的是类别而不是系列名，系列名不会出现在渲染里。
     for series in data.get("series") or []:
-        if show_legend:
+        if show_legend and chart.get("kind") not in ("pie", "donut"):
             out.append(str(series.get("name") or ""))
     out.extend(_label_pieces(chart))
     return [piece for piece in out if _norm_key(piece)]
@@ -1226,7 +1227,15 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
             fonts_here.add(font_family_base(span["font"]))
             sx0, sy0, sx1, sy1 = span["bbox"]
             if sx0 < -0.02 or sy0 < -0.02 or sx1 > page_box[2] + 0.02 or sy1 > page_box[3] + 0.02:
-                f.add("HARD", "V-CLIP", pid, f"文字超出页面：{text[:24]}")
+                # 元素自己声明了出血（框伸出画布，compile 已给 W-GEOM）：被裁是设计，只提示；否则是漏出。
+                declared_bleed = any(
+                    (bx < 0 or by < 0 or bx + bw > page_box[2] or by + bh > page_box[3])
+                    and bx <= (sx0 + sx1) / 2 <= bx + bw and by <= (sy0 + sy1) / 2 <= by + bh
+                    for bx, by, bw, bh in boxes.values())
+                if declared_bleed:
+                    f.add("INFO", "V-BLEED", pid, f"文字按声明出血到页外：{text[:24]}（确认被裁的部分不含信息）")
+                else:
+                    f.add("HARD", "V-CLIP", pid, f"文字超出页面：{text[:24]}")
                 continue
             tol = max(0.06, 0.15 * (sy1 - sy0))
             if any(sx0 >= bx - tol and sy0 >= by - tol and sx1 <= bx + bw + tol and sy1 <= by + bh + tol

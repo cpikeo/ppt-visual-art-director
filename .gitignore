@@ -1,7 +1,0 @@
-__pycache__/
-*.pyc
-*.error.pptx
-*.preserve-failed.pptx
-# 评测证据（渲染图）需要入库；日常核验产生的 render/ 不入库
-render/
-!dev/evals/**/render/

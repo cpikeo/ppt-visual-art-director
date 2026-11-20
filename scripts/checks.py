@@ -81,10 +81,11 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                 what = "文本框" if kind in TEXT_TYPES else "图表"
                 rep.soft("W-GEOM", eloc, f"{what}（含旋转）伸出画布（{w}×{h}），边缘内容会被裁掉")
 
-            if el.get("overlap_allowed") and kind not in CARRIERS and not (
+            display_text = kind in ("number", "title")  # 巨型数字/标题可以是底层图形（字体即图像）
+            if el.get("overlap_allowed") and kind not in CARRIERS and not display_text and not (
                     kind == "image" and el.get("image_role") in ("background", "texture")):
                 rep.hard("E-OVERLAP", eloc,
-                         "overlap_allowed 只能声明在承载层（背景图/蒙版/色块/闭合路径）上；被压的元素不能自我豁免")
+                         "overlap_allowed 只能声明在承载层（背景图/蒙版/色块/闭合路径/做底的巨型数字或标题）上；正文、注释与图表被压时不能自我豁免")
             if kind == "divider" and eh > 0.2:
                 rep.soft("W-GEOM", eloc, f"divider 高 {eh:.2f}in，已经是一块色块；用 shape 更清楚")
             if kind == "group":
@@ -151,10 +152,9 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                              f"在 {lower['el'].get('id')} 上声明 overlap_allowed，否则移开")
     return rep
 
+# 中西文间的手敲空格：字体自身的字距已够，空格宽度又因渲染器而异
+# （Noto CJK 空格约 0.22–0.26 em；LibreOffice 还会叠加中西文自动间距，实测明显偏松；宋体空格 0.5 em）。
 _CJK_SPACE = re.compile(r"[\u3400-\u9fff][ \u00a0]+[A-Za-z0-9]|[A-Za-z0-9%][ \u00a0]+[\u3400-\u9fff]")
-
-def _cjk_space_hits(text: str) -> List[str]:
-    return [m.group(0) for m in _CJK_SPACE.finditer(text)]
 
 def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> None:
     content = el.get("content", "")
@@ -166,9 +166,9 @@ def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> No
     need = fit_height_in(el, st, ew)
     if need > eh * LIMITS["type"]["fit_tolerance"]:
         rep.soft("W-FIT", loc, f"按 {st['size']:g}pt 估算需 {need:.2f}in，框高 {eh:.2f}in：先编辑文案，再加宽/拆页")
-    spaced = _cjk_space_hits(str(content))
+    spaced = _CJK_SPACE.findall(str(content))
     if spaced:
-        rep.soft("W-SPACE", loc, f"中文与数字/西文之间有手敲空格（{'、'.join(spaced[:3])}）：空格按整字宽渲染，数字会被推离句子；删掉空格，依赖字体原生字距")
+        rep.soft("W-SPACE", loc, f"中文与数字/西文之间有手敲空格（{'、'.join(spaced[:3])}）：宽度随渲染器变化，常显得松散；删掉空格，依赖字体原生字距，需要时用 runs 调整")
     minimum = LIMITS["type"]["min_pt"].get(el["type"], 0)
     if st["size"] < minimum:
         rep.soft("W-PT", loc, f"{el['type']} {st['size']:g}pt 低于 {minimum}pt 下限")

@@ -239,6 +239,41 @@ def _reorder(slide, built: List[Any]) -> None:
     for c in ordered:
         tree.append(c)
 
+def _fit_master_to_canvas(prs, old_w: int) -> None:
+    """python-pptx 默认模板是 4:3（10 in 宽）。只改页面尺寸不改母版时，母版与版式里的占位符仍是 4:3 几何：
+    用户在 PowerPoint 里新建页、重置版式，标题与页码会落在页面左侧 3/4。这里把横向几何按比例铺到新宽度。"""
+    ratio = prs.slide_width / float(old_w)
+    if abs(ratio - 1.0) < 1e-6:
+        return
+    containers = [prs.slide_master] + list(prs.slide_layouts)
+    for container in containers:
+        for shape in container.shapes:
+            # 只缩放自带 xfrm 的形状；占位符的继承几何读出来是母版的值，再缩放一次会放大两遍。
+            if shape._element.find(".//" + qn("a:xfrm")) is None or shape.width is None:
+                continue
+            shape.left, shape.width = int(round(shape.left * ratio)), int(round(shape.width * ratio))
+
+
+def _set_theme_fonts(prs, plan: Dict[str, Any]) -> None:
+    """主题字体改成 plan 的字族（拉丁与东亚），用户后续新增的文字继承它，而不是 Calibri 加空的东亚字体。"""
+    fonts = plan.get("fonts") or {}
+    heading = fonts.get("heading") or LIMITS["defaults"]["fonts"]["heading"]
+    body = fonts.get("body") or LIMITS["defaults"]["fonts"]["body"]
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    theme_part = prs.slide_master.part.part_related_by(RT.THEME)
+    root = etree.fromstring(theme_part.blob)
+    ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+    for tag, family in (("majorFont", heading), ("minorFont", body)):
+        node = root.find(f".//a:fontScheme/a:{tag}", ns)
+        if node is None:
+            continue
+        for kind in ("latin", "ea"):
+            child = node.find(f"a:{kind}", ns)
+            if child is not None:
+                child.set("typeface", str(family))
+    theme_part._blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     from pptx import Presentation
     from pptx.util import Inches
@@ -246,8 +281,11 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
 
     w, h = canvas(plan)
     prs = Presentation()
+    old_w = prs.slide_width
     prs.slide_width = Inches(w)
     prs.slide_height = Inches(h)
+    _fit_master_to_canvas(prs, old_w)
+    _set_theme_fonts(prs, plan)
     # “Title Only” 版式提供标题占位符；没有 title 元素的页会删掉空占位符，不留“单击添加标题”。
     layout = next((l for l in prs.slide_layouts if l.name == "Title Only"), prs.slide_layouts[5])
 
