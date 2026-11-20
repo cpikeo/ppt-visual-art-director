@@ -655,7 +655,7 @@ def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
     spec = el["chart"]
     kind = spec["kind"]
     obj = shape.chart
-    palette = M.deck_palette(plan)
+    palette = M.chart_palette(plan, spec)
     order = {str(s["name"]): i for i, s in enumerate(spec["data"]["series"])}
 
     if kind in ("pie", "donut"):
@@ -1033,8 +1033,10 @@ def expected_text(el: Dict[str, Any]) -> List[str]:
     out.extend(str(v) for v in data.get("headers") or [])
     for row in data.get("rows") or []:
         out.extend(str(v) for v in row)
+    # 与 compile 一致：legend 缺省时两个以上系列才显示图例；显式 false 就不会渲染系列名。
+    show_legend = chart.get("legend", len(data.get("series") or []) > 1)
     for series in data.get("series") or []:
-        if chart.get("legend") or len(data.get("series") or []) > 1:
+        if show_legend:
             out.append(str(series.get("name") or ""))
     out.extend(_label_pieces(chart))
     return [piece for piece in out if _norm_key(piece)]

@@ -115,7 +115,7 @@ def add_chart(slide, plan, page, el, palette: List[str]):
 
     series = chart["data"]["series"]
     names = [str(s["name"]) for s in series]
-    colors = _series_colors(palette, len(data.categories) if kind in ("pie", "donut") else len(series))
+    colors = _series_colors([c.upper() for c in chart.get("palette") or []] or palette, len(data.categories) if kind in ("pie", "donut") else len(series))
     plot = obj.plots[0]
     combo = set(chart.get("combo_line_series") or [])
     stacked = bool(chart.get("stacked"))

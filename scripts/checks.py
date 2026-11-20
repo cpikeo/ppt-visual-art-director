@@ -151,6 +151,11 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                              f"在 {lower['el'].get('id')} 上声明 overlap_allowed，否则移开")
     return rep
 
+_CJK_SPACE = re.compile(r"[\u3400-\u9fff][ \u00a0]+[A-Za-z0-9]|[A-Za-z0-9%][ \u00a0]+[\u3400-\u9fff]")
+
+def _cjk_space_hits(text: str) -> List[str]:
+    return [m.group(0) for m in _CJK_SPACE.finditer(text)]
+
 def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> None:
     content = el.get("content", "")
     if not str(content).strip():
@@ -161,6 +166,9 @@ def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> No
     need = fit_height_in(el, st, ew)
     if need > eh * LIMITS["type"]["fit_tolerance"]:
         rep.soft("W-FIT", loc, f"按 {st['size']:g}pt 估算需 {need:.2f}in，框高 {eh:.2f}in：先编辑文案，再加宽/拆页")
+    spaced = _cjk_space_hits(str(content))
+    if spaced:
+        rep.soft("W-SPACE", loc, f"中文与数字/西文之间有手敲空格（{'、'.join(spaced[:3])}）：空格按整字宽渲染，数字会被推离句子；删掉空格，依赖字体原生字距")
     minimum = LIMITS["type"]["min_pt"].get(el["type"], 0)
     if st["size"] < minimum:
         rep.soft("W-PT", loc, f"{el['type']} {st['size']:g}pt 低于 {minimum}pt 下限")
@@ -253,6 +261,7 @@ def check_path(page: Dict[str, Any], el, loc, boxes, rep: Report) -> None:
 
 def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -> None:
     chart = el["chart"]
+    palette = [c.upper() for c in chart.get("palette") or []] or palette
     kind = chart["kind"]
     data = chart["data"]
     if kind == "table":

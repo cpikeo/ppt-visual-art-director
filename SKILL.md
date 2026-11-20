@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：先读懂受众与证据，提炼洞察，定原创视觉概念，再组织叙事、构图、排印、色彩、图像与图表；把判断写成 brief 与 plan，确定性产出原生可编辑 PPTX，看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 10.0.0
+version: 10.1.0
 ---
 
 # PPT 视觉艺术指导
@@ -49,7 +49,7 @@ version: 10.0.0
 - **连续性**：全稿缩略图并置——视觉锚点、密度起伏、背景基调、章节节奏成立吗？峰值与停顿看得出吗？
 - **有效性**：转灰度、按真实投影尺寸、站在观看距离——层级与信息还清晰吗？
 
-编译器的**模式信号**（`W-MONOTONY` `W-RULE` `W-LABEL` `W-IMG-REUSE` `W-CLAIM` `W-GRAY` `I-OPEN`）只指出该看的位置：成立就改，无事就写进交付说明。
+编译器的**模式信号**（`W-MONOTONY` `W-RULE` `W-LABEL` `W-IMG-REUSE` `W-CLAIM` `W-GRAY` `W-SPACE` `I-OPEN`）只指出该看的位置：成立就改，无事就写进交付说明。
 
 ## 四、brief 与任务路线
 
@@ -121,7 +121,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定�
 | --- | --- |
 | 想概念、定艺术指导、排叙事、判断整稿 | `references/design.md` 〇至三 |
 | 定构图、选版式、选图表、做数据视觉 | `references/design.md` 四、五 |
-| 排版、配色 | `references/design.md` 六、七 |
+| 排版、中文字体体系、配色 | `references/design.md` 六、七 |
 | 规划图片、写出图简报与提示词、验收生成图 | `references/imagery.md` |
 | 诊断症状、给评审结论 | `references/design.md` 八至九 |
 | 写 plan、读诊断码、改稿、能力边界 | `references/build.md` |

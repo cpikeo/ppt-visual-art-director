@@ -18,17 +18,17 @@
   requirements-render.txt  可选：渲染核验（PyMuPDF 为 AGPL-3.0）
 
 开发材料（不属于技能包；打包给 AI 时排除整个 dev/）
-  dev/tests/             回归测试（12 项：编译、安全、原生结构、定点改稿、灰度信号）
+  dev/tests/             回归测试（18 项：编译、安全、原生结构、定点改稿、信号）
   dev/evals/             art-direction-demo（可复现的 6 页示例稿）与 FINDINGS.md
   dev/compat/COMPAT.md   已验证与未验证清单
 ```
 
-## 本次修订做了什么
+## 本次修订做了什么（10.1.0）
 
-- **设计判断**：新增“三种整体判断”（整体性、连续性、有效性）作为看图必做项；新增“向大师学什么”（只提炼判断方法）；色彩改为“从事实推导的关系系统”（环境/结构/强调/数据四种职责，区分各类中性色），去掉预设色板起点；数据视觉补上四层分工与“不夸大”。
-- **工程**：页标题编译为**原生标题占位符**（大纲/读屏/导航可识别），无标题页不留空占位符；新增 `W-GRAY`（多系列只靠色相区分时报警）；图表标注默认 14pt。
-- **精简**：SKILL.md 去掉与 references 重复的段落；design.md 删除重复的图像节，评测经验由 12 条散记改为 16 条可执行的判断。
-- **证据**：补齐 README 一直声明、但仓库里缺失的 `dev/`（测试、评测样本、兼容记录）。
+* **设计判断**：`design.md` 六新增“中文字体体系”（角色、字重、按目标环境选字、不合成加粗、中文不倾斜）；十补入 5 条来自真实渲染的判断（大字数字量宽、强调色语义与图表调色板分离、转折页用真实长度等）。
+* **工程**：图表新增图级 `palette`（compile / checks / verify 共用 `model.chart_palette`）；`W-FIT` 宽度估算修正 `% × @ &` 与数字；新增 `W-SPACE`（中文与数字间手敲空格）；`verify` 的图例预期与 compile 对齐，消除多系列无图例时的误报；Pillow 弃用告警。
+* **证据**：`dev/` 真正入库：18 项回归、可复现的 6 页示例稿（含 LibreOffice 渲染图与报告）、`FINDINGS.md`（含没做好的部分）、`COMPAT.md`。
+* **精简**：没有新增脚本或模块；只改了出问题的函数。
 
 ## 安装与命令
 
@@ -41,7 +41,7 @@ python scripts/compile.py plan.json out.pptx [--assets DIR]
 python scripts/verify.py plan.json out.pptx [--assets DIR]
 python scripts/revise.py inspect 原稿.pptx
 python scripts/revise.py 原稿.pptx edit.json out.pptx
-python -m unittest discover -s dev/tests -v          # 开发回归
+python -m unittest discover -s dev/tests -v          # 开发回归（18 项）
 python dev/evals/art-direction-demo/build_plan.py     # 重建示例 plan
 ```
 
@@ -58,8 +58,8 @@ python dev/evals/art-direction-demo/build_plan.py     # 重建示例 plan
 
 | 等级 | 内容 | 状态 |
 | --- | --- | --- |
-| L0 对象 | plan ↔ PPTX 结构与对象核对 | 已做（示例稿 + 12 项回归） |
-| L1 LibreOffice | 无头渲染、断行、字体、越界 | 已做：7.4.7.2 / Debian 12，示例稿 READY |
+| L0 对象 | plan ↔ PPTX 结构与对象核对 | 已做（示例稿 + 18 项回归） |
+| L1 LibreOffice | 无头渲染、断行、字体、越界 | 已做：25.8.7.3 / Debian 12 / Noto CJK SC，示例稿 READY（单一环境） |
 | L2 PowerPoint 实机 | 真实 Microsoft PowerPoint | **NOT VERIFIED** |
 | L3 人工签收 | 目标环境下人确认 | **NOT REVIEWED** |
 

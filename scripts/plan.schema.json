@@ -1142,6 +1142,15 @@
             ]
           },
           "description": "仅表格：逐列对齐；数字列右对齐。"
+        },
+        "palette": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/color"
+          },
+          "description": "本图专用的系列色，覆盖整稿 palette。用于整稿强调色只属于某类数据、而别的图需要中性色阶的场合。"
         }
       }
     },

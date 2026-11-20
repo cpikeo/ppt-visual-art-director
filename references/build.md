@@ -71,6 +71,7 @@
 | `scatter` | — | `series[].points = [[x, y], …]` |
 | `table` | `column_weights`、`column_align` | 原生表格 |
 
+- `palette`（图级，可选）覆盖整稿 `palette`，用于整稿强调色只属于某类数据、别的图需要中性色阶的场合；compile、checks、verify 共用同一取色规则。
 - 组合图共用一根数值轴（`combo_line_series` 指定系列改画折线）。**没有双数值轴**。
 - 直标：`data_labels` 作用于柱、线、面积、饼、环与组合图的柱层；组合折线的直标需 `combo_line_labels: true`。
 - 硬检查：同图单位一致；期间与口径不一致阻断；`axis_labels: false` 须同时 `data_labels: true`；百分比堆叠每列合计 100；截轴（`min > 0`）须在 `value_axis.note` 写明起点，且该起点要落在页面可见的 caption、轴名或图题上（否则 `W-NOTE`）；饼与环既无直标也无图例即阻断。
@@ -117,7 +118,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `W-GRAY` | 相邻系列颜色转灰度后明度比低于 `chart.min_series_luminance_ratio` | 拉开明度，或直标系列名、换线型与标记 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
-| `W-FIT` | 装载估算溢出 | 先改文案，再加框，不压字号 |
+| `W-FIT` | 装载估算溢出（行数按字宽折算；`%` `×` `@` 按近全角宽度计） | 先改文案，再加框，不压字号 |
+| `W-SPACE` | 中文与数字/西文之间有手敲空格 | 删空格，依赖字体原生字距 |
 | `W-CONTRAST` `V-CONTRAST` | 对比不足；文字压图时是对真实像素的量测（达标像素占比低于 `limits.json` 的 `image.zone.min_ok_share`） | 换墨色或落点、改 `crop_focus`、重做简报；不靠浓遮罩 |
 | `W-BUSY` | 图上文字对比够，但下方纹理过强（灰度标准差超限） | 换落字区或重做简报 |
 | `W-PPI` | 有效分辨率低 | 换素材或缩小显示 |

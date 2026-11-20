@@ -134,7 +134,13 @@ def _em_width(ch: str) -> float:
         return 0.30
     code = ord(ch)
     if code < 128:
+        if ch.isdigit():
+            return 0.58          # 粗体数字偏宽；按 0.55 估，100pt 的“41%”会被低估到刚好放下
+        if ch in "%@&":
+            return 0.90          # 百分号、@、& 接近一个字宽；按标点的 0.34 估会漏掉大字号数字的折行
         return 0.55 if ch.isalnum() else 0.34
+    if ch in "×÷±":
+        return 0.90
     if ch in "，。、；：？！（）【】《》「」『』“”‘’—…·～":
         return 1.0
     if code >= 0x2E80:
@@ -210,6 +216,10 @@ def page_bg(page: Dict[str, Any]) -> str:
 
 def deck_palette(plan: Dict[str, Any]) -> List[str]:
     return [c.upper() for c in (plan.get("palette") or LIMITS["defaults"]["palette"])]
+
+def chart_palette(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
+    """图表取色：图自带 palette 优先，否则用整稿 palette。compile、checks、verify 共用这一处。"""
+    return [c.upper() for c in (chart.get("palette") or [])] or deck_palette(plan)
 
 def page_numbers(plan: Dict[str, Any]) -> Dict[str, Any]:
     cfg = dict(plan.get("page_numbers") or {})
@@ -583,7 +593,7 @@ def zone_probe(path: Path, img_el: Dict[str, Any], text_box: Box, page_backgroun
             n = int(LIMITS["image"]["zone"]["samples"])
             region = src.crop((int(max(ax, 0)), int(max(ay, 0)), max(int(bx), int(ax) + 1), max(int(by), int(ay) + 1)))
             region = region.resize((n, n), Image.BOX)
-            pixels = list(region.getdata())
+            pixels = list(region.get_flattened_data() if hasattr(region, "get_flattened_data") else region.getdata())
     except Exception:
         return None
     duo = img_el.get("duotone")
