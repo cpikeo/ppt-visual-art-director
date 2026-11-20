@@ -36,13 +36,27 @@ from ooxml import _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_str
 # ---------------------------------------------------------------- 建对象
 
 
-def add_text(slide, plan, page, el):
+def _claim_title_placeholder(slide, page, el, top_level):
+    """页内第一个顶层 title 元素落到版式的标题占位符上：大纲视图、读屏与幻灯片导航才认得出页标题。
+    其余 title（或组内的）仍是普通文本框。位置与样式全部显式写出，不继承母版。"""
+    if el.get("type") != "title" or not top_level:
+        return None
+    holder = slide.shapes.title
+    if holder is None or holder.name.startswith(f"{page['id']}."):
+        return None
+    return holder
+
+def add_text(slide, plan, page, el, top_level=True):
     from pptx.util import Inches, Pt
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 
     st = text_style(plan, page, el)
     box = explicit_box(el)
-    frame = slide.shapes.add_textbox(Inches(box[0]), Inches(box[1]), Inches(box[2]), Inches(box[3]))
+    frame = _claim_title_placeholder(slide, page, el, top_level)
+    if frame is not None:
+        frame.left, frame.top, frame.width, frame.height = Inches(box[0]), Inches(box[1]), Inches(box[2]), Inches(box[3])
+    else:
+        frame = slide.shapes.add_textbox(Inches(box[0]), Inches(box[1]), Inches(box[2]), Inches(box[3]))
     frame.name = f"{page['id']}.{el['id']}"
     tf = frame.text_frame
     tf.word_wrap = True
@@ -183,11 +197,11 @@ def add_page_number(slide, plan, page, index):
 # ---------------------------------------------------------------- 主流程
 
 
-def build_element(slide, plan, page, el, boxes, asset_root: Path):
+def build_element(slide, plan, page, el, boxes, asset_root: Path, top_level: bool = True):
     kind = el["type"]
     obj = None
     if kind in TEXT_TYPES:
-        obj = add_text(slide, plan, page, el)
+        obj = add_text(slide, plan, page, el, top_level)
     elif kind in ("shape", "divider"):
         obj = add_shape(slide, page, el)
     elif kind == "path":
@@ -197,7 +211,7 @@ def build_element(slide, plan, page, el, boxes, asset_root: Path):
     elif kind == "chart":
         obj = add_chart(slide, plan, page, el, deck_palette(plan))
     elif kind == "group":
-        children = [build_element(slide, plan, page, child, boxes, asset_root) for child in el["elements"]]
+        children = [build_element(slide, plan, page, child, boxes, asset_root, False) for child in el["elements"]]
         obj = slide.shapes.add_group_shape([c for c in children if c is not None])
         obj.name = f"{page['id']}.{el['id']}"
     else:
@@ -234,15 +248,19 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     prs = Presentation()
     prs.slide_width = Inches(w)
     prs.slide_height = Inches(h)
-    blank = prs.slide_layouts[6]
+    # “Title Only” 版式提供标题占位符；没有 title 元素的页会删掉空占位符，不留“单击添加标题”。
+    layout = next((l for l in prs.slide_layouts if l.name == "Title Only"), prs.slide_layouts[5])
 
     for idx, page in enumerate(plan["pages"]):
-        slide = prs.slides.add_slide(blank)
+        slide = prs.slides.add_slide(layout)
         background = slide.background.fill
         background.solid()
         background.fore_color.rgb = RGBColor.from_string(page_bg(page).lstrip("#"))
         boxes = page_geometry(page)
         built = [build_element(slide, plan, page, el, boxes, asset_root) for el in page["elements"]]
+        holder = slide.shapes.title
+        if holder is not None and not holder.name.startswith(f"{page['id']}."):
+            holder._element.getparent().remove(holder._element)
         _reorder(slide, [b for b in built if b is not None])
         add_page_number(slide, plan, page, idx)
         if page.get("speaker_notes"):

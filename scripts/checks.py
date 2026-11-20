@@ -365,6 +365,15 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
     need = len(data.get("categories") or []) if kind in ("pie", "donut") else len(series)
     if len(palette) < need:
         rep.soft("W-CHART", loc, f"palette 只有 {len(palette)} 色，需要 {need}；将循环取色")
+    # 灰度自检：系列只靠颜色区分时，转成灰度后明度要拉得开（投影与黑白打印都会丢掉色相）。
+    if kind not in ("pie", "donut", "table") and len(series) >= 2:
+        floor = LIMITS["chart"].get("min_series_luminance_ratio", 1.4)
+        shades = [palette[i % len(palette)] for i in range(len(series))] if palette else []
+        for i in range(len(shades) - 1):
+            if contrast_ratio(shades[i], shades[i + 1]) < floor:
+                rep.soft("W-GRAY", loc, f"系列 {i + 1} 与 {i + 2} 的颜色转灰度后明度几乎相同（{shades[i]} / {shades[i + 1]}）："
+                                        "拉开明度，或换成直接标注系列名、不同线型与标记，不要只靠色相")
+                break
     if chart.get("axis_labels") is False and not chart.get("data_labels"):
         rep.hard("E-CHART", loc, "axis_labels=false 时必须 data_labels=true，否则无读数")
     hi = chart.get("highlight_category")
