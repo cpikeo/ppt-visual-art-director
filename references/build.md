@@ -16,6 +16,8 @@
 - 默认：`title` 40pt 粗、`number` 72pt 粗、`body` `text` 20pt、`caption` `footer` 13pt；行距 1.12（标题、数字）、1.32（正文）、1.25（注释）。深底（亮度 < 0.18）未声明颜色时用浅墨。
 - 字族三分：`fonts.heading`、`fonts.body`（正文、图表、页码）、`fonts.number`（缺省同 heading）。
 - `rotation` 对所有对象生效，按 360 取模。
+- 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
+- 图表与表格内的字号由 `limits.json` 统一给出（表 16、图内标注 12）；要改，改阈值，不逐图改。
 
 ## 叠放、形状、路径、组
 
@@ -115,6 +117,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `W-RUNS` | 原有混排被统一 | 用 `runs` 写明分区样式 |
 | `V-TEXT-RENDER` | 元素的字未落在自己框内渲染 | 查归属，不因别处有同样的字放行 |
 | `V-FONT` | 声明字体未参与渲染 | 状态降为 PARTIAL，目标机复核 |
+| `V-NOTES` `V-ALT` | 成品里的备注／替代文字与 plan 不一致 | 重新编译；不要手改成品 |
 
 ## 定点编辑：改既有稿
 
@@ -158,11 +161,40 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 
 `sha256` 用于确认“这份文件是不是我验的那一份”，不是复现凭据。
 
+## 能力边界
+
+| 能力 | 级别 | 说明 |
+| --- | --- | --- |
+| 画布 16:9、4:3 | 完整 | 其他比例需同时改 `limits.json` 与 schema，未测 |
+| 文本、形状、折线路径、组、图片裁切 | 完整 | 对象核对覆盖几何、旋转、逐 run 样式、字节 |
+| 原生图表：柱、条、堆叠、百分比堆叠、组合、线、面积、饼、环、散点；原生表格 | 完整 | 无双数值轴、瀑布、桑基、甘特、气泡、雷达、趋势线 |
+| 演讲者备注、替代文字、页码 | 完整 | 页标题仍是普通文本框，不是标题占位符：读屏与大纲识别不到，有无障碍要求时必须在交付说明里提示 |
+| 既有稿定点编辑 | 完整（限白名单操作） | 不新增页、不改页序、不改系列数、不动母版与版式 |
+| 渐变、`duotone` | 有限 | PowerPoint 生效；LibreOffice 只做去饱和或近似 |
+| 路径连线 | 有限 | 直线与折线，锚点是编译期坐标，不是连接符绑定 |
+| 图片裁切 | 有限 | 按 `cover`，不保证主体不被裁到 |
+| 图片生成 | 外部依赖 | 工具无关：只登记工具、完整提示词、文件、SHA-256、权利状态；本包不调用任何模型，生成图不作证据 |
+| 渲染核验 | 外部依赖 | LibreOffice + PyMuPDF；缺失给 `PARTIAL` |
+| PowerPoint 实机验证 | 外部依赖 | `dev/compat/powerpoint_check.ps1` 采集事实，结论由人签收；未运行即 `NOT VERIFIED` |
+| 字体 | 外部依赖 | 只写字体名，不嵌入；目标机缺失会被静默替换 |
+| 动画、切换、嵌入字体、新建 SmartArt、宏 | 不支持 | `.pptm` 一律拒绝 |
+
+## 模块与依赖
+
+```
+model.py    共用：诊断、plan 载入、度量、颜色、几何、成品包校验、alt_text（不依赖 python-pptx）
+ooxml.py    低层写入：填充、渐变、描边、圆角、duotone、run 属性        ← model
+charts.py   原生图表与表格                                           ← model, ooxml
+checks.py   plan 校验与整稿模式信号                                   ← model
+compile.py  元素构建、build、CLI                                      ← model, checks, ooxml, charts
+verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       ← model, checks, charts
+revise.py   inspect 与定点编辑 + 保留核对                              ← model, ooxml
+```
+
+`limits.json` 是阈值唯一来源，`plan.schema.json` 是数据契约唯一来源。
+
 ## 机器边界
 
-- 原生图表只有上表所列类型，没有双数值轴与其余高级图。其余关系用形状与路径手工组合，不与数据绑定。
-- 路径只有直线与折线，锚点为编译期坐标，不是 PowerPoint 连接符绑定。
-- 页标题为普通文本框，不是标题占位符；字体只写字体名。
-- 图片按 `cover` 裁切，不保证主体不被裁到；`duotone` 只换色相。
-- 编译器与核验器共用同一套 plan 模型与阈值：共用部分有缺陷，两边会一起“一致”。所以对象核对不能替代看图。
-- 没跑过的检查与通过的检查长得一样。新增检查必须反向构造（故意破坏，确认它会响），见 `tests/test_regression.py`。
+- 编译器与核验器共用同一套 plan 模型与阈值：共用部分有缺陷，两边会一起“一致”。所以对象核对不能替代看图。堆叠柱标签墨色就是一例：对象一致，但深色块上的深字读不出，只有看渲染才发现。
+- 没跑过的检查与通过的检查长得一样。新增检查必须反向构造（故意破坏，确认它会响），见 `dev/tests/test_regression.py`。
+- `W-NOTE` 恒为提醒：截轴起点必须由你写进页面可见的 caption、轴名或图题，机器不判断你写没写对。

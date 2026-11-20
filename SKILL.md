@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：先读懂受众与证据，找出洞察，定原创视觉概念与艺术指导，再排叙事、构图、排版、色彩、图像与图表；把判断写成 brief 与 plan，确定性产出原生可编辑 PPTX，看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 8.0.0
+version: 9.0.0
 ---
 
 # PPT 视觉艺术指导
@@ -20,6 +20,8 @@ version: 8.0.0
 6. **真实先于完整。** 没有证据的漂亮页不如留白。生成图只作氛围；数字、来源、因果、引文不补造，缺就写进 `open_questions`。
 7. **判断先于规则。** 脚本阈值是最低执行线。冲突时说清取舍，并把风险写进交付说明。
 8. **停止先于完美。** 达标即停；两轮无实质改善，或在两个方案间摇摆，交给人决策。
+
+**破格协议**：允许突破任何规则（字号、对称、网格、留白），但要同时说清三件事——破了哪条、换来什么、谁来承担代价（可读性、可编辑、可复用）。写进 `composition_rationale`。说不出，就是疏忽，不是风格。
 
 ## 二、判断顺序
 
@@ -62,7 +64,7 @@ brief 包含 `insight`、`concept`、`veto`（至少一条否决）、`art`（�
 
 - 坐标用英寸，原点左上；16:9 为 13.333 × 7.5；字号 pt。几何用网格算术，不凭感觉填（公式见 build.md）。
 - 叠放顺序就是声明顺序。承载层（底图、蒙版、色块）要有东西压在上面，就在自己身上声明 `overlap_allowed`。
-- 页码由编译器生成；不自动缩字、换色、补数据、联网取图。
+- 页码由编译器生成；不自动缩字、换色、补数据、联网取图。`speaker_notes` 写入备注页，`alt` 写入替代文字（图片缺省取 `asset_reason`，图表缺省取图题；装饰元素不写）。
 - **只产出 `.pptx`**。`.pptm` 与扩展名不符的包一律拒绝，成品写出后校验包的内容类型。
 - 已有输出不覆盖，确认替换再加 `--force`；原稿永不就地改写。
 - 生成图须登记工具、完整提示词、文件与 SHA-256、权利状态；生成图不作证据。权利未确认写 `pending`，不伪造授权。
@@ -72,7 +74,8 @@ python scripts/compile.py plan.json out.pptx                   # 新建：校验
 python scripts/verify.py plan.json out.pptx                    # 新建稿核验，写 render/<名称>/
 python scripts/revise.py inspect 原稿.pptx                      # 改稿：只读解析
 python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定点编辑 + 保留核对
-python -m unittest discover -s tests -v                        # 包自身回归（仓库开发用）
+python -m unittest discover -s dev/tests -v                    # 包自身回归（仓库开发用）
+python dev/evals/run_evals.py --version vN                     # 真实作品评测流水线（仓库开发用）
 ```
 
 依赖：Python 3.9+、`python-pptx`、`jsonschema`、`Pillow`、`lxml`；渲染核验另需 LibreOffice 与 `pymupdf`。缺哪样就如实说缺哪样。
@@ -95,7 +98,9 @@ python -m unittest discover -s tests -v                        # 包自身回归
 
 **停止条件**：S1 清零，无未处置的 S2；每页主角一句话说得清；剩余 S3/S4 已披露。
 
-**不能说的话**：没渲染却说“已预览”“无溢出”“断行正常”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论；替用户声称已在目标 PowerPoint 中验证。
+**验证等级**见 `dev/compat/COMPAT.md`：L0 对象、L1 LibreOffice 渲染、L2 PowerPoint 实机采集、L3 人工签收。`verify.py` 只能到 L1，并在报告里写明渲染环境，PowerPoint 一律 `NOT VERIFIED`。
+
+**不能说的话**：没跑过 PowerPoint 却说“PowerPoint 下正常”；没渲染却说“已预览”“无溢出”“断行正常”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论；替用户声称已在目标 PowerPoint 中验证。
 
 ## 七、定点编辑的保留规则
 
@@ -121,7 +126,7 @@ python -m unittest discover -s tests -v                        # 包自身回归
 
 ## 九、边界
 
-不生成备注、动画与切换；没有双数值轴、桑基、甘特、决策树与绑定连接器。页标题是普通文本框，读屏与大纲识别不到，无障碍有要求时需提示。字体只写字体名，不嵌入。`duotone` 在 LibreOffice 只做去饱和。定点编辑不新增页、不改页序、不改系列数、不动母版与版式。细则见 `references/build.md`「机器边界」。
+完整支持：16:9 与 4:3、原生文本／形状／折线路径／组、图片裁切、原生图表（柱、线、面积、饼、环、散点）与表格、演讲者备注、替代文字、页码、既有稿定点编辑。有限支持：页标题是普通文本框（读屏与大纲识别不到）；无双数值轴、桑基、甘特；`duotone` 与渐变在 LibreOffice 只是近似；只有两种画布比例。外部依赖：图片生成（只做素材与提示词登记，不调用模型）、LibreOffice 渲染、PowerPoint 实机验证、目标机字体。不支持：动画、切换、嵌入字体、SmartArt 新建、宏。完整矩阵与理由见 `references/build.md`「能力边界」。
 
 ## 十、按需加载
 
@@ -131,4 +136,5 @@ python -m unittest discover -s tests -v                        # 包自身回归
 | 定构图、选版式、画关系图形、选图表 | `references/design.md` 四、五节 |
 | 排版、配色、图像、简报、压进色域 | `references/design.md` 六至八节 |
 | 诊断症状、给评审结论 | `references/design.md` 九、十节 |
+| 想知道真实作品里踩过什么坑 | `references/design.md` 十一节 |
 | 写 plan、用元素、读诊断、编译报错、改稿、交付说明 | `references/build.md` |

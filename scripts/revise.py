@@ -39,9 +39,10 @@ from lxml import etree
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import compile as C  # noqa: E402  诊断类型、字体写入、颜色与几何工具共用一份实现
+import model as M  # noqa: E402
+import ooxml as X  # noqa: E402
 
-qn = C.qn
+qn = M.qn
 P_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 REL_ID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
@@ -532,7 +533,7 @@ OPS = ("text", "box", "style", "fill", "line", "order", "image", "chart_data", "
 # 这些字段一旦出现在操作里，就说明它有意改样式；只改字时一个都不该有。
 STYLE_KEYS = ("font", "font_ea", "font_size", "bold", "color", "letter_spacing_pt",
               "align", "line_spacing", "pad_in", "valign")
-EMU = C.EMU
+EMU = M.EMU
 
 # 操作级属性白名单：每个操作只接受表中的键，拼错或不适用的键直接拒绝（不静默忽略）。
 COMMON_KEYS = {"op", "page", "target", "target_regex", "target_index", "note"}
@@ -565,7 +566,7 @@ STYLE_FRAME = {"pad_in": "ins", "valign": "anchor"}
 
 def slide_at(prs, page: Any) -> Any:
     if not isinstance(page, int) or isinstance(page, bool) or not (1 <= page <= len(prs.slides)):
-        raise C.BadOp(f"page 必须是 1..{len(prs.slides)} 的整数，收到 {page!r}")
+        raise M.BadOp(f"page 必须是 1..{len(prs.slides)} 的整数，收到 {page!r}")
     return prs.slides[page - 1]
 
 
@@ -576,19 +577,19 @@ def resolve(shape_list, op: Dict[str, Any]) -> Any:
     index = op.get("target_index")
     if index is not None:
         if not isinstance(index, int) or not (0 <= index < len(shape_list)):
-            raise C.BadOp(f"target_index 必须是 0..{len(shape_list) - 1} 的整数，收到 {index!r}")
+            raise M.BadOp(f"target_index 必须是 0..{len(shape_list) - 1} 的整数，收到 {index!r}")
         return shape_list[index]
     if regex is not None:
         hits = [s for s in shape_list if re.search(str(regex), s.name)]
     elif name is not None:
         hits = [s for s in shape_list if s.name == str(name)]
     else:
-        raise C.BadOp("缺少 target / target_regex / target_index")
+        raise M.BadOp("缺少 target / target_regex / target_index")
     if not hits:
         listing = ", ".join(f"{i}:{s.name}" for i, s in enumerate(shape_list))[:400]
-        raise C.BadOp(f"找不到目标 {name or regex!r}；本页对象为 {listing}")
+        raise M.BadOp(f"找不到目标 {name or regex!r}；本页对象为 {listing}")
     if len(hits) > 1:
-        raise C.BadOp(f"目标 {name or regex!r} 命中 {len(hits)} 个对象，改用 target_index："
+        raise M.BadOp(f"目标 {name or regex!r} 命中 {len(hits)} 个对象，改用 target_index："
                       f"{[s.name for s in hits][:6]}")
     return hits[0]
 
@@ -656,7 +657,7 @@ def _first(*values: Any) -> Any:
 
 def _write_run(run, piece: Dict[str, Any], op: Dict[str, Any], base: Dict[str, Any]) -> None:
     """run 级 > 操作级 > 原稿该 run 的显式值；三层都没有就不写，让继承继续生效。"""
-    C.set_run_attrs(
+    X.set_run_attrs(
         run,
         font=_first(piece.get("font"), op.get("font"), base.get("font")),
         font_ea=_first(piece.get("font_ea"), op.get("font_ea"), base.get("font_ea")),
@@ -687,7 +688,7 @@ def apply_style(shape, op: Dict[str, Any]) -> None:
             para.line_spacing = float(op["line_spacing"])
         for run in para.runs:
             # 显式声明 font 就是要换字族：连东亚字族一起写，否则中文仍留在原字族上。
-            C.set_run_attrs(run, font=op.get("font"), font_ea=op.get("font_ea") or op.get("font"),
+            X.set_run_attrs(run, font=op.get("font"), font_ea=op.get("font_ea") or op.get("font"),
                             size=op.get("font_size"), color=op.get("color"),
                             bold=op.get("bold"), spacing=op.get("letter_spacing_pt"))
     if op.get("valign"):
@@ -714,7 +715,7 @@ def apply_fill(shape, op: Dict[str, Any]) -> None:
 
     color = op.get("color")
     if color is None:
-        raise C.BadOp("fill 需要 color")
+        raise M.BadOp("fill 需要 color")
     shape.fill.solid()
     shape.fill.fore_color.rgb = RGBColor.from_string(str(color).lstrip("#"))
     if op.get("alpha") is not None:
@@ -755,17 +756,17 @@ def apply_order(shape, op: Dict[str, Any]) -> None:
         parent.remove(node)
         parent.append(node)
     else:
-        raise C.BadOp("order 的 to 取 back 或 front")
+        raise M.BadOp("order 的 to 取 back 或 front")
 
 
 def apply_image(shape, path: Path) -> None:
 
     if not path.is_file():
-        raise C.BadOp(f"素材不存在：{path}")
+        raise M.BadOp(f"素材不存在：{path}")
     image_part, rId = shape.part.get_or_add_image_part(str(path))
     blip = shape._element.blipFill.find(qn("a:blip"))
     if blip is None:
-        raise C.BadOp("目标不是图片对象")
+        raise M.BadOp("目标不是图片对象")
     blip.set(qn("r:embed"), rId)
 
 
@@ -773,22 +774,22 @@ def apply_chart(shape, op: Dict[str, Any]) -> None:
     from pptx.chart.data import CategoryChartData
 
     if not getattr(shape, "has_chart", False):
-        raise C.BadOp("目标不是图表对象")
+        raise M.BadOp("目标不是图表对象")
     chart = shape.chart
     if len(chart.plots) > 1:
-        raise C.BadOp("该图有多个图层（组合图）：改数据会同时打乱两层格式，请整稿重建")
+        raise M.BadOp("该图有多个图层（组合图）：改数据会同时打乱两层格式，请整稿重建")
     data = op.get("data") or {}
     cats, series = data.get("categories") or [], data.get("series") or []
     if not cats or not series:
-        raise C.BadOp("chart_data 需要 data.categories 与 data.series")
+        raise M.BadOp("chart_data 需要 data.categories 与 data.series")
     existing = [s.name for s in chart.plots[0].series]
     if len(series) != len(existing):
-        raise C.BadOp(f"系列数 {len(series)} ≠ 原图 {len(existing)}；加减系列会破坏配色与格式，请重建")
+        raise M.BadOp(f"系列数 {len(series)} ≠ 原图 {len(existing)}；加减系列会破坏配色与格式，请重建")
     for i, s in enumerate(series):
         if len(s.get("values") or []) != len(cats):
-            raise C.BadOp(f"系列「{s.get('name')}」值数 {len(s.get('values') or [])} ≠ 类别数 {len(cats)}")
+            raise M.BadOp(f"系列「{s.get('name')}」值数 {len(s.get('values') or [])} ≠ 类别数 {len(cats)}")
         if s.get("name") and s["name"] != existing[i]:
-            raise C.BadOp(f"第 {i + 1} 个系列名 {s['name']!r} ≠ 原图 {existing[i]!r}；改名会丢图例格式")
+            raise M.BadOp(f"第 {i + 1} 个系列名 {s['name']!r} ≠ 原图 {existing[i]!r}；改名会丢图例格式")
     payload = CategoryChartData()
     payload.categories = cats
     for s in series:
@@ -801,7 +802,7 @@ def apply_background(slide, op: Dict[str, Any]) -> None:
 
     color = op.get("color")
     if color is None:
-        raise C.BadOp("background 需要 color")
+        raise M.BadOp("background 需要 color")
     fill = slide.background.fill
     fill.solid()
     fill.fore_color.rgb = RGBColor.from_string(str(color).lstrip("#"))
@@ -833,10 +834,10 @@ def _chart_parts(shape) -> set:
 def check_keys(kind: Any, op: Dict[str, Any], where: str) -> None:
     """操作级白名单：未知操作、拼错或不适用的键一律拒绝。静默忽略的结果是报告写着"已改"、文件里什么都没变。"""
     if kind not in OP_KEYS:
-        raise C.BadOp(f"{where}: 未知操作 {kind!r}；可用 {', '.join(OPS)}")
+        raise M.BadOp(f"{where}: 未知操作 {kind!r}；可用 {', '.join(OPS)}")
     extra = sorted(set(op) - COMMON_KEYS - OP_KEYS[kind])
     if extra:
-        raise C.BadOp(f"{where}: {kind} 不接受 {extra}；该操作只认 {sorted(OP_KEYS[kind])}")
+        raise M.BadOp(f"{where}: {kind} 不接受 {extra}；该操作只认 {sorted(OP_KEYS[kind])}")
 
 
 def empty_grant() -> Dict[str, Any]:
@@ -861,7 +862,7 @@ def merge_grant(into: Dict[str, Any], extra: Dict[str, Any]) -> None:
 
 
 def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str, Any]],
-            rep: C.Report) -> Tuple[Dict[Tuple[int, int], Dict[str, Any]], set, set, set]:
+            rep: M.Report) -> Tuple[Dict[Tuple[int, int], Dict[str, Any]], set, set, set]:
     """逐条执行操作。对象以 (页, shape id) 为键；返回每个被点名对象的授权清单。"""
     grants: Dict[Tuple[int, int], Dict[str, Any]] = {}
     bg_touched: set = set()
@@ -882,15 +883,15 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
         merge_grant(grants.setdefault(key, empty_grant()), grant_for(kind, op))
         if kind == "text":
             if op.get("content") is None:
-                raise C.BadOp(f"{where}: text 需要 content")
+                raise M.BadOp(f"{where}: text 需要 content")
             write_text(shape, op, rep, int(op["page"]), shape.name)
         elif kind == "box":
             if not any(op.get(k) is not None for k in ("x", "y", "w", "h")):
-                raise C.BadOp(f"{where}: box 至少给 x/y/w/h 之一")
+                raise M.BadOp(f"{where}: box 至少给 x/y/w/h 之一")
             apply_box(shape, op)
         elif kind == "style":
             if not getattr(shape, "has_text_frame", False):
-                raise C.BadOp(f"{where}: {shape.name} 没有文本可改样式")
+                raise M.BadOp(f"{where}: {shape.name} 没有文本可改样式")
             apply_style(shape, op)
         elif kind == "fill":
             apply_fill(shape, op)
@@ -898,10 +899,10 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
             apply_line(shape, op)
         elif kind == "image":
             if not op.get("image_id"):
-                raise C.BadOp(f"{where}: image 需要 image_id")
-            path = C.resolve_asset(asset_root, str(op["image_id"]))
+                raise M.BadOp(f"{where}: image 需要 image_id")
+            path = M.resolve_asset(asset_root, str(op["image_id"]))
             if path is None:
-                raise C.BadOp(f"{where}: 找不到素材 {op['image_id']!r}（素材根 {asset_root}）")
+                raise M.BadOp(f"{where}: 找不到素材 {op['image_id']!r}（素材根 {asset_root}）")
             apply_image(shape, path)
         elif kind == "chart_data":
             apply_chart(shape, op)
@@ -944,7 +945,7 @@ def ink_box(obj: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:
     return (box[0], box[1], min(box[2], max(widest, 0.2)), min(box[3], max(tallest, 0.1)))
 
 
-def post_check(after: Dict[str, Any], f: C.Report) -> None:
+def post_check(after: Dict[str, Any], f: M.Report) -> None:
     """改完再按同一套版面规则过一遍：挪过的文字有没有被上层色块盖住、有没有出画布。
 
     新建稿由 compile 的 E-OVERLAP 守；改动稿不走 plan，所以这里补同一道闸。
@@ -969,7 +970,7 @@ def post_check(after: Dict[str, Any], f: C.Report) -> None:
                 opaque = bool(up_fill) or up_kind in ("picture", "chart", "table")
                 if not opaque:
                     continue
-                ix, iy = C._intersection(glyph, up_box)
+                ix, iy = M._intersection(glyph, up_box)
                 area = ix * iy
                 if area >= 0.35 and area >= 0.3 * max(glyph[2] * glyph[3], 1e-6):
                     f.soft("W-COVER", f"第 {page['index']} 页 {name}",
@@ -1043,7 +1044,7 @@ def _short(value: Any, n: int = 80) -> str:
 
 
 def _object_drift(obj: Dict[str, Any], twin: Dict[str, Any], grant: Optional[Dict[str, Any]],
-                  where: str, f: C.Report) -> None:
+                  where: str, f: M.Report) -> None:
     """对象的改动是否都落在授权之内。未被点名的对象（grant 为 None）必须逐项一致。"""
     top = grant["top"] if grant else set()
     for key in sorted((set(obj) | set(twin)) - {"styles", "frame"}):
@@ -1073,7 +1074,7 @@ FLAG_LABEL = {"hidden": "隐藏", "transition": "切换", "animation": "动画",
 
 
 def compare(before: Dict[str, Any], after: Dict[str, Any], grants: Dict[Tuple[int, int], Dict[str, Any]],
-            bg_touched: set, deleted: set, f: C.Report, image_pages: frozenset = frozenset()) -> Dict[str, Any]:
+            bg_touched: set, deleted: set, f: M.Report, image_pages: frozenset = frozenset()) -> Dict[str, Any]:
     """保留核对：没有任何操作授权改动的东西，必须与原稿逐项一致。这是"没有顺手改坏别处"的证据。"""
     for key, label in (("slides", "页数"), ("masters", "母版数"), ("layouts", "版式数"), ("macros", "宏")):
         if before.get(key) != after.get(key):
@@ -1133,7 +1134,7 @@ def compare(before: Dict[str, Any], after: Dict[str, Any], grants: Dict[Tuple[in
 
 
 def compare_parts(before: Dict[str, str], after: Dict[str, str], before_slides: List[str],
-                  after_slides: List[str], touched_pages: set, f: C.Report,
+                  after_slides: List[str], touched_pages: set, f: M.Report,
                   movable: Optional[set] = None) -> Dict[str, Any]:
     """包内部件比对。slide 按页比对（页序不等于部件名，python-pptx 保存时还会重新编号）；
     其余部件按名字逐字节比对。被点名页的 slide 与其 rels、改数图表自己的部件可以变，别的不许变。"""
@@ -1197,7 +1198,7 @@ def _link_runs(para: Any) -> int:
     return count
 
 
-def write_text(shape, op: Dict[str, Any], rep: C.Report, page: int, name: str) -> None:
+def write_text(shape, op: Dict[str, Any], rep: M.Report, page: int, name: str) -> None:
     """换字，同时守住原有排版与富文本。
 
     - 段落属性（pPr：对齐、缩进、项目符号、段距）整份沿用原稿对应段。
@@ -1213,16 +1214,16 @@ def write_text(shape, op: Dict[str, Any], rep: C.Report, page: int, name: str) -
     tf = shape.text_frame
     body = tf._txBody
     if body.find(".//" + qn("a:fld")) is not None or body.find(".//" + qn("a:br")) is not None:
-        raise C.BadOp(f"{name} 含域（如页码字段）或软回车 a:br，text 不能安全改写；"
+        raise M.BadOp(f"{name} 含域（如页码字段）或软回车 a:br，text 不能安全改写；"
                       f"请用 runs 写清每段，或整稿重建")
 
     content = str(op.get("content", ""))
     runs = op.get("runs")
     if runs and "".join(str(r.get("text", "")) for r in runs) != content:
-        raise C.BadOp("runs 拼接与 content 不一致（含 \\n）")
-    paras = C.paragraph_runs({"content": content, "runs": runs})
+        raise M.BadOp("runs 拼接与 content 不一致（含 \\n）")
+    paras = M.paragraph_runs({"content": content, "runs": runs})
     if paras is None:
-        raise C.BadOp("runs 分段与 content 对不上")
+        raise M.BadOp("runs 分段与 content 对不上")
 
     old = paragraph_styles(shape)  # 逐段的 run 样式（用于披露混排与 W-RUNS 判断）
     old_paras = body.findall(qn("a:p"))
@@ -1244,7 +1245,7 @@ def write_text(shape, op: Dict[str, Any], rep: C.Report, page: int, name: str) -
         tmpl = templates[min(idx, len(templates) - 1)] if templates else {
             "ppr": None, "end": None, "rprs": [], "links": 0}
         if tmpl["links"] and len(pieces) != len(tmpl["rprs"]):
-            raise C.BadOp(f"{name} 第 {idx + 1} 段含超链接，新内容的 run 数（{len(pieces)}）与原稿"
+            raise M.BadOp(f"{name} 第 {idx + 1} 段含超链接，新内容的 run 数（{len(pieces)}）与原稿"
                           f"（{len(tmpl['rprs'])}）不一致，链接无法安全保留；请用 runs 逐段写清")
         src = old[idx] if idx < len(old) else (old[-1] if old else {"runs": []})
         src_runs = src.get("runs") or []
@@ -1355,7 +1356,7 @@ def slide_xml_facts(pptx: Path, part_names: List[str]) -> List[Dict[str, Any]]:
 
 def compare_xml(b_page: Dict[str, Any], a_page: Dict[str, Any], page_no: int,
                 grants: Dict[int, Dict[str, Any]], deleted: set, bg_touched: bool,
-                image_page: bool, f: C.Report) -> None:
+                image_page: bool, f: M.Report) -> None:
     """XML 级保留核对：未授权的形状逐字一致；被点名的形状只许动授权的部分；页面其余结构与关系不许丢。"""
     where = f"第 {page_no} 页（XML）"
     bx, ax = b_page.get("xml"), a_page.get("xml")
@@ -1388,7 +1389,7 @@ def compare_xml(b_page: Dict[str, Any], a_page: Dict[str, Any], page_no: int,
 
 
 def inspect_cli(argv: List[str]) -> int:
-    C.utf8_stdio()
+    M.utf8_stdio()
     parser = argparse.ArgumentParser(prog="revise.py inspect", description="只读解析既有 PPTX（不改原文件）")
     parser.add_argument("pptx")
     parser.add_argument("--json", default=None, help="同时写出完整 JSON")
@@ -1405,7 +1406,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if argv and argv[0] == "inspect":
         return inspect_cli(argv[1:])
 
-    C.utf8_stdio()
+    M.utf8_stdio()
     parser = argparse.ArgumentParser(description="在既有 PPTX 上做定点修改")
     parser.add_argument("source")
     parser.add_argument("ops")
@@ -1422,7 +1423,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     asset_root = Path(args.assets).resolve() if args.assets else (
         ops_path.parent / "assets" if (ops_path.parent / "assets").is_dir() else ops_path.parent)
 
-    rep = C.Report()
+    rep = M.Report()
     if not src.is_file():
         rep.hard("E-SRC", str(src), "找不到原稿")
     for label, target in (("输出文件", out), ("--report", report_path)):
@@ -1436,7 +1437,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         rep.hard("E-EXIST", str(out), "目标文件已存在，未写入；确认要替换就加 --force")
     if rep.blocked:
         return _blocked(rep)
-    for problem in C.package_problems(src):
+    for problem in M.package_problems(src):
         rep.hard("E-FORMAT", str(src), f"原稿{problem}；定点编辑只接受无宏的 .pptx")
     if rep.blocked:
         return _blocked(rep)
@@ -1447,8 +1448,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         spec = json.loads(ops_path.read_text(encoding="utf-8-sig"))
         ops = spec.get("ops") or []
         if not ops:
-            raise C.BadOp("edit.json 里没有 ops")
-    except (OSError, json.JSONDecodeError, C.BadOp) as exc:
+            raise M.BadOp("edit.json 里没有 ops")
+    except (OSError, json.JSONDecodeError, M.BadOp) as exc:
         print(f"[HARD] E-OPS 无法读取：{type(exc).__name__}: {exc}")
         return 2
 
@@ -1458,7 +1459,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     log: List[Dict[str, Any]] = []
     try:
         grants, bg_touched, declared_deleted, movable = run_ops(prs, ops, asset_root, log, rep)
-    except C.BadOp as exc:
+    except M.BadOp as exc:
         print(f"[HARD] E-OPS 未写入：{exc}")
         return 2
     except Exception as exc:  # 运行期异常：不留半成品
@@ -1481,7 +1482,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     for label, rec in (("原稿", before), ("改动后", after)):
         for err in rec.get("errors") or []:
             rep.hard("E-PRESERVE", label, f"无法完整解析，逐对象核对不可靠：{err}")
-    for problem in C.package_problems(tmp, check_suffix=False):  # 临时件带 .part 后缀，扩展名在落盘前已校验
+    for problem in M.package_problems(tmp, check_suffix=False):  # 临时件带 .part 后缀，扩展名在落盘前已校验
         rep.hard("E-FORMAT", "改动后的文件", problem)
     touched_pages = {int(op["page"]) for op in ops}
     image_pages = {int(op["page"]) for op in ops if op.get("op") == "image"}
@@ -1522,7 +1523,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     return 0 if not rep.blocked else 1
 
 
-def _blocked(rep: C.Report) -> int:
+def _blocked(rep: M.Report) -> int:
     for issue in rep.items:
         print(issue)
     print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")

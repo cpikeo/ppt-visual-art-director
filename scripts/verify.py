@@ -32,11 +32,13 @@ from lxml import etree
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import compile as C  # noqa: E402  plan 模型与阈值共用一个实现；本文件只从成品读取“实际值”
+import model as M  # noqa: E402
+import checks as K  # noqa: E402
+import charts as H  # noqa: E402
 
-EMU = C.EMU
-TEXT_TYPES = C.TEXT_TYPES
-qn = C.qn
+EMU = M.EMU
+TEXT_TYPES = M.TEXT_TYPES
+qn = M.qn
 
 
 def _in(value: Optional[int]) -> Optional[float]:
@@ -68,7 +70,7 @@ def _collect(shapes) -> Dict[str, Any]:
     return {"index": index, "order": order}
 
 
-def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: C.Report) -> Dict[str, Any]:
+def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: M.Report) -> Dict[str, Any]:
     from pptx import Presentation
 
     prs = Presentation(str(pptx))
@@ -83,7 +85,7 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: C.Repo
         pid = page["id"]
         slide = prs.slides[index]
         book = _collect(slide.shapes)
-        boxes = C.page_geometry(page)
+        boxes = M.page_geometry(page)
 
         expected_top = [f"{pid}.{el['id']}" for el in page["elements"]]
         actual_top = [n for n in book["order"].get("slide", []) if n != "_page_number"]
@@ -92,7 +94,7 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: C.Repo
 
         verify_background(page, slide, pid, f)
 
-        for el in C.all_elements(page):
+        for el in M.all_elements(page):
             name = f"{pid}.{el['id']}"
             shape = book["index"].get(name)
             if shape is None:
@@ -112,6 +114,11 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: C.Repo
             if _angle_diff(got_rot, want_rot) > 0.2:
                 f.add("HARD", "V-STYLE", name, f"旋转 {got_rot}° ≠ plan {want_rot}°")
             kind = el["type"]
+            alt = M.alt_text(el)
+            if alt:
+                got_alt = (shape._element.xpath(".//p:cNvPr")[0].get("descr") or "")
+                if got_alt != alt:
+                    f.add("HARD", "V-ALT", name, f"替代文字 {got_alt!r} ≠ plan {alt!r}")
             if kind in TEXT_TYPES:
                 verify_text(plan, page, el, shape, name, f)
             elif kind in ("shape", "divider"):
@@ -128,11 +135,15 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: C.Repo
                 if kids != want_kids:
                     f.add("HARD", "V-OBJ", name, f"组合成员 {kids} ≠ plan {want_kids}")
 
+        want_notes = page.get("speaker_notes") or ""
+        got_notes = slide.notes_slide.notes_text_frame.text if slide.has_notes_slide else ""
+        if got_notes != want_notes:
+            f.add("HARD", "V-NOTES", pid, f"备注 {got_notes[:30]!r} ≠ plan {want_notes[:30]!r}")
         verify_page_number(plan, page, book, index, pid, f)
     return facts
 
 
-def verify_background(page: Dict[str, Any], slide, pid: str, f: C.Report) -> None:
+def verify_background(page: Dict[str, Any], slide, pid: str, f: M.Report) -> None:
     bg = slide._element.find(qn("p:cSld")).find(qn("p:bg"))
     value = None
     if bg is not None:
@@ -143,7 +154,7 @@ def verify_background(page: Dict[str, Any], slide, pid: str, f: C.Report) -> Non
                 clr = fill.find(qn("a:srgbClr"))
                 if clr is not None:
                     value = clr.get("val")
-    want = C.page_bg(page).lstrip("#").upper()
+    want = M.page_bg(page).lstrip("#").upper()
     if value is None:
         f.add("HARD", "V-STYLE", pid, f"页面底色不是纯色填充（期望 #{want}）")
     elif value.upper() != want:
@@ -151,9 +162,9 @@ def verify_background(page: Dict[str, Any], slide, pid: str, f: C.Report) -> Non
 
 
 def _expected_runs(plan, page, el) -> List[Dict[str, Any]]:
-    st = C.text_style(plan, page, el)
+    st = M.text_style(plan, page, el)
     out = []
-    for seg, pieces in (C.paragraph_runs(el) or [(str(el.get("content", "")), [{"text": str(el.get("content", ""))}])]):
+    for seg, pieces in (M.paragraph_runs(el) or [(str(el.get("content", "")), [{"text": str(el.get("content", ""))}])]):
         for piece in pieces:
             out.append({
                 "text": piece.get("text", ""),
@@ -181,7 +192,7 @@ def _angle_diff(a: float, b: float) -> float:
     return min(d, 360 - d)
 
 
-def verify_text(plan, page, el, shape, name, f: C.Report) -> None:
+def verify_text(plan, page, el, shape, name, f: M.Report) -> None:
     from pptx.enum.dml import MSO_COLOR_TYPE
 
     if not getattr(shape, "has_text_frame", False):
@@ -194,9 +205,9 @@ def verify_text(plan, page, el, shape, name, f: C.Report) -> None:
         else:
             f.add("HARD", "V-TEXT", name, f"文字不一致：成品「{actual[:60]!r}」≠ plan「{el['content'][:60]!r}」")
 
-    st = C.text_style(plan, page, el)
+    st = M.text_style(plan, page, el)
     paragraphs = shape.text_frame.paragraphs
-    want_paras = C.paragraph_runs(el) or [(el["content"], [])]
+    want_paras = M.paragraph_runs(el) or [(el["content"], [])]
     if len(paragraphs) != len(want_paras):
         f.add("HARD", "V-TEXT", name, f"段落数 {len(paragraphs)} ≠ plan {len(want_paras)}")
     for i, para in enumerate(paragraphs[: len(want_paras)]):
@@ -248,7 +259,7 @@ def verify_text(plan, page, el, shape, name, f: C.Report) -> None:
             f.add("HARD", "V-STYLE", tag, f"字距 {got_spc}pt ≠ {want['spacing']}pt")
 
 
-def verify_shape(page, el, shape, name, f: C.Report) -> None:
+def verify_shape(page, el, shape, name, f: M.Report) -> None:
     from pptx.enum.dml import MSO_COLOR_TYPE
 
     prst = shape._element.find(".//" + qn("a:prstGeom"))
@@ -279,7 +290,7 @@ def verify_shape(page, el, shape, name, f: C.Report) -> None:
         if got != "#" + str(el["stroke"]["color"]).lstrip("#").upper():
             f.add("HARD", "V-STYLE", name, f"描边色 {got} ≠ {el['stroke']['color']}")
         width = ln.width.pt if ln.width else 0
-        want_w = float(el["stroke"].get("width_pt") or C.LIMITS["geometry"]["stroke_default_pt"])
+        want_w = float(el["stroke"].get("width_pt") or M.LIMITS["geometry"]["stroke_default_pt"])
         if abs(width - want_w) > 0.1:
             f.add("HARD", "V-STYLE", name, f"描边 {width}pt ≠ {want_w}pt")
         if el["stroke"].get("dash") and el["stroke"]["dash"] != "solid":
@@ -287,7 +298,7 @@ def verify_shape(page, el, shape, name, f: C.Report) -> None:
             if node is None:
                 f.add("HARD", "V-STYLE", name, f"声明了虚线 {el['stroke']['dash']}，成品没有")
     if el.get("corner_in") is not None:
-        want = C.corner_adj(float(el["corner_in"]), float(el["w"]), float(el["h"]))
+        want = M.corner_adj(float(el["corner_in"]), float(el["w"]), float(el["h"]))
         got = _got_adj(shape)
         if got is None or abs(got - want) > 400:
             f.add("HARD", "V-STYLE", name, f"圆角 adj {got} ≠ 期望 {want}（半径 {el['corner_in']}in）")
@@ -304,7 +315,7 @@ def _got_adj(shape) -> Optional[int]:
         return None
 
 
-def verify_gradient(grad: Dict[str, Any], shape, name: str, f: C.Report) -> None:
+def verify_gradient(grad: Dict[str, Any], shape, name: str, f: M.Report) -> None:
 
     node = shape._element.find(".//" + qn("a:gradFill"))
     if node is None:
@@ -362,8 +373,8 @@ def _path_points(shape) -> List[Tuple[float, float]]:
     return out
 
 
-def verify_path(page, el, shape, name, f: C.Report) -> None:
-    pts = C.resolve_points(el, C.page_geometry(page))
+def verify_path(page, el, shape, name, f: M.Report) -> None:
+    pts = M.resolve_points(el, M.page_geometry(page))
     want_kind = "connector" if len(pts) == 2 else "freeform"
     has_cust = shape._element.find(".//" + qn("a:custGeom")) is not None
     is_conn = shape._element.tag.endswith("}cxnSp")
@@ -422,7 +433,7 @@ def _best_pairing(want: List[Tuple[float, float]], have: List[Tuple[float, float
     return straight if cost(straight) <= cost(swapped) else swapped
 
 
-def verify_image(plan, el, shape, name, facts, asset_root: Path, f: C.Report) -> None:
+def verify_image(plan, el, shape, name, facts, asset_root: Path, f: M.Report) -> None:
     from PIL import Image
     import io
 
@@ -432,7 +443,7 @@ def verify_image(plan, el, shape, name, facts, asset_root: Path, f: C.Report) ->
         return
     actual_hash = hashlib.sha256(shape.image.blob).hexdigest()
     facts["images"][name] = actual_hash
-    path = C.resolve_asset(asset_root, el["image_id"])
+    path = M.resolve_asset(asset_root, el["image_id"])
     if path is None:
         f.add("SOFT", "V-ASSET", name, "找不到素材原件，无法比对内嵌字节")
         return
@@ -445,7 +456,7 @@ def verify_image(plan, el, shape, name, facts, asset_root: Path, f: C.Report) ->
                 f.add("HARD", "V-ASSET", name, f"内嵌像素 {embedded.size} ≠ 原件 {original.size}")
     except Exception:
         pass
-    want_crop = C._crop_geometry(shape.image.size[0], shape.image.size[1],
+    want_crop = M._crop_geometry(shape.image.size[0], shape.image.size[1],
                                  float(el["w"]), float(el["h"]), el.get("crop_focus"))
     got_crop = (shape.crop_left, shape.crop_right, shape.crop_top, shape.crop_bottom)
     if any(abs(a - b) > 0.01 for a, b in zip(got_crop, want_crop)):
@@ -498,7 +509,7 @@ def _series_from_xml(shape) -> List[Dict[str, Any]]:
     return out
 
 
-def verify_chart(plan, page, el, shape, name, f: C.Report) -> None:
+def verify_chart(plan, page, el, shape, name, f: M.Report) -> None:
     spec = el["chart"]
     kind = spec["kind"]
     if kind == "table":
@@ -537,8 +548,8 @@ def verify_chart(plan, page, el, shape, name, f: C.Report) -> None:
         f.add("HARD", "V-CHART", name, "该对象不是原生图表")
         return
     obj = shape.chart
-    if obj.chart_type != C._chart_type(spec):
-        f.add("HARD", "V-CHART", name, f"图表类型 {obj.chart_type} ≠ {C._chart_type(spec)}")
+    if obj.chart_type != H._chart_type(spec):
+        f.add("HARD", "V-CHART", name, f"图表类型 {obj.chart_type} ≠ {H._chart_type(spec)}")
     combo = spec.get("combo_line_series") or []
     plots = len(obj.plots)
     want_plots = 2 if combo else 1
@@ -588,8 +599,8 @@ def verify_chart(plan, page, el, shape, name, f: C.Report) -> None:
     if not labels and has_labels and kind not in ("pie", "donut", "scatter"):
         f.add("SOFT", "V-CHART", name, "未声明直标，成品却有数据标签")
 
-    bg = C.page_bg(page)
-    floor = C.LIMITS["chart"]["min_contrast"].get(kind, 2.0)
+    bg = M.page_bg(page)
+    floor = M.LIMITS["chart"]["min_contrast"].get(kind, 2.0)
     for ser in shape.chart._chartSpace.iter(qn("c:ser")):
         spPr = ser.find(qn("c:spPr"))
         if spPr is None:
@@ -601,7 +612,7 @@ def verify_chart(plan, page, el, shape, name, f: C.Report) -> None:
         srgb = node.find(".//" + qn("a:srgbClr"))
         if srgb is None:
             continue
-        ratio = C.contrast_ratio("#" + srgb.get("val"), bg)
+        ratio = M.contrast_ratio("#" + srgb.get("val"), bg)
         if ratio < floor:
             f.add("SOFT", "V-CONTRAST", name, f"系列色 #{srgb.get('val')} 对底色 {bg} 仅 {ratio:.2f}:1")
 
@@ -614,7 +625,7 @@ def verify_chart(plan, page, el, shape, name, f: C.Report) -> None:
                 srgb = dpt.find(".//" + qn("a:srgbClr"))
                 if srgb is None:
                     continue
-                ratio = C.contrast_ratio("#" + srgb.get("val"), bg)
+                ratio = M.contrast_ratio("#" + srgb.get("val"), bg)
                 if ratio < floor:
                     f.add("SOFT", "V-CONTRAST", name, f"退隐柱 #{srgb.get('val')} 对底色 {bg} 仅 {ratio:.2f}:1，读数会消失")
 
@@ -638,13 +649,13 @@ def _ser_name(ser) -> str:
     return node.text if node is not None and node.text else ""
 
 
-def verify_chart_style(plan, el, shape, name, f: C.Report) -> None:
+def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
     """着色、柱宽、轴开关与轴名：这些决定读者能不能读出数，且全部来自 plan。"""
 
     spec = el["chart"]
     kind = spec["kind"]
     obj = shape.chart
-    palette = C.deck_palette(plan)
+    palette = M.deck_palette(plan)
     order = {str(s["name"]): i for i, s in enumerate(spec["data"]["series"])}
 
     if kind in ("pie", "donut"):
@@ -739,7 +750,7 @@ def verify_chart_style(plan, el, shape, name, f: C.Report) -> None:
         f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
 
 
-def _verify_pie_labels(spec, obj, kind: str, name: str, f: C.Report) -> None:
+def _verify_pie_labels(spec, obj, kind: str, name: str, f: M.Report) -> None:
     """饼环直标：位置、类别名开关、环带内墨色、以及数字格式有没有把单位丢掉。"""
 
     dlbls = obj.plots[0]._element.find(qn("c:dLbls"))
@@ -769,9 +780,9 @@ def _verify_pie_labels(spec, obj, kind: str, name: str, f: C.Report) -> None:
             if hit is not None and int(hit.get("val")) == idx:
                 s = dpt.find(".//" + qn("a:srgbClr"))
                 surface = "#" + s.get("val") if s is not None else None
-        if surface and C.contrast_ratio("#" + fill.get("val"), surface) < 2.5:
+        if surface and M.contrast_ratio("#" + fill.get("val"), surface) < 2.5:
             f.add("SOFT", "V-CHART", name,
-                  f"环图第 {idx + 1} 个标签墨色对环带仅 {C.contrast_ratio('#' + fill.get('val'), surface):.2f}:1")
+                  f"环图第 {idx + 1} 个标签墨色对环带仅 {M.contrast_ratio('#' + fill.get('val'), surface):.2f}:1")
         fmt = lbl.find(qn("c:numFmt"))
         code = "" if fmt is None else (fmt.get("formatCode") or "")
         if unit and unit not in code:
@@ -780,8 +791,8 @@ def _verify_pie_labels(spec, obj, kind: str, name: str, f: C.Report) -> None:
                   f"环图第 {idx + 1} 个标签的数字格式「{code or '未设置'}」丢掉了单位「{unit}」")
 
 
-def verify_page_number(plan, page, book, index, pid, f: C.Report) -> None:
-    cfg = C.page_numbers(plan)
+def verify_page_number(plan, page, book, index, pid, f: M.Report) -> None:
+    cfg = M.page_numbers(plan)
     pn = book["index"].get("_page_number")
     if pid in cfg["hide"]:
         if pn is not None:
@@ -796,16 +807,16 @@ def verify_page_number(plan, page, book, index, pid, f: C.Report) -> None:
     order = book["order"].get("slide", [])
     if order and order[-1] != "_page_number":
         f.add("SOFT", "V-PAGENO", pid, "页码不在最上层：压到角区的色块会把它盖住")
-    box = C.pn_box(plan, page)
+    box = M.pn_box(plan, page)
     pos = (_in(pn.left), _in(pn.top))
     if abs(pos[0] - box["x"]) > 0.02 or abs(pos[1] - box["y"]) > 0.02:
         f.add("SOFT", "V-PAGENO", pid, f"页码位置 {pos} ≠ 保留框 ({box['x']},{box['y']})")
     runs = [r for p in pn.text_frame.paragraphs for r in p.runs]
-    if runs and runs[0].font.size and abs(runs[0].font.size.pt - C.LIMITS["page_number"]["font_pt"]) > 0.5:
+    if runs and runs[0].font.size and abs(runs[0].font.size.pt - M.LIMITS["page_number"]["font_pt"]) > 0.5:
         f.add("SOFT", "V-PAGENO", pid, f"页码字号 {runs[0].font.size.pt}pt 与整稿约定不符")
     if runs:
         from pptx.enum.dml import MSO_COLOR_TYPE
-        want_ink = C.pn_ink(plan, page)
+        want_ink = M.pn_ink(plan, page)
         color = runs[0].font.color
         if color is None or color.type != MSO_COLOR_TYPE.RGB:
             f.add("HARD", "V-PAGENO", pid, "页码墨色不是显式 RGB")
@@ -813,7 +824,7 @@ def verify_page_number(plan, page, book, index, pid, f: C.Report) -> None:
             f.add("HARD", "V-PAGENO", pid, f"页码墨色 #{color.rgb} ≠ 按实际落点算的 {want_ink}")
 
 
-def verify_structure(plan: Dict[str, Any], pptx: Path, facts: Dict[str, Any], f: C.Report) -> Dict[str, Any]:
+def verify_structure(plan: Dict[str, Any], pptx: Path, facts: Dict[str, Any], f: M.Report) -> Dict[str, Any]:
     """文件结构：图表有对应的原生图表部件与内嵌工作簿，图片有对应的 media 部件。
 
     这一层查的是"文件里到底有什么"，对象核对查的是"python-pptx 读出来对不对"。
@@ -823,7 +834,7 @@ def verify_structure(plan: Dict[str, Any], pptx: Path, facts: Dict[str, Any], f:
 
     with zipfile.ZipFile(pptx) as zf:
         names = zf.namelist()
-    charts = sum(1 for p in plan["pages"] for el in C.all_elements(p)
+    charts = sum(1 for p in plan["pages"] for el in M.all_elements(p)
                  if el.get("type") == "chart" and (el.get("chart") or {}).get("kind") != "table")
     chart_parts = [n for n in names if n.startswith("ppt/charts/chart") and n.endswith(".xml")]
     books = [n for n in names if n.startswith("ppt/embeddings/")]
@@ -850,7 +861,11 @@ def verify_structure(plan: Dict[str, Any], pptx: Path, facts: Dict[str, Any], f:
 
 
 def find_soffice() -> Optional[str]:
+    """优先 SOFFICE 环境变量（便携版、AppImage 解包版），再找 PATH 与常见安装位置。"""
     from shutil import which
+    override = os.environ.get("SOFFICE")
+    if override and Path(override).is_file():
+        return override
     for name in ("soffice", "libreoffice"):
         for ext in ("", ".exe"):
             found = which(name + ext)
@@ -865,7 +880,7 @@ def find_soffice() -> Optional[str]:
     return None
 
 
-def render(pptx: Path, render_dir: Path, f: C.Report) -> Optional[Path]:
+def render(pptx: Path, render_dir: Path, f: M.Report) -> Optional[Path]:
     soffice = find_soffice()
     if soffice is None:
         f.add("INFO", "V-RENDER", "环境", "找不到 LibreOffice；页尺寸、断行、字体替换与溢出均未核验")
@@ -881,17 +896,43 @@ def render(pptx: Path, render_dir: Path, f: C.Report) -> Optional[Path]:
             stale.unlink()
     env = dict(os.environ)
     env.pop("PYTHONPATH", None)
-    cmd = [soffice, "--headless", "--norestore", "--convert-to", "pdf", "--outdir", str(render_dir), str(pptx)]
-    try:
-        subprocess.run(cmd, capture_output=True, timeout=240, env=env, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        f.add("INFO", "V-RENDER", "环境", f"LibreOffice 调用失败：{exc}")
+    # 独立用户配置目录：避免与用户正在运行的 LibreOffice 抢锁，也让并发核验互不影响。
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="lo-profile-") as profile:
+        cmd = [soffice, "--headless", "--norestore", f"-env:UserInstallation={Path(profile).as_uri()}",
+               "--convert-to", "pdf", "--outdir", str(render_dir), str(pptx)]
+        ok, err = _run_soffice(cmd, env)
+    if not ok:
+        f.add("INFO", "V-RENDER", "环境", f"LibreOffice 调用失败：{err}")
         return None
     pdf = render_dir / (pptx.stem + ".pdf")
     if not pdf.is_file():
         f.add("INFO", "V-RENDER", "环境", "LibreOffice 未产出 PDF（可能是文件被占用）")
         return None
     return pdf
+
+
+def environment_facts(rendered: bool) -> Dict[str, Any]:
+    """验证等级的事实：在哪个环境、用什么渲染。PowerPoint 只能由真实 Windows/macOS 环境证明，这里永远不替它说话。"""
+    import platform
+    info: Dict[str, Any] = {"os": platform.platform(), "python": platform.python_version(),
+                            "renderer": "none", "powerpoint": "NOT VERIFIED"}
+    soffice = find_soffice() if rendered else None
+    if soffice:
+        try:
+            out = subprocess.run([soffice, "--version"], capture_output=True, text=True, timeout=60).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            out = "LibreOffice（版本未知）"
+        info["renderer"] = out or "LibreOffice"
+    return info
+
+
+def _run_soffice(cmd: List[str], env: Dict[str, str]) -> Tuple[bool, str]:
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=240, env=env, check=False)
+        return True, ""
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, str(exc)
 
 
 def _declared_families(plan, page) -> set:
@@ -901,16 +942,16 @@ def _declared_families(plan, page) -> set:
     渲染核对不会报，因为声明集合里根本没有它。
     """
     families = set()
-    for el in C.all_elements(page):
+    for el in M.all_elements(page):
         if el.get("type") in TEXT_TYPES:
-            families.add(C.text_style(plan, page, el)["family"])
+            families.add(M.text_style(plan, page, el)["family"])
             for run in el.get("runs") or []:
                 if run.get("font"):
                     families.add(str(run["font"]))
         elif el.get("type") == "chart":
-            families.add(el.get("font") or (plan.get("fonts") or {}).get("body") or C.LIMITS["defaults"]["fonts"]["body"])
-    if page["id"] not in C.page_numbers(plan)["hide"]:
-        families.add((plan.get("fonts") or {}).get("body") or C.LIMITS["defaults"]["fonts"]["body"])
+            families.add(el.get("font") or (plan.get("fonts") or {}).get("body") or M.LIMITS["defaults"]["fonts"]["body"])
+    if page["id"] not in M.page_numbers(plan)["hide"]:
+        families.add((plan.get("fonts") or {}).get("body") or M.LIMITS["defaults"]["fonts"]["body"])
     return families
 
 
@@ -1022,7 +1063,7 @@ def _owners(lines: List[Dict[str, Any]], boxes: Dict[str, Tuple[float, float, fl
 
     一行字若同时落在大框和小框里，两边都算，大框的核对就会借小框的字过关。
     """
-    tol = C.LIMITS["render_check"]["span_tol_in"]
+    tol = M.LIMITS["render_check"]["span_tol_in"]
     owned: Dict[str, List[Dict[str, Any]]] = {}
     for line in lines:
         hits = [(w * h, name) for name, (bx, by, w, h) in boxes.items()
@@ -1032,7 +1073,7 @@ def _owners(lines: List[Dict[str, Any]], boxes: Dict[str, Tuple[float, float, fl
     return owned
 
 
-def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: C.Report) -> int:
+def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: M.Report) -> int:
     """预期文字 vs 渲染文字，逐块核对。
 
     只查"框有没有超出"是不够的：字体缺失吞字、渲染器省略长文本、上层色块盖住文字，
@@ -1040,7 +1081,7 @@ def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: C.Report)
     """
     checks = 0
     owned = _owners(lines, boxes)
-    for el in C.all_elements(page):
+    for el in M.all_elements(page):
         pieces = [p for p in expected_text(el) if _norm_key(p)]
         if not pieces:
             continue
@@ -1063,7 +1104,7 @@ def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: C.Report)
     return checks
 
 
-def _check_typography(page, lines, boxes, pid: str, f: C.Report) -> None:
+def _check_typography(page, lines, boxes, pid: str, f: M.Report) -> None:
     """渲染实测的排印缺陷：行首收尾标点、行尾起始标点、末行孤字。
 
     这三条只有断行之后才能判断——计划里是整段文字，断点由字族、字距与框宽共同决定。
@@ -1079,7 +1120,7 @@ def _check_typography(page, lines, boxes, pid: str, f: C.Report) -> None:
         text = line["text"].strip()
         if not text:
             continue
-        tol = C.LIMITS["render_check"]["line_tol_in"]
+        tol = M.LIMITS["render_check"]["line_tol_in"]
         host = next((name for name, box in boxes.items() if _inside(box, line["bbox"], tol)), None)
         where = f"{pid}/{host}" if host else pid
         if text[0] in lead_bad:
@@ -1096,21 +1137,21 @@ def _check_typography(page, lines, boxes, pid: str, f: C.Report) -> None:
         horizontal.sort(key=lambda ln: (round(ln["bbox"][1], 1), ln["bbox"][0]))
         last = horizontal[-1]["text"].strip()
         total = _norm_key("".join(ln["text"] for ln in horizontal))
-        min_chars = C.LIMITS["render_check"]["orphan_min_chars"]
+        min_chars = M.LIMITS["render_check"]["orphan_min_chars"]
         if len(last) == 1 and ord(last) >= 0x2E80 and len(total) >= min_chars:
             f.add("SOFT", "V-ORPHAN", f"{pid}/{host}",
                   f"末行只剩「{last}」一个字：改文案或改框宽，不要用空格推")
 
 
-def _check_render_rotation(page, lines, boxes, pid: str, f: C.Report) -> None:
+def _check_render_rotation(page, lines, boxes, pid: str, f: M.Report) -> None:
     """旋转是否真的进了渲染：XML 里写了 rot、画面上字却没转向，是常见的半失效。"""
     import math
 
-    for el in C.all_elements(page):
+    for el in M.all_elements(page):
         if el.get("type") not in TEXT_TYPES:
             continue
         rot = float(el.get("rotation") or 0) % 360
-        if min(rot, 360 - rot) < C.LIMITS["render_check"]["rotation_min_deg"]:
+        if min(rot, 360 - rot) < M.LIMITS["render_check"]["rotation_min_deg"]:
             continue
         box = boxes.get(str(el.get("id")))
         if box is None:
@@ -1121,26 +1162,26 @@ def _check_render_rotation(page, lines, boxes, pid: str, f: C.Report) -> None:
         want = (math.cos(math.radians(rot)), math.sin(math.radians(rot)))
         got = max((ln["dir"] for ln in here), key=lambda d: abs(d[0]) + abs(d[1]))
         diff = math.degrees(math.acos(max(-1.0, min(1.0, want[0] * got[0] + want[1] * got[1]))))
-        if diff > C.LIMITS["render_check"]["rotation_tol_deg"]:
+        if diff > M.LIMITS["render_check"]["rotation_tol_deg"]:
             f.add("SOFT", "V-ROT", f"{pid}/{el.get('id')}",
                   f"声明旋转 {rot:.0f}°，渲染字向 {round(got[0], 2), round(got[1], 2)}（差 {diff:.0f}°）："
                   f"可能只转了框，没有转字")
 
 
-def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path, f: C.Report) -> Dict[str, Any]:
+def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path, f: M.Report) -> Dict[str, Any]:
     import pymupdf
     from PIL import Image
 
     doc = pymupdf.open(str(pdf))
-    w_in, h_in = C.canvas(plan)
-    dpi = C.LIMITS["preview"]["dpi"]
+    w_in, h_in = M.canvas(plan)
+    dpi = M.LIMITS["preview"]["dpi"]
     facts: Dict[str, Any] = {"pages": doc.page_count, "dpi": dpi, "pngs": [], "fonts": {}, "text_checks": 0}
     if doc.page_count != len(plan["pages"]):
         f.add("HARD", "V-PAGES", "渲染", f"PDF {doc.page_count} 页 ≠ plan {len(plan['pages'])} 页")
 
     pngs: List[Path] = []
     all_fonts: set = set()
-    aliases = {k.lower(): [a.lower() for a in v] for k, v in C.LIMITS.get("font_aliases", {}).items()
+    aliases = {k.lower(): [a.lower() for a in v] for k, v in M.LIMITS.get("font_aliases", {}).items()
                if not k.startswith("_")}
     for index, pdf_page in enumerate(doc):
         spec_page = plan["pages"][index] if index < len(plan["pages"]) else {"id": f"p{index + 1}", "elements": []}
@@ -1148,9 +1189,9 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         # 声明框按旋转后的外接框算：文字转 -90° 之后，字的落点本来就不在原框里。
         # 用原框做归属会把它判成"不在任何元素范围内"——那是量错了，不是设计错了。
         boxes: Dict[str, Tuple[float, float, float, float]] = {}
-        for el in C.all_elements(spec_page):
+        for el in M.all_elements(spec_page):
             if el.get("type") in TEXT_TYPES + ("chart",) and "x" in el:
-                boxes[str(el.get("id"))] = C.rot_box(
+                boxes[str(el.get("id"))] = M.rot_box(
                     (float(el["x"]), float(el["y"]), float(el["w"]), float(el["h"])), el.get("rotation"))
         page_w = round(pdf_page.rect.width / 72, 3)
         page_h = round(pdf_page.rect.height / 72, 3)
@@ -1158,8 +1199,8 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
             f.add("HARD", "V-PAGES", pid, f"页面尺寸 {page_w}×{page_h}in ≠ 画布 {w_in}×{h_in}in")
 
         declared = _declared_families(plan, spec_page)
-        cfg = C.page_numbers(plan)
-        pn = None if pid in cfg["hide"] else C.pn_box(plan, spec_page)
+        cfg = M.page_numbers(plan)
+        pn = None if pid in cfg["hide"] else M.pn_box(plan, spec_page)
 
         pix = pdf_page.get_pixmap(dpi=dpi)
         png_path = render_dir / f"p{index + 1:02d}.png"
@@ -1169,7 +1210,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         with Image.open(png_path) as img:
             gray = img.convert("L").resize((320, 180))
             ink = sum(1 for v in gray.tobytes() if v < 245) / max(320 * 180, 1)
-            if ink < C.LIMITS["preview"]["blank_ink_ratio"]:
+            if ink < M.LIMITS["preview"]["blank_ink_ratio"]:
                 f.add("SOFT", "V-BLANK", pid, f"页面近乎空白（墨迹占比 {ink:.4%}）")
 
         page_box = (0.0, 0.0, page_w, page_h)
@@ -1257,7 +1298,7 @@ def make_contact_sheet(pngs: List[Path], render_dir: Path) -> List[str]:
     except OSError:
         return [str(p) for p in pngs]
     cols = 2 if len(pngs) <= 4 else 3
-    thumb_w = C.LIMITS["preview"]["contact_sheet_width_px"] // cols
+    thumb_w = M.LIMITS["preview"]["contact_sheet_width_px"] // cols
     thumb_h = int(thumb_w * ratio)
     rows = (len(pngs) + cols - 1) // cols
     pad = 24
@@ -1277,7 +1318,7 @@ def make_contact_sheet(pngs: List[Path], render_dir: Path) -> List[str]:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    C.utf8_stdio()
+    M.utf8_stdio()
     parser = argparse.ArgumentParser(description="核验 plan ↔ PPTX ↔ 渲染")
     parser.add_argument("plan")
     parser.add_argument("pptx")
@@ -1290,22 +1331,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not pptx.is_file():
         print(f"找不到 {pptx}")
         return 2
-    rep = C.Report()
-    plan = C.load_plan(plan_path, rep)
+    rep = M.Report()
+    plan = M.load_plan(plan_path, rep)
     if plan is None or rep.blocked:
         for issue in rep.items:
             print(issue)
         print("\nplan 本身不合契约：先修 plan，核验才有意义。")
         return 2
 
-    problems = C.package_problems(pptx)
+    problems = M.package_problems(pptx)
     if problems:
         for problem in problems:
             print(f"[HARD] V-FORMAT {pptx}：{problem}")
         print("\n核验中止：成品不是合格的无宏 .pptx（PPTM 与扩展名不符的包都不接受）。")
         return 1
 
-    f = C.Report()
+    f = M.Report()
     key = pptx.read_bytes()
     sha = hashlib.sha256(key).hexdigest()
     facts: Dict[str, Any] = {"pptx": str(pptx), "sha256": sha, "bytes": len(key), "render": {"done": False}}
@@ -1313,19 +1354,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     facts["asset_root"] = str(asset_root)
 
     # 两层各自出结论，不合并：合并之后"渲染没跑"会被"对象都对"盖掉。
-    obj_rep = C.Report()
+    obj_rep = M.Report()
     facts.update(verify_objects(plan, pptx, asset_root, obj_rep))
-    for issue in C.design_signals(plan).items:
+    for issue in K.design_signals(plan).items:
         obj_rep.items.append(issue)
     facts["structure"] = verify_structure(plan, pptx, facts, obj_rep)
 
     # 每份 pptx 一个子目录：同一目录里核验两份稿时，PNG 与缩略总览不会互相覆盖。
     render_dir = Path(args.render_dir).resolve() if args.render_dir else pptx.parent / "render" / pptx.stem
-    render_rep = C.Report()
+    render_rep = M.Report()
     pdf = render(pptx, render_dir, render_rep)
     if pdf is not None:
         facts["render"] = {"done": True, "pdf": str(pdf)}
         facts["render"].update(verify_render(plan, pptx, pdf, render_dir, render_rep))
+    facts["environment"] = environment_facts(pdf is not None)
     f.extend(obj_rep)
     f.extend(render_rep)
 
@@ -1359,6 +1401,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"概念：{str(brief.get('concept', ''))[:80]}")
         print(f"否决：{'；'.join(str(v) for v in brief.get('veto') or [])[:120]}")
     print(f"PPTX SHA-256：{sha}")
+    print(f"验证环境：渲染 = {facts['environment']['renderer']}｜Microsoft PowerPoint = NOT VERIFIED（需在真实环境用 dev/compat 复核）")
     if facts["render"].get("done"):
         print(f"渲染：{facts['render']['pdf']}")
         print(f"渲染字体：{facts['render'].get('fonts_all')}")
