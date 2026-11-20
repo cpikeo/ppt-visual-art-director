@@ -27,7 +27,17 @@
 
   "image": {
     "min_ppi": 72,
-    "max_crop_loss": 0.72
+    "max_crop_loss": 0.72,
+    "zone": {
+      "_readme": "文字下方图像的静态量测：达标像素占比下限、灰度标准差上限（纹理强度，0–255）、采样边长。量的是文字框整体，偏保守。",
+      "min_ok_share": 0.9,
+      "max_gray_std": 42,
+      "samples": 40
+    }
+  },
+
+  "package": {
+    "max_unpacked_mb": 1024
   },
 
   "contrast": {

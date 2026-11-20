@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-from model import CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
 def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
@@ -97,7 +97,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                     rep.info("I-GROUP", eloc, "group 的几何由子元素推出，声明的 x/y/w/h 未采用")
 
             if kind in TEXT_TYPES:
-                check_text(plan, page, el, eloc, ew, eh, rep)
+                check_text(plan, page, el, eloc, ew, eh, asset_root, rep)
             elif kind == "image":
                 check_image(el, eloc, ew, eh, assets, asset_root, rep)
             elif kind == "shape" and not (el.get("color") or el.get("gradient") or el.get("stroke")):
@@ -151,7 +151,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                              f"在 {lower['el'].get('id')} 上声明 overlap_allowed，否则移开")
     return rep
 
-def check_text(plan, page, el, loc, ew, eh, rep: Report) -> None:
+def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> None:
     content = el.get("content", "")
     if not str(content).strip():
         rep.hard("E-TEXT", loc, "文本内容为空；删掉这个元素，或写入内容")
@@ -166,13 +166,46 @@ def check_text(plan, page, el, loc, ew, eh, rep: Report) -> None:
         rep.soft("W-PT", loc, f"{el['type']} {st['size']:g}pt 低于 {minimum}pt 下限")
     bg = resolve_bg(page, el)
     if bg is None:
-        rep.info("I-CONTRAST", loc, "文字下方有图片，对比需看真实渲染")
+        check_text_on_image(plan, page, el, loc, st, asset_root, rep)
     else:
         limit = LIMITS["contrast"]["large"] if st["size"] >= LIMITS["contrast"]["large_pt"] \
             else LIMITS["contrast"]["normal"]
         ratio = contrast_ratio(st["color"], bg)
         if ratio < limit:
             rep.soft("W-CONTRAST", loc, f"{st['color']} on {bg} = {ratio:.2f}:1，低于 {limit}:1")
+
+def check_text_on_image(plan, page, el, loc, st, asset_root: Path, rep: Report) -> None:
+    """文字压在图上：量文字框正下方的真实像素，而不是只提示“去看渲染”。
+
+    量不了（图与字之间隔着蒙版、读不到图）才退回 I-CONTRAST。量得了也只是静态近似：
+    达标不等于好看，不达标说明字落点不在安静区，先改构图或简报，不靠加浓遮罩。
+    """
+    under = backdrop_image(page, el)
+    box = explicit_box(el)
+    asset = (plan.get("assets") or {}).get(str(under[0].get("image_id"))) if under else None
+    brief = ((asset or {}).get("generation") or {}).get("brief") or {}
+    if under and brief.get("quiet_zone") == "none":
+        rep.soft("W-ASSET", loc, f"{under[0].get('image_id')} 的简报声明不叠字（quiet_zone: none），但这里有文字压在图上")
+    if under is None or box is None:
+        rep.info("I-CONTRAST", loc, "文字下方有图片，对比需看真实渲染")
+        return
+    if under[1]:
+        rep.info("I-CONTRAST", loc, "图与文字之间隔着色块或渐变蒙版，静态量测不适用，对比需看真实渲染")
+        return
+    path = resolve_asset(asset_root, str(under[0].get("image_id")))
+    probe = zone_probe(path, under[0], box, page_bg(page)) if path else None
+    if probe is None:
+        rep.info("I-CONTRAST", loc, "文字下方有图片，但读不到像素；对比需看真实渲染")
+        return
+    zone = LIMITS["image"]["zone"]
+    limit = LIMITS["contrast"]["large"] if st["size"] >= LIMITS["contrast"]["large_pt"] else LIMITS["contrast"]["normal"]
+    share, worst = zone_contrast(st["color"], probe, limit)
+    if share < zone["min_ok_share"]:
+        rep.soft("W-CONTRAST", loc, f"{st['color']} 压在图上：仅 {share:.0%} 的落点像素达到 {limit}:1"
+                                    f"（最不利 5% 约 {worst:.1f}:1）。字没落在安静区：移动文字、改裁切 crop_focus，或重做图的简报")
+    elif probe["gray_std"] > zone["max_gray_std"]:
+        rep.soft("W-BUSY", loc, f"文字下方图像纹理偏强（灰度标准差 {probe['gray_std']:.0f} > {zone['max_gray_std']}）："
+                                f"对比达标但读感会碎；落字区应连续、低纹理")
 
 def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
     image_id = el.get("image_id", "")
@@ -181,9 +214,11 @@ def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
         rep.hard("E-REF", loc, f"image_id 未在 assets 登记：{image_id}")
     else:
         check_asset(loc, image_id, asset, asset_root, rep)
+    if el.get("image_role") == "evidence" and asset is not None and asset.get("generation") is not None:
+        rep.hard("E-ASSET", loc, f"{image_id} 是生成图，image_role 不能是 evidence；证据只能是真实素材")
     path = resolve_asset(asset_root, image_id)
     if path is None:
-        rep.hard("E-IMG", loc, f"素材文件不存在：{asset_root / image_id}")
+        rep.hard("E-IMG", loc, f"素材文件不存在或不在素材根内：{asset_root / image_id}")
         return
     ppi, loss = image_probe(path, ew, eh, el.get("crop_focus"))
     if ppi is not None and ppi < LIMITS["image"]["min_ppi"]:
@@ -466,6 +501,10 @@ def check_asset(loc: str, image_id: str, asset: Dict[str, Any], asset_root: Path
     if not isinstance(gen, dict):
         rep.hard("E-ASSET", loc, f"{image_id} 的 generation 必须是对象")
         return
+    gbrief = gen.get("brief")
+    if not (isinstance(gbrief, dict) and gbrief.get("intent") and gbrief.get("quiet_zone") and gbrief.get("reject")):
+        rep.soft("W-ASSET", loc, f"{image_id} 生成记录没有完整简报（brief.intent / quiet_zone / reject）："
+                                 f"没有写明图的职责、落字区与淘汰条件，就无法判断这张图是否合格")
     if gen.get("status") != "generated":
         rep.hard("E-ASSET", loc, f"{image_id} 生成记录 status={gen.get('status')}，不得作为正式素材")
     for key in ("tool", "prompt", "file", "sha256"):

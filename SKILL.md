@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：先读懂受众与证据，找出洞察，定原创视觉概念与艺术指导，再排叙事、构图、排版、色彩、图像与图表；把判断写成 brief 与 plan，确定性产出原生可编辑 PPTX，看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 9.1.0
+version: 9.2.0
 ---
 
 # PPT 视觉艺术指导
@@ -67,11 +67,12 @@ brief 包含 `insight`、`concept`、`veto`（至少一条否决）、`art`（�
 - 页码由编译器生成；不自动缩字、换色、补数据、联网取图。`speaker_notes` 写入备注页，`alt` 写入替代文字（图片缺省取 `asset_reason`，图表缺省取图题；装饰元素不写）。
 - **只产出 `.pptx`**。`.pptm` 与扩展名不符的包一律拒绝，成品写出后校验包的内容类型。
 - 已有输出不覆盖，确认替换再加 `--force`；原稿永不就地改写。
-- 生成图须登记工具、完整提示词、文件与 SHA-256、权利状态；生成图不作证据。权利未确认写 `pending`，不伪造授权。
+- 生成图须登记工具、完整提示词、简报（职责、落字区、淘汰条件）、文件与 SHA-256、权利状态；生成图不作证据。权利未确认写 `pending`，不伪造授权。素材只从素材根内读取，`image_id` 不接受绝对路径与 `..`。
+- 图压着字时，编译器会量文字框正下方的真实像素（`W-CONTRAST` `W-BUSY`）。字没落在安静区就挪字、改裁切或重做简报，不加浓遮罩。
 
 ```bash
 python scripts/compile.py plan.json out.pptx                   # 新建：校验 + 编译
-python scripts/verify.py plan.json out.pptx                    # 新建稿核验，写 render/<名称>/
+python scripts/verify.py plan.json out.pptx [--assets DIR]     # 新建稿核验，写 render/<名称>/；素材目录须与编译一致
 python scripts/revise.py inspect 原稿.pptx                      # 改稿：只读解析
 python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定点编辑 + 保留核对
 ```
@@ -96,7 +97,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定�
 
 **停止条件**：S1 清零，无未处置的 S2；每页主角一句话说得清；剩余 S3/S4 已披露。
 
-**验证等级**：L0 对象、L1 LibreOffice 渲染、L2 PowerPoint 实机、L3 人工签收。`verify.py` 只能到 L1，并在报告里写明渲染环境，PowerPoint 一律 `NOT VERIFIED`。本包的样本与测试也只到 L1（仓库 `dev/compat/COMPAT.md`）。
+**验证等级**：L0 对象、L1 LibreOffice 渲染、L2 PowerPoint 实机、L3 人工签收。`verify.py` 只能到 L1，并在报告里写明渲染环境，PowerPoint 一律 `NOT VERIFIED`。本包从未做过 L2；开发材料里的兼容性记录如实标注了未验证项。
 
 **不能说的话**：没跑过 PowerPoint 却说“PowerPoint 下正常”；没渲染却说“已预览”“无溢出”“断行正常”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论；替用户声称已在目标 PowerPoint 中验证。
 
@@ -132,7 +133,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定�
 | --- | --- |
 | 想概念、定艺术指导、排叙事、判断整稿是否成立 | `references/design.md` 一至三节 |
 | 定构图、选版式、画关系图形、选图表 | `references/design.md` 四、五节 |
-| 排版、配色、图像、简报、压进色域 | `references/design.md` 六至八节 |
+| 排版、配色 | `references/design.md` 六、七节 |
+| 规划图片、写出图简报与提示词、验收生成图、压进色域 | `references/imagery.md` |
 | 诊断症状、给评审结论 | `references/design.md` 九、十节 |
-| 想知道真实渲染里踩过什么坑 | `references/design.md` 十一节 |
+| 想知道评测里踩过什么坑 | `references/design.md` 十一节 |
 | 写 plan、用元素、读诊断、编译报错、改稿、交付说明 | `references/build.md` |

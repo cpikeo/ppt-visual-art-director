@@ -1,0 +1,5 @@
+render/
+__pycache__/
+*.pyc
+*.error.pptx
+*.preserve-failed.pptx

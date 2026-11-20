@@ -46,6 +46,12 @@ def qn(tag: str) -> str:
     prefix, local = tag.split(":")
     return "{%s}%s" % (_NS[prefix], local)
 
+# 解析来自外部的 PPTX 部件一律走这个解析器：不展开实体、不联网，防 XXE 与实体膨胀。
+SAFE_PARSER = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
+
+def parse_xml(data: bytes):
+    return etree.fromstring(data, SAFE_PARSER)
+
 # ---------------------------------------------------------------- 诊断
 
 
@@ -362,22 +368,51 @@ def substantive_overlap(a: Box, b: Box) -> bool:
         return False
     return area >= LIMITS["geometry"]["overlap_area_sq_in"] and area / smaller >= LIMITS["geometry"]["overlap_ratio"]
 
+def default_asset_root(anchor: Path, explicit: Optional[str] = None) -> Path:
+    """素材根目录：--assets 优先，否则取 anchor（plan 或 edit.json）同级 assets/，再否则取其所在目录。
+
+    compile / verify / revise 共用这一个解析，三者不会各看各的目录。
+    """
+    if explicit:
+        return Path(explicit).resolve()
+    anchor = Path(anchor).resolve()
+    sub = anchor.parent / "assets"
+    return sub if sub.is_dir() else anchor.parent
+
 def resolve_asset(asset_root: Path, image_id: str) -> Optional[Path]:
-    """image_id → 素材文件：先按原名，再补常见扩展名。只认这两个规则。
+    """image_id → 素材文件：先按原名，再补常见扩展名。只认这两个规则，且结果必须留在素材根内。
 
     不做"同名不同扩展名"的兜底：那会在 hero.png 与 hero-2.jpg 并存时悄悄取到另一张图，
     而核验器用的是同一个解析函数，两边一起错，谁也发现不了。
+
+    边界：绝对路径、含 .. 的路径、经符号链接指向素材根之外的文件一律视为找不到。
+    plan 与 edit.json 来自外部，image_id 不能成为读取任意本机文件的入口。
     """
-    direct = asset_root / image_id
-    if direct.is_file():
-        return direct
-    known = {".png", ".jpg", ".jpeg", ".webp"}
-    if direct.suffix.lower() in known:
+    name = str(image_id or "")
+    if not name or "\x00" in name or Path(name).is_absolute() or ".." in Path(name.replace("\\", "/")).parts:
+        return None
+    root = Path(asset_root).resolve()
+
+    def inside(candidate: Path) -> Optional[Path]:
+        if not candidate.is_file():
+            return None
+        real = candidate.resolve()
+        try:
+            real.relative_to(root)
+        except ValueError:
+            return None
+        return real
+
+    direct = root / name
+    hit = inside(direct)
+    if hit:
+        return hit
+    if direct.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
         return None
     for ext in (".png", ".jpg", ".jpeg", ".webp", ".PNG", ".JPG", ".JPEG", ".WEBP"):
-        candidate = asset_root / (image_id + ext)
-        if candidate.is_file():
-            return candidate
+        hit = inside(root / (name + ext))
+        if hit:
+            return hit
     return None
 
 # ---------------------------------------------------------------- 文本式样
@@ -487,6 +522,96 @@ def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]
     # 有效分辨率按"最终留在画面里的那部分像素"算：裁得越紧，同样的框里 ppi 越高。
     return min(px_w * (1 - left - right) / w, px_h * (1 - top - bottom) / h), loss
 
+def backdrop_image(page: Dict[str, Any], target: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], bool]]:
+    """文字落在哪张图上：返回（图片元素，图与文字之间是否隔着色块/渐变蒙版）；没有图则 None。
+
+    判定与 resolve_bg 一致：图覆盖文字框 ≥ 60%。取声明顺序里最靠上的那张。
+    """
+    box = explicit_box(target)
+    if box is None:
+        return None
+    area = max(box[2] * box[3], 1e-6)
+    found: Optional[Dict[str, Any]] = None
+    scrim = False
+    for item in flatten(page):
+        el = item["el"]
+        if el is target:
+            break
+        below = explicit_box(el)
+        if below is None:
+            continue
+        ix, iy = _intersection(below, box)
+        cover = ix * iy / area
+        if el.get("type") == "image" and cover >= 0.6:
+            found, scrim = el, False
+        elif found is not None and el.get("type") in ("shape", "divider") and cover >= 0.3:
+            scrim = True
+    return (found, scrim) if found is not None else None
+
+_LIN = [((v / 255.0) / 12.92 if v / 255.0 <= 0.03928 else (((v / 255.0) + 0.055) / 1.055) ** 2.4) for v in range(256)]
+
+def _lum_rgb(rgb: Tuple[int, int, int]) -> float:
+    return 0.2126 * _LIN[rgb[0]] + 0.7152 * _LIN[rgb[1]] + 0.0722 * _LIN[rgb[2]]
+
+def zone_probe(path: Path, img_el: Dict[str, Any], text_box: Box, page_background: str) -> Optional[Dict[str, Any]]:
+    """文字框正下方的真实像素：按裁切、duotone、透明度还原最终落点，返回相对亮度样本与纹理强度。
+
+    这是静态近似（不含渲染引擎的色彩管理，也不含图上其他元素），用来在编译期发现“字落在亮暗交界或高纹理区”，
+    结论仍以真实渲染为准。读不了图返回 None。
+    """
+    img_box = explicit_box(img_el)
+    if img_box is None:
+        return None
+    try:
+        from PIL import Image
+        with Image.open(path) as src:
+            src = src.convert("RGB")
+            pw, ph = src.size
+            l, r, t, b = _crop_geometry(pw, ph, img_box[2], img_box[3], img_el.get("crop_focus"))
+            x0, y0 = max(img_box[0], text_box[0]), max(img_box[1], text_box[1])
+            x1 = min(img_box[0] + img_box[2], text_box[0] + text_box[2])
+            y1 = min(img_box[1] + img_box[3], text_box[1] + text_box[3])
+            if x1 - x0 <= 0.02 or y1 - y0 <= 0.02:
+                return None
+
+            def src_px(fx: float, fy: float, total_w: float, total_h: float, lo_x: float, lo_y: float):
+                return ((l + ((fx - lo_x) / total_w) * (1 - l - r)) * pw,
+                        (t + ((fy - lo_y) / total_h) * (1 - t - b)) * ph)
+
+            ax, ay = src_px(x0, y0, img_box[2], img_box[3], img_box[0], img_box[1])
+            bx, by = src_px(x1, y1, img_box[2], img_box[3], img_box[0], img_box[1])
+            n = int(LIMITS["image"]["zone"]["samples"])
+            region = src.crop((int(max(ax, 0)), int(max(ay, 0)), max(int(bx), int(ax) + 1), max(int(by), int(ay) + 1)))
+            region = region.resize((n, n), Image.BOX)
+            pixels = list(region.getdata())
+    except Exception:
+        return None
+    duo = img_el.get("duotone")
+    alpha = float(img_el.get("alpha", 1.0))
+    bg = hex_rgb(page_background)
+    lums: List[float] = []
+    grays: List[float] = []
+    for px in pixels:
+        rgb = px
+        if duo:
+            g = (0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]) / 255.0
+            d, lt = hex_rgb(duo["dark"]), hex_rgb(duo["light"])
+            rgb = tuple(round(d[i] + (lt[i] - d[i]) * g) for i in range(3))
+        if alpha < 0.999:
+            rgb = tuple(round(bg[i] + (rgb[i] - bg[i]) * alpha) for i in range(3))
+        lums.append(_lum_rgb(rgb))
+        grays.append((0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]))
+    mean = sum(grays) / len(grays)
+    std = (sum((g - mean) ** 2 for g in grays) / len(grays)) ** 0.5
+    return {"lums": lums, "gray_std": std, "gray_mean": mean}
+
+def zone_contrast(ink_hex: str, probe: Dict[str, Any], limit: float) -> Tuple[float, float]:
+    """（达标像素占比，最不利 5% 像素的对比度）。"""
+    li = rel_luminance(ink_hex)
+    ratios = sorted((max(li, v) + 0.05) / (min(li, v) + 0.05) for v in probe["lums"])
+    ok = sum(1 for r in ratios if r >= limit) / len(ratios)
+    return ok, ratios[max(int(len(ratios) * 0.05) - 1, 0)]
+
 def corner_adj(radius_in: float, w: float, h: float) -> int:
     """圆角半径 → adj（短边的百分比，0.5 即胶囊）。编译与核验共用这一个换算。"""
     short = max(min(w, h), 1e-6)
@@ -575,10 +700,16 @@ def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
         problems.append(f"扩展名 {path.suffix or '(无)'} 不是 .pptx")
     try:
         with zipfile.ZipFile(path) as zf:
-            names = zf.namelist()
-            types = etree.fromstring(zf.read("[Content_Types].xml"))
+            infos = zf.infolist()
+            names = [i.filename for i in infos]
+            unpacked = sum(i.file_size for i in infos)
+            types = parse_xml(zf.read("[Content_Types].xml"))
     except (OSError, KeyError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
         return problems + [f"不是可读的 OOXML 包：{type(exc).__name__}"]
+    if any(n.startswith("/") or ".." in n.split("/") for n in names):
+        problems.append("包内含越界部件名（绝对路径或 ..）")
+    if unpacked > LIMITS["package"]["max_unpacked_mb"] * 1024 * 1024:
+        problems.append(f"解压后超过 {LIMITS['package']['max_unpacked_mb']} MB，拒绝处理（疑似压缩炸弹）")
     overrides = {o.get("PartName"): o.get("ContentType") or "" for o in types if o.get("PartName")}
     main_ct = overrides.get("/ppt/presentation.xml")
     if main_ct != PPTX_MAIN_CT:

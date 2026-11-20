@@ -29,7 +29,9 @@
 
 ## 素材与生成图
 
-素材从 `--assets` 解析：先按 `image_id` 精确找，再补 `.png` `.jpg` `.jpeg` `.webp`，不做同名不同扩展名的兜底。图片按 `cover` 裁切，`crop_focus` 为裁窗中心。
+素材从素材根解析（`compile` `verify` `revise` 共用同一规则；`--assets` 优先，其次 plan 同级 `assets/`，再次 plan 所在目录）：先按 `image_id` 精确找，再补 `.png` `.jpg` `.jpeg` `.webp`，不做同名不同扩展名的兜底。**结果必须留在素材根内**：绝对路径、含 `..`、经符号链接指向根外的文件一律视为找不到（`E-IMG`）。图片按 `cover` 裁切，`crop_focus` 为裁窗中心。
+
+`image_role`：`background` `texture`（承载层，可声明 `overlap_allowed`）、`hero`（主视觉）、`subject`（人物或产品）、`illustration`、`icon`、`detail`、`evidence`。`evidence` 不能指向生成图（`E-ASSET`）。各角色的艺术指导见 `imagery.md`。
 
 每个素材都登记在 `assets`。**生成与否只由 `generation` 决定**：
 
@@ -38,14 +40,17 @@
   "hero":  {"source": "自有素材库 m-01", "rights": "cleared", "reference": "编号 m-01"},
   "plate": {"source": "自建生成", "rights": "pending", "generated": true,
             "generation": {"tool": "图像生成工具", "prompt": "完整提示词",
-                           "file": "plate.png", "status": "generated", "sha256": "64 位十六进制"}}
+                           "file": "plate.png", "status": "generated", "sha256": "64 位十六进制",
+                           "brief": {"intent": "承担什么职责", "quiet_zone": "左侧 65% 连续低纹理，明度不低于 70%", "reject": ["可观察的淘汰条件"]}}}
 }
 ```
 
 - `source` 必填。`rights`：`cleared`／`pending`（提示）／`blocked`（阻断）。
 - `generated` 只能是对 `generation` 是否存在的声明。`generated: false` 却有记录，或 `generated: true` 却无记录，都阻断（`E-ASSET`）。记录缺 `tool` `prompt` `file` `sha256` 任一即阻断；`status` 须为 `generated`；`file` 须与 `image_id` 解析到同一文件；`sha256` 须与文件实际哈希一致。
+- `generation.brief`（`intent` `quiet_zone` `reject`）是出图前的艺术指导简报；缺失给 `W-ASSET`。`quiet_zone: "none"` 表示不叠字，若仍有文字压在图上给 `W-ASSET`。
 - `used_as_evidence: true` 的素材不能是生成图。
 - `duotone: {dark, light}` 把图压进色域，原生可编辑；PowerPoint 生效，LibreOffice 只去饱和。
+- 图压着字的量测（`check_text_on_image`）：按裁切、`duotone`、`alpha` 还原文字框正下方的像素，算达标占比与纹理；图与文字之间隔着色块或渐变时不适用，退回 `I-CONTRAST`。它是静态近似，不替代渲染。
 - 核验器比对 PPTX 内嵌字节与素材原件：像素尺寸不同阻断，字节不同（可能重编码）提示。
 
 ## 图表
@@ -89,7 +94,7 @@
 
 ```bash
 python scripts/compile.py plan.json out.pptx [--assets DIR] [--report r.json] [--force]
-python scripts/verify.py plan.json out.pptx [--render-dir DIR] [--report v.json]
+python scripts/verify.py plan.json out.pptx [--assets DIR] [--render-dir DIR] [--report v.json]
 python scripts/revise.py inspect 原稿.pptx [--json i.json]
 python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report r.json] [--force]
 ```
@@ -105,13 +110,14 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 
 | 码 | 含义 | 处置 |
 | --- | --- | --- |
-| `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录不一致 | 补齐记录，或改用真实素材 |
+| `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录、简报不一致；生成图作证据 | 补齐记录，或改用真实素材 |
 | `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
 | `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明 | 改措辞或拆图，没有放行开关 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
 | `W-FIT` | 装载估算溢出 | 先改文案，再加框，不压字号 |
-| `W-CONTRAST` `V-CONTRAST` | 对比不足 | 换墨色或落点，不靠浓遮罩 |
+| `W-CONTRAST` `V-CONTRAST` | 对比不足；文字压图时是对真实像素的量测（达标像素占比低于 `limits.json` 的 `image.zone.min_ok_share`） | 换墨色或落点、改 `crop_focus`、重做简报；不靠浓遮罩 |
+| `W-BUSY` | 图上文字对比够，但下方纹理过强（灰度标准差超限） | 换落字区或重做简报 |
 | `W-PPI` | 有效分辨率低 | 换素材或缩小显示 |
 | `W-COVER` | 文字落在上层色块或图上 | 挪位置或调层级 |
 | `W-RUNS` | 原有混排被统一 | 用 `runs` 写明分区样式 |
@@ -191,7 +197,11 @@ verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       
 revise.py   inspect 与定点编辑 + 保留核对                              ← model, ooxml
 ```
 
-`limits.json` 是阈值唯一来源，`plan.schema.json` 是数据契约唯一来源。
+`limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
+
+## 输入安全
+
+plan、edit.json、素材与 PPTX 都视为不可信输入：素材路径限制在素材根内；解析外部 PPTX 的 XML 一律不展开实体、不联网（防 XXE 与实体膨胀）；成品包拒绝越界部件名与解压后超过 `package.max_unpacked_mb` 的包。脚本不联网、不执行包内内容。
 
 ## 机器边界
 

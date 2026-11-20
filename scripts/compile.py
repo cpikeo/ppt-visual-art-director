@@ -29,7 +29,7 @@ from lxml import etree
 
 from charts import add_chart
 from checks import design_signals, validate
-from model import EMU, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, deck_palette, explicit_box, load_plan, package_problems, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import EMU, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, deck_palette, default_asset_root, explicit_box, load_plan, package_problems, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -288,8 +288,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     plan_path = Path(args.plan).resolve()
     out_path = Path(args.out).resolve()
-    asset_root = Path(args.assets).resolve() if args.assets else (
-        plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent)
+    asset_root = default_asset_root(plan_path, args.assets)
 
     rep = Report()
     report_path = Path(args.report).resolve() if args.report else None

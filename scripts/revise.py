@@ -270,7 +270,7 @@ def part_digest(name: str, data: bytes) -> str:
     if not name.endswith((".xml", ".rels")):
         return hashlib.sha256(data).hexdigest()
     try:
-        root = etree.fromstring(data, etree.XMLParser(remove_blank_text=True))
+        root = etree.fromstring(data, etree.XMLParser(remove_blank_text=True, resolve_entities=False, no_network=True, load_dtd=False))
     except etree.XMLSyntaxError:
         return hashlib.sha256(data).hexdigest()
     if name.endswith(".rels"):
@@ -305,8 +305,8 @@ def slide_part_names(pptx: Path) -> List[str]:
     p_ns = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
     r_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
     with zipfile.ZipFile(Path(pptx)) as zf:
-        pres = etree.fromstring(zf.read("ppt/presentation.xml"))
-        rels = etree.fromstring(zf.read("ppt/_rels/presentation.xml.rels"))
+        pres = M.parse_xml(zf.read("ppt/presentation.xml"))
+        rels = M.parse_xml(zf.read("ppt/_rels/presentation.xml.rels"))
     target = {r.get("Id"): r.get("Target") for r in rels}
     names = []
     for sld in pres.iter(f"{p_ns}sldId"):
@@ -372,7 +372,7 @@ def theme_fonts(prs) -> Dict[str, Any]:
             if not rel.reltype.endswith("/theme"):
                 continue
             try:
-                root = etree.fromstring(rel.target_part.blob)
+                root = M.parse_xml(rel.target_part.blob)
             except Exception:
                 continue
             for tag in ("majorFont", "minorFont"):
@@ -1323,7 +1323,7 @@ def slide_xml_facts(pptx: Path, part_names: List[str]) -> List[Dict[str, Any]]:
     with zipfile.ZipFile(pptx) as zf:
         names = set(zf.namelist())
         for name in part_names:
-            root = etree.fromstring(zf.read(name))
+            root = M.parse_xml(zf.read(name))
             c_sld = root.find(P_NS + "cSld")
             tree = c_sld.find(P_NS + "spTree") if c_sld is not None else None
             shapes: List[Dict[str, Any]] = []
@@ -1347,7 +1347,7 @@ def slide_xml_facts(pptx: Path, part_names: List[str]) -> List[Dict[str, Any]]:
             rels_name = name.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels"
             rels = set()
             if rels_name in names:
-                for r in etree.fromstring(zf.read(rels_name)):
+                for r in M.parse_xml(zf.read(rels_name)):
                     rels.add((r.get("Id"), r.get("Type"), r.get("Target"), r.get("TargetMode") or ""))
             out.append({"shapes": shapes, "bg": _excl(bg) if bg is not None else None,
                         "rest": _excl(rest), "rels": [list(t) for t in sorted(rels)]})
@@ -1420,8 +1420,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ops_path = Path(args.ops).resolve()
     out = Path(args.out).resolve()
     report_path = Path(args.report).resolve() if args.report else None
-    asset_root = Path(args.assets).resolve() if args.assets else (
-        ops_path.parent / "assets" if (ops_path.parent / "assets").is_dir() else ops_path.parent)
+    asset_root = M.default_asset_root(ops_path, args.assets)
 
     rep = M.Report()
     if not src.is_file():

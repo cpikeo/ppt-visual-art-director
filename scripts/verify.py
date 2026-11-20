@@ -1323,6 +1323,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="核验 plan ↔ PPTX ↔ 渲染")
     parser.add_argument("plan")
     parser.add_argument("pptx")
+    parser.add_argument("--assets", default=None, help="素材目录；须与编译时一致，缺省为 plan 同级 assets/ 或 plan 所在目录")
     parser.add_argument("--render-dir", default=None, help="写 PDF/PNG/缩略总览的目录")
     parser.add_argument("--report", default=None)
     args = parser.parse_args(argv)
@@ -1351,7 +1352,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     key = pptx.read_bytes()
     sha = hashlib.sha256(key).hexdigest()
     facts: Dict[str, Any] = {"pptx": str(pptx), "sha256": sha, "bytes": len(key), "render": {"done": False}}
-    asset_root = plan_path.parent / "assets" if (plan_path.parent / "assets").is_dir() else plan_path.parent
+    asset_root = M.default_asset_root(plan_path, args.assets)
     facts["asset_root"] = str(asset_root)
 
     # 两层各自出结论，不合并：合并之后"渲染没跑"会被"对象都对"盖掉。
