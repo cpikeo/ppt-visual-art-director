@@ -12,7 +12,7 @@ python scripts/revise.py  inspect 原稿.pptx [--json i.json] [--force]
 python scripts/revise.py  原稿.pptx edit.json out.pptx [--assets DIR] [--report r.json] [--force]
 ```
 
-## 正式包（`python dev/build_package.py` 生成 zip，并断言文件与此清单一致）
+## 正式包
 
 ```
 SKILL.md                 判断原则、任务路线、验收、交付
