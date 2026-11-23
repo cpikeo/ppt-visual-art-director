@@ -1503,7 +1503,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         os.replace(tmp, out)
     else:
         rejected = out.with_name(out.stem + ".preserve-failed.pptx")
-        if rejected in (src, ops_path):  # 诊断稿也不许压到输入上
+        # 诊断稿也守同一条规则：不压输入，也不静默覆盖已有文件（--force 才替换）
+        if rejected in (src, ops_path) or (rejected.exists() and not args.force):
             rejected = out.with_name(f"{out.stem}.{os.getpid()}.preserve-failed.pptx")
         os.replace(tmp, rejected)
         facts["rejected"] = str(rejected)

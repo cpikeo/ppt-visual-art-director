@@ -1115,7 +1115,7 @@
         },
         "unit": {
           "type": "string",
-          "description": "数量级+量纲；写进图题与核验。"
+          "description": "数量级+量纲；写进图题、直标与核验。缺省时取各系列声明的同一个 unit。"
         },
         "period": {
           "type": "string"
@@ -1129,15 +1129,15 @@
         },
         "legend": {
           "type": "boolean",
-          "description": "图例开关；缺省两个以上系列时显示。能直标就不要图例。"
+          "description": "原生图例开关；缺省两个以上系列时显示。能直标就不要图例。highlight_category 的图不能开（图例是系列色，柱是退隐灰）。"
         },
         "data_labels": {
           "type": "boolean",
-          "description": "柱/线/面积/饼/环的直标；组合图只作用于柱层。"
+          "description": "柱/线/面积/饼/环的直标；位置与墨色由 model.chart_label_plan 按真实承载表面决定。多系列非堆叠面积不能开。组合图只作用于柱层。"
         },
         "combo_line_labels": {
           "type": "boolean",
-          "description": "仅组合图：给折线层加直标。标签会落在柱体上，通常不要开。"
+          "description": "仅组合图：给折线层加直标。折线标签可能压在柱上，编译器给它承载面色衬底。"
         },
         "horizontal": {
           "type": "boolean",
@@ -1223,13 +1223,12 @@
         },
         "color_map": {
           "type": "object",
-          "additionalProperties": false,
+          "additionalProperties": {
+            "$ref": "#/$defs/color"
+          },
           "minProperties": 1,
           "propertyNames": {
             "$ref": "#/$defs/str"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/color"
           },
           "description": "按类别/系列名显式指派颜色，优先级最高。原生扇区、系列与自定义图例都读它；名称对不上会报 E-CHART。"
         }

@@ -101,6 +101,27 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
   | 4 | `limits.json` → `defaults.palette` | 兜底 |
 
   主题强调色（accent1）**不参与数据着色**：主题只服务使用者在 PowerPoint 里新建的对象。饼/环分到同色即 `E-CHART`（数据失真），非饼环循环取色给 `W-CHART`。
+- **颜色有四种职责，各有唯一来源**（`model.py` 的“图表视觉契约”；compile / checks / verify / `chart_audit.py` 共读）：
+
+  | 职责 | 来源 | 规则 |
+  | --- | --- | --- |
+  | 语义色（系列、类别、强调项） | `chart_color_map` | 上表优先级 |
+  | 承载面 | `chart_surface(page, el)` | 页面底色 + 其下**整块覆盖**该图的色块（同 `resolve_bg`）。深色面板压在浅页上，图按面板取色，不按页面 |
+  | 结构色（轴、网格、图例、图题） | `chart_style(surface)` | 取在承载面上对比更高的一套；中灰底两套都 < 4.5 时给 `W-CHART`，改深或改浅 |
+  | 标注色（直标） | `chart_label_plan` | 位置与墨色一起定，见下表 |
+
+  | 图 | 直标位置 | 墨色落在 | 墨色 |
+  | --- | --- | --- | --- |
+  | 簇状柱/条 | `outEnd` | 承载面 | 结构色 |
+  | 堆叠/百分比堆叠柱 | `ctr` | 系列色块 | 深墨/白墨取高对比；两者都 < 4.5（如 `#C55A11`）改纯黑 |
+  | 面积 | 不写（不允许） | 系列色块 | 同上；多系列非堆叠面积加直标 → `E-CHART`（互相遮挡） |
+  | 折线、散点 | `t`（多线时最后一条 `b`） | 承载面 | 多系列沿用系列色（对比 ≥ 4.5），否则退回结构色 |
+  | 组合折线 | `t` | 可能压在柱上 | 承载面色衬底 + 系列色/结构色 |
+  | 饼 | `outEnd`（带类别名） | 承载面 | 结构色 |
+  | 环 | 不写（不允许） | 环带 | 逐扇区深墨/白墨 |
+
+  直标一律写在**系列**上（不依赖 plot 级继承）。`dLblPos` 对类型有限制：donut、area 不允许写，堆叠柱不允许 `outEnd`，XSD 认不出这条，但 PowerPoint 会提示“需要修复”——`chart_audit` 逐处检查。单位取图表级 `unit`，缺省取各系列声明的同一个单位。
+  系列色对承载面 < 1.5:1 为 `E-CHART`（几乎不可见），低于 `limits.json` 的 `chart.min_contrast` 为 `W-CHART`。`highlight_category` 的图不能开原生图例（图例是系列色，柱是退隐灰）。
 - **自定义图例用 `legend` 元素，不要手绘色块**：`{"type":"legend","for_chart":"<本页 chart 的 id>","x":…,"y":…,"w":…,"h":…}`，可选 `direction`（`vertical` 缺省／`horizontal`）、`swatch_in`（缺省 0.16）、`show_value`（仅饼/环附读数）、`font_size`、`color`。色块与标签由被引用图表的**同一份映射**生成，编译成可编辑的组合对象；核验器逐块比对色值与标签，错色即 `V-CHART` 阻断。手绘色块会收到 `W-CHART`（疑似手绘图例）。
 - 组合图共用一根数值轴（`combo_line_series` 指定系列改画折线）。**没有双数值轴**。
 - 直标：`data_labels` 作用于柱、线、面积、饼、环与组合图的柱层；组合折线的直标需 `combo_line_labels: true`。
@@ -144,7 +165,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | --- | --- | --- |
 | `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录、简报不一致；生成图作证据 | 补齐记录，或改用真实素材 |
 | `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
-| `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块） | 改措辞、拆图、补颜色映射；错色没有放行开关 |
+| `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块）、系列色沉进承载面、图例与强调柱对不上 | 改措辞、拆图、补颜色映射；错色没有放行开关 |
+| `V-LABEL-INK` `V-LABEL-POS` | 成品图表里：直标/轴/图例墨色落在其真实表面上 < 4.5:1（`chart_audit.py` 只读 XML）；或 `dLblPos` 对该图表类型非法；或墨色与决策表不一致 | 重新编译；手改成品会再次被拦 |
 | `W-GRAY` | 相邻系列颜色转灰度后明度比低于 `chart.min_series_luminance_ratio` | 拉开明度，或直标系列名、换线型与标记 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
@@ -231,13 +253,14 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 model.py    共用：诊断、plan 载入、度量、颜色映射(chart_color_map)、几何、成品包校验、alt_text（不依赖 python-pptx）
 ooxml.py    低层写入：填充、渐变、描边、圆角、duotone、run 属性        ← model
 charts.py   原生图表、表格与 legend 图例                               ← model, ooxml
+chart_audit.py 成品图表的有效色审计（只读 chart XML，不读 plan 的颜色）     ← model
 checks.py   plan 校验与整稿模式信号                                   ← model
 compile.py  元素构建、build、CLI                                      ← model, checks, ooxml, charts
-verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       ← model, checks, charts
+verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       ← model, checks, charts, chart_audit
 revise.py    inspect 与定点编辑 + 保留核对                              ← model, ooxml
 ```
 
-反向构造回归与评测样本**不在本包内**（开发与评测材料单独存放）：新增检查必须故意破坏一次、确认它会响，记录写进交付说明。
+回归测试、作品样本与评测证据在仓库的 `dev/`，**不在分发包内**。新增检查必须故意破坏一次、确认它会响，并补进 `dev/tests`。
 
 `limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
 

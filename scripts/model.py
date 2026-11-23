@@ -269,6 +269,106 @@ def chart_color_map(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
     base = chart_palette(plan, chart) or LIMITS["defaults"]["palette"]
     return [explicit.get(name, base[i % len(base)]) for i, name in enumerate(items)]
 
+# ---------------------------------------------------------------- 图表视觉契约
+# 颜色的职责分四类，各有唯一来源，compile / checks / verify / chart_audit 都读这里：
+#   语义色  chart_color_map      系列、类别、强调项的身份色（数据）
+#   结构色  chart_style          轴、网格、图例、图题的墨色，随**实际承载面**取深/浅
+#   标注色  label_ink            直标的墨色，随**标签真正落在的表面**取：落在底上用结构色，
+#                                落在色块里用深/白墨，线与点的直标在读得清时沿用系列色
+#   承载面  chart_surface        图表后面真实的底：页面底色 + 其下覆盖整张图的色块（同 resolve_bg）
+# 旧写法只看页面底色：图放在深色面板上、页面却是浅色时，轴、图例、直标全部错色。
+
+LABEL_INK_MIN = 4.5          # 14pt 直标按正文算（limits.contrast.normal）
+INSIDE_POSITIONS = {"ctr", "inEnd", "inBase"}
+
+# PowerPoint 对 dLblPos 的取值限制按图表类型而不同；XSD 只认枚举，不认这张表，
+# 写错不会被 XSD 拦下，但 PowerPoint 会提示“需要修复”。来源：ECMA-376 §21.2.2.48 与 python-pptx 分析文档。
+def allowed_label_positions(plot_tag: str, grouping: str = "clustered") -> Optional[set]:
+    """None 表示该类型不允许写 dLblPos（donut、area）；集合为允许值。"""
+    if plot_tag == "barChart":
+        return {"ctr", "inEnd", "inBase"} if grouping in ("stacked", "percentStacked") \
+            else {"ctr", "inEnd", "inBase", "outEnd"}
+    if plot_tag in ("lineChart", "scatterChart"):
+        return {"t", "b", "l", "r", "ctr"}
+    if plot_tag == "pieChart":
+        return {"bestFit", "ctr", "inEnd", "outEnd"}
+    return None
+
+def chart_surface(page: Dict[str, Any], el: Dict[str, Any]) -> str:
+    """图表（或图例）真实落在的底色。被图片或渐变承载时无法静态判定，退回页面底色并由 checks 提示。"""
+    return resolve_bg(page, el) or page_bg(page)
+
+def chart_surface_known(page: Dict[str, Any], el: Dict[str, Any]) -> bool:
+    return resolve_bg(page, el) is not None
+
+def chart_style(surface: str) -> Dict[str, str]:
+    """结构色：取在该承载面上对比更高的那一套（不是只看亮度阈值，中灰底也能选对）。"""
+    cfg = LIMITS["chart"]["style"]
+    return cfg["light"] if contrast_ratio(cfg["light"]["body"], surface) >= contrast_ratio(cfg["dark"]["body"], surface) \
+        else cfg["dark"]
+
+def chart_mode(surface: str) -> str:
+    return "light" if chart_style(surface) is LIMITS["chart"]["style"]["light"] else "dark"
+
+def best_ink(surface: str) -> str:
+    """色块里的字：先在深墨与白墨里选高对比的；两者都不到 4.5（中明度色块，如 #C55A11 上白字 4.33）
+    就改用纯黑——黑与白对任何底色至少有一个 ≥ 4.58，所以总能读清。"""
+    dark = LIMITS["chart"]["style"]["light"]["title"]
+    best = max((dark, "#FFFFFF"), key=lambda c: contrast_ratio(c, surface))
+    if contrast_ratio(best, surface) >= LABEL_INK_MIN:
+        return best
+    return max((best, "#000000", "#FFFFFF"), key=lambda c: contrast_ratio(c, surface))
+
+def series_ink(color: str, surface: str, fallback: str) -> str:
+    """线/点直标：能用系列色读得清（≥4.5）就用，保持归属；读不清退回结构色，可读性优先。"""
+    return color.upper() if contrast_ratio(color, surface) >= LABEL_INK_MIN else fallback
+
+def chart_unit(chart: Dict[str, Any]) -> str:
+    """直标与图例的单位：图表级优先，否则取各系列声明的同一个单位。checks 保证多系列单位一致。"""
+    unit = str(chart.get("unit") or "").strip()
+    if unit:
+        return unit
+    units = {str(s["unit"]).strip() for s in ((chart.get("data") or {}).get("series") or []) if s.get("unit")}
+    return units.pop() if len(units) == 1 else ""
+
+def chart_label_plan(plan: Dict[str, Any], chart: Dict[str, Any], surface: str) -> List[Dict[str, Any]]:
+    """直标的唯一决策：每个系列（饼/环为唯一系列）的位置、墨色、衬底、逐点墨色。
+
+    位置决定墨色落在哪种表面上，所以两者必须一起定：
+      柱（簇）  outEnd  → 落在承载面，结构色
+      柱（堆叠）ctr     → 落在系列色块，深/白墨按该色块取
+      面积      不写位置（PowerPoint 不允许），默认居中落在系列色块，深/白墨
+      线、散点  t（多线时最后一条 b，避免相近的线标签叠压）→ 落在承载面；多系列沿用系列色（读得清时），否则结构色
+      组合折线  t       → 可能压在柱体上，加承载面色衬底，墨色在衬底上取
+      饼        outEnd  → 落在承载面，结构色
+      环        不写位置（不允许），默认居中落在环带，逐扇区深/白墨
+    """
+    kind, stacked = chart.get("kind"), chart.get("stacked")
+    items, colors = chart_items(chart), chart_color_map(plan, chart)
+    body = chart_style(surface)["body"].upper()
+    combo = set(chart.get("combo_line_series") or [])
+    multi = len(items) > 1
+    if kind == "pie":
+        return [{"name": items[0] if items else "", "position": "outEnd", "ink": body, "plate": None, "points": None}]
+    if kind == "donut":
+        return [{"name": "", "position": None, "ink": body, "plate": None,
+                 "points": [best_ink(c) for c in colors]}]
+    out = []
+    for k, (name, color) in enumerate(zip(items, colors)):
+        entry = {"name": name, "position": "outEnd", "ink": body, "plate": None, "points": None}
+        if kind == "line" or kind == "scatter":
+            # 多条线靠得近时同在上方的标签会叠在一起（真实渲染里见过）：最后一条放到线下，其余在线上
+            below = kind == "line" and multi and k == len(items) - 1
+            entry.update(position="b" if below else "t", ink=series_ink(color, surface, body) if multi else body)
+        elif kind == "area":
+            entry.update(position=None, ink=best_ink(color))
+        elif name in combo:
+            entry.update(position="t", plate=surface.upper(), ink=series_ink(color, surface, body))
+        elif stacked:
+            entry.update(position="ctr", ink=best_ink(color))
+        out.append(entry)
+    return out
+
 def page_numbers(plan: Dict[str, Any]) -> Dict[str, Any]:
     cfg = dict(plan.get("page_numbers") or {})
     cfg.setdefault("corner", LIMITS["page_number"]["corner"])

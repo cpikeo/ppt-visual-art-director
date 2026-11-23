@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""图表成品的有效色审计：只读 chart XML，回答“读者实际看到的字，落在什么表面上、够不够读”。
+
+和 verify 里“成品 == plan”的核对不同：那类核对用的是编译器自己的映射，两边一起错也会通过。
+这里不读 plan 的任何颜色，只读成品：
+
+  标签墨色（XML 里写了什么） × 标签落点（dLblPos 或该类型的默认位置）
+      → 落点表面（承载面 / 该点的系列或扇区色 / 标签衬底）
+      → WCAG 对比度，低于 4.5 即不可读。
+
+同时核对 dLblPos 对图表类型是否合法（donut、area 不允许；堆叠柱不允许 outEnd）——
+XSD 只认枚举，认不出这条，但 PowerPoint 会提示“需要修复”。
+"""
+
+from __future__ import annotations
+
+from typing import Any, List, Optional, Tuple
+
+from lxml import etree
+
+from model import INSIDE_POSITIONS, LABEL_INK_MIN, LIMITS, allowed_label_positions, contrast_ratio, qn
+
+Finding = Tuple[str, str, str]  # (HARD|SOFT|INFO, code, message)
+
+_PLOTS = ("barChart", "lineChart", "areaChart", "pieChart", "doughnutChart", "scatterChart")
+_DEFAULT_POS = {"lineChart": "r", "scatterChart": "r", "areaChart": "ctr", "doughnutChart": "ctr", "pieChart": "bestFit"}
+
+
+def _srgb(node) -> Optional[str]:
+    hit = None if node is None else node.find(qn("a:solidFill") + "/" + qn("a:srgbClr"))
+    return None if hit is None else "#" + (hit.get("val") or "").upper()
+
+
+def _val(node, tag: str, default: Optional[str] = None) -> Optional[str]:
+    hit = None if node is None else node.find(qn(tag))
+    return default if hit is None else hit.get("val")
+
+
+def _ink(txpr) -> Optional[str]:
+    """txPr 里的墨色：defRPr 优先，其次 run 属性。"""
+    if txpr is None:
+        return None
+    for tag in ("a:defRPr", "a:rPr"):
+        rpr = txpr.find(".//" + qn(tag))
+        if rpr is not None and _srgb(rpr):
+            return _srgb(rpr)
+    return None
+
+
+def _on(node, tag: str) -> bool:
+    return _val(node, tag, "0") in ("1", "true")
+
+
+def _shown(lbl) -> bool:
+    return lbl is not None and _val(lbl, "c:delete", "0") not in ("1", "true") and any(
+        _on(lbl, t) for t in ("c:showVal", "c:showCatName", "c:showPercent", "c:showSerName"))
+
+
+def _ser_name(ser) -> str:
+    tx = ser.find(qn("c:tx"))
+    node = None if tx is None else tx.find(".//" + qn("c:v"))
+    return node.text if node is not None and node.text else ""
+
+
+def _fill(ser, plot_tag: str, idx: Optional[int]) -> Optional[str]:
+    """点（或系列）实际的填充色：折线/散点取线色，其余取实心填充；逐点 dPt 优先。"""
+    if idx is not None:
+        for dpt in ser.findall(qn("c:dPt")):
+            if _val(dpt, "c:idx") == str(idx):
+                got = _srgb(dpt.find(qn("c:spPr")))
+                if got:
+                    return got
+    sp = ser.find(qn("c:spPr"))
+    if sp is None:
+        return None
+    if plot_tag in ("lineChart", "scatterChart"):
+        return _srgb(sp.find(qn("a:ln")))
+    return _srgb(sp)
+
+
+def _label_for(ser, plot_dlbls, idx: int):
+    """某数据点上生效的标签：逐点 dLbl > 系列 dLbls > plot 级 dLbls。返回（标签节点, 容器节点）。"""
+    sd = ser.find(qn("c:dLbls"))
+    if sd is None:
+        return plot_dlbls, plot_dlbls
+    for d in sd.findall(qn("c:dLbl")):
+        if _val(d, "c:idx") == str(idx):
+            return d, sd
+    return sd, sd
+
+
+def _count(ser) -> int:
+    for holder in ("c:val", "c:yVal"):
+        node = ser.find(qn(holder))
+        cache = None if node is None else node.find(".//" + qn("c:numCache"))
+        if cache is not None:
+            return len(cache.findall(qn("c:pt")))
+    return 0
+
+
+def _plots(chart_space):
+    chart = chart_space.find(qn("c:chart"))
+    area = None if chart is None else chart.find(qn("c:plotArea"))
+    if area is None:
+        return []
+    return [p for p in area if etree.QName(p).localname in _PLOTS]
+
+
+def audit_labels(chart_space, surface: str) -> List[Finding]:
+    out: List[Finding] = []
+    for plot in _plots(chart_space):
+        tag = etree.QName(plot).localname
+        grouping = _val(plot, "c:grouping", "clustered") or "clustered"
+        allowed = allowed_label_positions(tag, grouping)
+        plot_dlbls = plot.find(qn("c:dLbls"))
+        # dLblPos 的合法性看每一处写入（plot / 系列 / 逐点），不看“谁覆盖了谁”：PowerPoint 逐个元素校验。
+        illegal = sorted({n.get("val") for n in plot.iter(qn("c:dLblPos"))
+                          if allowed is None or n.get("val") not in allowed})
+        if illegal:
+            legal = "该类型不允许写 dLblPos" if allowed is None else f"只允许 {sorted(allowed)}"
+            out.append(("HARD", "V-LABEL-POS",
+                        f"{tag}（{grouping}）里 dLblPos={illegal} 非法：{legal}；PowerPoint 打开会提示修复"))
+        # 折线叠在柱/面之上时，t 位的标签可能压在色块里，不能只按承载面判读
+        under = [_fill(s, etree.QName(p).localname, None) for p in _plots(chart_space)
+                 if etree.QName(p).localname in ("barChart", "areaChart") and tag == "lineChart"
+                 for s in p.findall(qn("c:ser"))]
+        for ser in plot.findall(qn("c:ser")):
+            name, seen = _ser_name(ser), set()
+            for idx in range(max(_count(ser), 1)):
+                lbl, owner = _label_for(ser, plot_dlbls, idx)
+                if not _shown(lbl):
+                    continue
+                pos_node = lbl.find(qn("c:dLblPos"))
+                pos = None if pos_node is None else pos_node.get("val")
+                if pos is not None:
+                    eff = pos
+                elif tag == "barChart":
+                    eff = "ctr" if grouping in ("stacked", "percentStacked") else "outEnd"
+                else:
+                    eff = _DEFAULT_POS[tag]
+                ink = _ink(lbl.find(qn("c:txPr"))) or _ink(owner.find(qn("c:txPr")) if owner is not None else None)
+                if ink is None:
+                    if "ink" not in seen:
+                        seen.add("ink")
+                        out.append(("SOFT", "V-LABEL-INK", f"系列「{name}」直标没有显式墨色，实际取决于主题默认色"))
+                    continue
+                plate, fill = _srgb(lbl.find(qn("c:spPr"))), _fill(ser, tag, idx)
+                if plate:
+                    surfaces = [(plate, "标签衬底")]
+                elif eff in INSIDE_POSITIONS:
+                    surfaces = [(fill, "系列/扇区色块")]
+                elif eff == "bestFit":  # 饼的 bestFit 里外由渲染器定：两种表面都要读得清
+                    surfaces = [(surface, "承载面"), (fill, "扇区色块")]
+                else:
+                    surfaces = [(surface, "承载面")] + [(c, "其下的柱/面色块") for c in under if c]
+                for color, where in surfaces:
+                    if color is None:
+                        if ("unk", where) not in seen:
+                            seen.add(("unk", where))
+                            out.append(("INFO", "I-LABEL", f"系列「{name}」直标落在{where}，其色不是显式 RGB，对比度未核对"))
+                        continue
+                    ratio = contrast_ratio(ink, color)
+                    if ratio < LABEL_INK_MIN and ("c", ink, color) not in seen:
+                        seen.add(("c", ink, color))
+                        out.append(("HARD", "V-LABEL-INK",
+                                    f"系列「{name}」直标墨色 {ink} 落在{where} {color} 上仅 {ratio:.2f}:1"
+                                    f"（< {LABEL_INK_MIN}），读不清"))
+    return out
+
+
+def audit_structure(chart_space, surface: str) -> List[Finding]:
+    """轴、图例、图题的墨色相对承载面。"""
+    out: List[Finding] = []
+    chart = chart_space.find(qn("c:chart"))
+    if chart is None:
+        return out
+    items: List[Tuple[str, Optional[str]]] = []
+    legend = chart.find(qn("c:legend"))
+    if legend is not None:
+        items.append(("图例", _ink(legend.find(qn("c:txPr")))))
+    for ax in chart.iter(qn("c:catAx"), qn("c:valAx")):
+        if _val(ax, "c:delete", "0") not in ("1", "true"):
+            items.append(("轴标签", _ink(ax.find(qn("c:txPr")))))
+    title = chart.find(qn("c:title"))
+    if title is not None:
+        rpr = title.find(".//" + qn("a:rPr"))
+        items.append(("图题", _srgb(rpr)))
+    for what, ink in items:
+        if ink is None:
+            out.append(("SOFT", "V-LABEL-INK", f"{what}没有显式墨色，实际取决于主题默认色"))
+            continue
+        ratio = contrast_ratio(ink, surface)
+        if ratio < LABEL_INK_MIN:
+            out.append(("HARD", "V-LABEL-INK", f"{what}墨色 {ink} 对承载面 {surface} 仅 {ratio:.2f}:1（< {LABEL_INK_MIN}）"))
+    return out
+
+
+def audit_series_surface(chart_space, surface: str, kind: str) -> List[Finding]:
+    """系列色相对承载面；阈值按图表类型取自 limits.json。"""
+    out: List[Finding] = []
+    floor = LIMITS["chart"]["min_contrast"].get(kind, 2.0)
+    seen = set()
+    for plot in _plots(chart_space):
+        tag = etree.QName(plot).localname
+        for ser in plot.findall(qn("c:ser")):
+            colors = [(_fill(ser, tag, None), _ser_name(ser))]
+            colors += [(_srgb(d.find(qn("c:spPr"))), f"{_ser_name(ser)}#{_val(d, 'c:idx')}") for d in ser.findall(qn("c:dPt"))]
+            for color, label in colors:
+                if not color or color in seen:
+                    continue
+                seen.add(color)
+                ratio = contrast_ratio(color, surface)
+                if ratio < floor:
+                    out.append(("SOFT", "V-CONTRAST",
+                                f"「{label}」色 {color} 对承载面 {surface} 仅 {ratio:.2f}:1（< {floor}），图形会沉进底里"))
+    return out
+
+
+def audit_chart(chart_space, surface: str, kind: str) -> List[Finding]:
+    return audit_labels(chart_space, surface) + audit_structure(chart_space, surface) + audit_series_surface(chart_space, surface, kind)

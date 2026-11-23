@@ -35,6 +35,7 @@ sys.path.insert(0, str(HERE))
 import model as M  # noqa: E402
 import checks as K  # noqa: E402
 import charts as H  # noqa: E402
+import chart_audit as A  # noqa: E402
 
 EMU = M.EMU
 TEXT_TYPES = M.TEXT_TYPES
@@ -594,44 +595,22 @@ def verify_chart(plan, page, el, shape, name, f: M.Report) -> None:
     elif has_title:
         f.add("SOFT", "V-CHART", name, f"未声明图题，成品却有「{obj.chart_title.text_frame.text}」")
 
-    labels = spec.get("data_labels") is True
+    labels = spec.get("data_labels") is True or bool(spec.get("combo_line_labels"))
     has_labels = _labels_on(obj._chartSpace)
     if labels and not has_labels:
         f.add("HARD", "V-CHART", name, "声明了直标，成品没有数据标签")
     if not labels and has_labels and kind not in ("pie", "donut", "scatter"):
         f.add("SOFT", "V-CHART", name, "未声明直标，成品却有数据标签")
 
-    bg = M.page_bg(page)
-    floor = M.LIMITS["chart"]["min_contrast"].get(kind, 2.0)
-    for ser in shape.chart._chartSpace.iter(qn("c:ser")):
-        spPr = ser.find(qn("c:spPr"))
-        if spPr is None:
-            continue
-        # 折线的颜色在 a:ln 上；柱与面积的填充在 a:solidFill 上，面积的描边常与底色同色，不参与判定。
-        node = spPr.find(qn("a:ln")) if kind == "line" else spPr.find(qn("a:solidFill"))
-        if node is None:
-            continue
-        srgb = node.find(".//" + qn("a:srgbClr"))
-        if srgb is None:
-            continue
-        ratio = M.contrast_ratio("#" + srgb.get("val"), bg)
-        if ratio < floor:
-            f.add("SOFT", "V-CONTRAST", name, f"系列色 #{srgb.get('val')} 对底色 {bg} 仅 {ratio:.2f}:1")
+    # 有效色审计：只读成品 XML，不读 plan 的任何颜色（见 chart_audit.py）。
+    surface = M.chart_surface(page, el)
+    for sev, code, message in A.audit_chart(obj._chartSpace, surface, kind):
+        f.add(sev, code, name, message)
 
-    if spec.get("highlight_category") is not None:
-        pts = [d for d in obj._chartSpace.iter(qn("c:dPt"))]
-        if not pts:
-            f.add("HARD", "V-CHART", name, "声明了 highlight_category，但成品没有逐点着色")
-        else:
-            for dpt in pts:
-                srgb = dpt.find(".//" + qn("a:srgbClr"))
-                if srgb is None:
-                    continue
-                ratio = M.contrast_ratio("#" + srgb.get("val"), bg)
-                if ratio < floor:
-                    f.add("SOFT", "V-CONTRAST", name, f"退隐柱 #{srgb.get('val')} 对底色 {bg} 仅 {ratio:.2f}:1，读数会消失")
+    if spec.get("highlight_category") is not None and not list(obj._chartSpace.iter(qn("c:dPt"))):
+        f.add("HARD", "V-CHART", name, "声明了 highlight_category，但成品没有逐点着色")
 
-    verify_chart_style(plan, el, shape, name, f)
+    verify_chart_style(plan, page, el, shape, name, f)
 
 
 def _labels_on(chart_space) -> bool:
@@ -685,6 +664,15 @@ def verify_legend(plan, page, el, shape, name: str, f: M.Report) -> None:
         if tx is None:
             f.add("HARD", "V-OBJ", name, f"缺少第 {i + 1} 个标签「{item}」")
             continue
+        runs = [r for para in tx.text_frame.paragraphs for r in para.runs]
+        try:
+            ink = f"#{runs[0].font.color.rgb}".upper()
+        except (IndexError, AttributeError, TypeError, ValueError):
+            ink = None
+        surface = M.chart_surface(page, el)
+        if ink is not None and M.contrast_ratio(ink, surface) < M.LABEL_INK_MIN:
+            f.add("HARD", "V-LABEL-INK", name,
+                  f"图例标签「{item}」墨色 {ink} 对承载面 {surface} 仅 {M.contrast_ratio(ink, surface):.2f}:1")
         want = H._legend_label(spec, str(item), values, i, show_value)
         got_text = tx.text_frame.text
         if _norm_key(got_text) != _norm_key(want):
@@ -695,7 +683,7 @@ def verify_legend(plan, page, el, shape, name: str, f: M.Report) -> None:
         f.add("SOFT", "V-OBJ", name, f"图例里有计划外的成员 {extra}：多出来的色块没有数据对应")
 
 
-def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
+def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
     """着色、柱宽、轴开关与轴名：这些决定读者能不能读出数，且全部来自 plan。"""
 
     spec = el["chart"]
@@ -748,8 +736,7 @@ def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
         want_legend = bool(spec.get("legend", False))
         if bool(obj.has_legend) != want_legend:
             f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
-        if spec.get("data_labels"):
-            _verify_pie_labels(spec, obj, kind, name, f)
+        _verify_labels(plan, page, el, obj, name, f)
         return
     axis_on = spec.get("axis_labels", True)
     try:
@@ -786,56 +773,67 @@ def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
         got = [_ser_name(ser) for ser in line.findall(qn("c:ser"))] if line is not None else []
         if sorted(got) != sorted(str(c) for c in combo):
             f.add("HARD", "V-CHART", name, f"折线层系列 {got} ≠ plan {combo}")
-        want_line_labels = bool(spec.get("combo_line_labels"))
-        if _labels_on(line) != want_line_labels:
-            f.add("SOFT", "V-CHART", name,
-                  f"折线层直标 {_labels_on(line)} ≠ plan {want_line_labels}（柱的直标不自动扩展到折线）")
 
+    _verify_labels(plan, page, el, obj, name, f)
     series_spec = spec["data"].get("series") or []
     want_legend = bool(spec.get("legend", len(series_spec) > 1))
     if bool(obj.has_legend) != want_legend:
         f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
 
 
-def _verify_pie_labels(spec, obj, kind: str, name: str, f: M.Report) -> None:
-    """饼环直标：位置、类别名开关、环带内墨色、以及数字格式有没有把单位丢掉。"""
+def _verify_labels(plan, page, el, obj, name: str, f: M.Report) -> None:
+    """成品直标 == chart_label_plan 的决策：开关、位置、墨色、衬底、逐扇区墨色、单位、类别名。
 
-    dlbls = obj.plots[0]._element.find(qn("c:dLbls"))
-    pos = dlbls.find(qn("c:dLblPos")) if dlbls is not None else None
-    want_pos = "outEnd" if kind == "pie" else "inEnd"
-    if pos is None or pos.get("val") != want_pos:
-        f.add("SOFT", "V-CHART", name, f"直标位置 {None if pos is None else pos.get('val')} ≠ {want_pos}")
-    cat = dlbls.find(qn("c:showCatName")) if dlbls is not None else None
-    want_cat = kind == "pie"
-    got_cat = cat is not None and cat.get("val") in ("1", "true")
-    if got_cat != want_cat:
-        f.add("SOFT", "V-CHART", name,
-              f"类别名开关 {got_cat} ≠ {want_cat}"
-              f"（{'饼图外置直标要带类别名' if want_cat else '环带内的直标只留数值，类别交给图例'}）")
-    if kind != "donut":
-        return
-    unit = str(spec.get("unit") or "").strip()
-    for lbl in [d for d in obj._chartSpace.iter(qn("c:dLbl")) if d.find(qn("c:idx")) is not None]:
-        idx = int(lbl.find(qn("c:idx")).get("val"))
-        fill = lbl.find(".//" + qn("a:solidFill") + "/" + qn("a:srgbClr"))
-        if fill is None:
-            f.add("SOFT", "V-CHART", name, f"环图第 {idx + 1} 个标签没有指定墨色，可能压在环带上读不出")
+    这是“plan → 成品”的一致性；读者实际读不读得清由 chart_audit 另算，两者互不替代。
+    """
+    spec = el["chart"]
+    kind = spec["kind"]
+    surface = M.chart_surface(page, el)
+    entries = M.chart_label_plan(plan, spec, surface)
+    by_name = {e["name"]: e for e in entries}
+    combo = set(spec.get("combo_line_series") or [])
+    unit = M.chart_unit(spec)
+    for ser in obj._chartSpace.iter(qn("c:ser")):
+        sname = _ser_name(ser)
+        entry = entries[0] if kind in ("pie", "donut") else by_name.get(sname)
+        want_on = bool(spec.get("combo_line_labels")) if sname in combo else bool(spec.get("data_labels"))
+        dl = ser.find(qn("c:dLbls"))
+        if dl is None:  # 他人或旧版写法：直标挂在 plot 级，系列继承
+            dl = ser.getparent().find(qn("c:dLbls"))
+        got_on = dl is not None and (dl.find(qn("c:showVal")) is not None
+                                     and dl.find(qn("c:showVal")).get("val") in ("1", "true"))
+        if got_on != want_on:
+            f.add("HARD", "V-CHART", name, f"系列「{sname}」直标 {got_on} ≠ plan {want_on}")
+        if not want_on or entry is None or dl is None:
             continue
-        surface = None
-        for dpt in obj._chartSpace.iter(qn("c:dPt")):
-            hit = dpt.find(qn("c:idx"))
-            if hit is not None and int(hit.get("val")) == idx:
-                s = dpt.find(".//" + qn("a:srgbClr"))
-                surface = "#" + s.get("val") if s is not None else None
-        if surface and M.contrast_ratio("#" + fill.get("val"), surface) < 2.5:
-            f.add("SOFT", "V-CHART", name,
-                  f"环图第 {idx + 1} 个标签墨色对环带仅 {M.contrast_ratio('#' + fill.get('val'), surface):.2f}:1")
-        fmt = lbl.find(qn("c:numFmt"))
+        pos = dl.find(qn("c:dLblPos"))
+        got_pos = None if pos is None else pos.get("val")
+        if got_pos != entry["position"]:
+            f.add("SOFT", "V-CHART", name, f"系列「{sname}」直标位置 {got_pos} ≠ {entry['position']}")
+        ink = A._ink(dl.find(qn("c:txPr")))
+        if ink != entry["ink"]:
+            f.add("HARD", "V-LABEL-INK", name, f"系列「{sname}」直标墨色 {ink} ≠ 决策表 {entry['ink']}")
+        plate = A._srgb(dl.find(qn("c:spPr")))
+        if plate != entry["plate"]:
+            f.add("HARD", "V-LABEL-INK", name, f"系列「{sname}」直标衬底 {plate} ≠ 决策表 {entry['plate']}")
+        fmt = dl.find(qn("c:numFmt"))
         code = "" if fmt is None else (fmt.get("formatCode") or "")
-        if unit and unit not in code:
-            # 逐点 dLbl 一旦存在就不再继承 plot 级 numFmt，单位会静默消失：环图上只剩“47”。
-            f.add("HARD", "V-CHART", name,
-                  f"环图第 {idx + 1} 个标签的数字格式「{code or '未设置'}」丢掉了单位「{unit}」")
+        if unit and unit not in code and spec.get("stacked") != "percent" and "%" not in code:
+            f.add("HARD", "V-CHART", name, f"系列「{sname}」直标数字格式「{code or '未设置'}」丢掉了单位「{unit}」")
+        if kind in ("pie", "donut"):
+            cat = dl.find(qn("c:showCatName"))
+            got_cat = cat is not None and cat.get("val") in ("1", "true")
+            if got_cat != (kind == "pie"):
+                f.add("SOFT", "V-CHART", name, f"类别名开关 {got_cat} ≠ {kind == 'pie'}"
+                                               f"（{'饼图外置直标要带类别名' if kind == 'pie' else '环带内只留数值，类别交给图例'}）")
+        for k, want in enumerate(entry["points"] or []):
+            lbl = next((d for d in dl.findall(qn("c:dLbl")) if d.find(qn("c:idx")).get("val") == str(k)), None)
+            got = A._ink(lbl.find(qn("c:txPr"))) if lbl is not None else None
+            if got != want:
+                f.add("HARD", "V-LABEL-INK", name, f"环图第 {k + 1} 个扇区标签墨色 {got} ≠ 决策表 {want}")
+            fmt = None if lbl is None else lbl.find(qn("c:numFmt"))
+            if unit and (fmt is None or unit not in (fmt.get("formatCode") or "")):
+                f.add("HARD", "V-CHART", name, f"环图第 {k + 1} 个标签的数字格式丢掉了单位「{unit}」")
 
 
 def verify_page_number(plan, page, book, index, pid, f: M.Report) -> None:
@@ -1140,7 +1138,7 @@ def _label_pieces(chart: Dict[str, Any]) -> List[str]:
         return []
     if (chart.get("value_axis") or {}).get("number_format") or chart.get("stacked") == "percent":
         return []
-    unit = str(chart.get("unit") or "").strip()
+    unit = M.chart_unit(chart)
     out: List[str] = []
     for series in (chart.get("data") or {}).get("series") or []:
         for value in series.get("values") or []:

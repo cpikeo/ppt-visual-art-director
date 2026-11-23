@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-from model import backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
 def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
@@ -106,7 +106,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
             elif kind == "path":
                 check_path(page, el, eloc, boxes, rep)
             elif kind == "chart":
-                check_chart(eloc, el, plan, rep)
+                check_chart(eloc, el, plan, page, rep)
             elif kind == "legend":
                 check_legend(plan, page, el, eloc, rep)
 
@@ -361,7 +361,7 @@ def check_legend(plan: Dict[str, Any], page: Dict[str, Any], el: Dict[str, Any],
             rep.soft("W-FIT", loc, f"图例每{'行' if vertical else '列'} {pitch:.2f} in < 文字所需 {need:.2f} in"
                                   f"（{len(items)} 条）：加高/加宽图例框，或减少条目")
 
-def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], rep: Report) -> None:
+def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[str, Any], rep: Report) -> None:
     chart = el["chart"]
     kind = chart["kind"]
     data = chart["data"]
@@ -515,6 +515,29 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], rep: Report)
     if chart.get("axis_labels") is False and not chart.get("data_labels"):
         rep.hard("E-CHART", loc, "axis_labels=false 时必须 data_labels=true，否则无读数")
     hi = chart.get("highlight_category")
+    # 承载面：轴、图例、直标的墨色与系列色都相对它取，不是相对页面底色。
+    surface = chart_surface(page, el)
+    if not chart_surface_known(page, el):
+        rep.soft("W-CHART", loc, "图表压在图片或渐变上，承载面无法静态判定，按页面底色取色；"
+                                 "换成纯色承载面，或在渲染里逐项看轴、图例与直标")
+    body = chart_style(surface)["body"]
+    if contrast_ratio(body, surface) < LABEL_INK_MIN:
+        rep.soft("W-CHART", loc, f"承载面 {surface} 明度居中，轴/图例墨色最多 {contrast_ratio(body, surface):.2f}:1（< {LABEL_INK_MIN}）；"
+                                 "改深或改浅，不要放在中灰上")
+    floor_kind = LIMITS["chart"]["min_contrast"].get(kind, 2.0)
+    for name, color in zip(items, colors):
+        ratio = contrast_ratio(color, surface)
+        if ratio < INVISIBLE_RATIO:
+            rep.hard("E-CHART", loc, f"「{name}」色 {color} 对承载面 {surface} 仅 {ratio:.2f}:1：几乎不可见；"
+                                     "换色、换承载面，或在 color_map 里给这一项单独指派")
+        elif ratio < floor_kind:
+            rep.soft("W-CHART", loc, f"「{name}」色 {color} 对承载面 {surface} 仅 {ratio:.2f}:1"
+                                     f"（{kind} 建议 ≥ {floor_kind}）：这一项在投影上会发虚")
+    if hi is not None and chart.get("legend") is True:
+        rep.hard("E-CHART", loc, "highlight_category 的图不能开原生图例：图例色块是系列色，而退隐的柱是灰，两边对不上；"
+                                 "强调靠直标或图题说清")
+    if kind == "area" and not stacked and len(series) > 1 and chart.get("data_labels"):
+        rep.hard("E-CHART", loc, "多系列非堆叠面积相互遮挡，直标落在哪块面上无法保证；改折线、改堆叠，或去掉直标")
     if hi is not None:
         if kind != "bar" or len(series) != 1:
             rep.hard("E-CHART", loc, "highlight_category 只用于单系列柱/条图")
@@ -531,6 +554,8 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], rep: Report)
         rep.soft("W-NOTE", loc,
                  f"value_axis.note「{str(axis['note'])[:40]}」不会画进图里：截轴起点要读者看得见，"
                  f"必须落到页面的 caption、轴名或图题上")
+
+INVISIBLE_RATIO = 1.5   # 系列色对承载面低于此值：肉眼几乎看不见，直接阻断
 
 CAPS_LABEL = re.compile(r"^[A-Z][A-Z0-9 &/·.\-–—]{2,23}$")
 
