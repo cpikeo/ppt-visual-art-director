@@ -776,6 +776,59 @@ def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
         problems.append("含宏部件（vbaProject）或宏启用内容类型")
     return problems
 
+def guard_paths(rep: "Report", inputs: Dict[str, Optional[Path]], outputs: List[Tuple[str, Optional[Path], str]],
+                force: bool = False, dirs: Optional[Dict[str, Optional[Path]]] = None) -> None:
+    """所有 CLI 共用的路径守卫：输入、输出、报告三类路径只在这一处判定。
+
+    outputs = [(标签, 路径, 必须的扩展名)]。规则：输出不得与任何输入（含硬链接 / 符号链接指向的同一文件）
+    相同；输出之间不得相同；扩展名必须匹配（报告只能是 .json，所以不可能覆盖图片或 PPTX）；不得经符号链接写出；
+    已存在默认不覆盖。dirs = 专用输出目录（渲染目录），不得是任何输入文件所在目录——那是用户的工作目录，不是产物目录。
+    """
+    ins = {k: Path(v).resolve() for k, v in inputs.items() if v is not None}
+
+    def same(a: Path, b: Path) -> bool:
+        if a == b:
+            return True
+        try:
+            return a.exists() and b.exists() and a.samefile(b)
+        except OSError:
+            return False
+
+    seen: List[Tuple[str, Path]] = []
+    for label, raw, suffix in outputs:
+        if raw is None:
+            continue
+        raw = Path(raw)
+        target = raw.resolve()
+        if raw.is_symlink():
+            rep.hard("E-EXIST", str(raw), f"{label}是符号链接，拒绝经链接写出")
+        for in_label, in_path in ins.items():
+            if same(target, in_path):
+                rep.hard("E-EXIST", str(target), f"{label}与输入（{in_label}）是同一个文件，会覆盖它")
+        for other_label, other in seen:
+            if same(target, other):
+                rep.hard("E-EXIST", str(target), f"{label}与{other_label}同路径，会互相覆盖")
+        seen.append((label, target))
+        if suffix and target.suffix.lower() != suffix:
+            rep.hard("E-FORMAT", str(target), f"{label}只能是 {suffix} 文件；收到 {target.name!r}")
+        if target.is_dir():
+            rep.hard("E-EXIST", str(target), f"{label}路径是目录")
+        elif not target.parent.is_dir():
+            rep.hard("E-EXIST", str(target.parent), f"{label}所在目录不存在，先建目录")
+        elif target.exists() and not force:
+            rep.hard("E-EXIST", str(target), f"{label}已存在，未写入；确认要替换就加 --force")
+    for label, raw in (dirs or {}).items():
+        if raw is None:
+            continue
+        target = Path(raw).resolve()
+        if target.exists() and not target.is_dir():
+            rep.hard("E-EXIST", str(target), f"{label}不是目录")
+        for in_label, in_path in ins.items():
+            if in_path.parent == target:
+                rep.hard("E-EXIST", str(target), f"{label}是输入（{in_label}）所在的目录；产物须写进专用子目录，不碰工作目录")
+                break
+
+
 def utf8_stdio() -> None:
     """控制台代码页不是 UTF-8 时（Windows 中文终端很常见），中文与 ⏎ 会抛 UnicodeEncodeError。"""
     for stream in (sys.stdout, sys.stderr):

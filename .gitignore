@@ -6,3 +6,6 @@ __pycache__/
 # 评测证据（渲染 PNG）入库；日常核验产生的 render/ 不入库
 render/
 !dev/evals/**/render/
+!dev/works/**/render/
+dist/
+.pytest_cache/

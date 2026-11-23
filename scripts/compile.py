@@ -29,7 +29,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import EMU, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import EMU, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -263,7 +263,7 @@ def _set_theme_fonts(prs, plan: Dict[str, Any]) -> None:
     body = fonts.get("body") or LIMITS["defaults"]["fonts"]["body"]
     from pptx.opc.constants import RELATIONSHIP_TYPE as RT
     theme_part = prs.slide_master.part.part_related_by(RT.THEME)
-    root = etree.fromstring(theme_part.blob)
+    root = parse_xml(theme_part.blob)
     ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
     for tag, family in (("majorFont", heading), ("minorFont", body)):
         node = root.find(f".//a:fontScheme/a:{tag}", ns)
@@ -350,20 +350,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     rep = Report()
     report_path = Path(args.report).resolve() if args.report else None
-    # 源文件与交付物分家：输出、报告都不得落在 plan 上，报告也不得落在成品上。
-    for label, target in (("输出文件", out_path), ("--report", report_path)):
-        if target is not None and target == plan_path:
-            rep.hard("E-EXIST", str(target), f"{label}与 plan 同路径，会覆盖源文件")
-    if report_path is not None and report_path == out_path:
-        rep.hard("E-EXIST", str(out_path), "--report 与输出文件同路径，会互相覆盖")
-    if out_path.suffix.lower() != ".pptx":
-        rep.hard("E-FORMAT", str(out_path), f"只输出 .pptx；收到 {out_path.name!r}（不支持 .pptm 等宏格式）")
-    if out_path.exists() and not args.force:
-        rep.hard("E-EXIST", str(out_path), "目标文件已存在，未写入；确认要替换就加 --force")
-    if out_path.is_dir():
-        rep.hard("E-EXIST", str(out_path), "输出路径是目录")
-    elif not out_path.parent.is_dir():
-        rep.hard("E-EXIST", str(out_path.parent), "输出目录不存在，先建目录再编译")
+    # 源文件与交付物分家：路径判定统一走 model.guard_paths（输出/报告不得覆盖 plan、素材，报告只能是 .json）。
+    guard_paths(rep, {"plan": plan_path}, [("输出文件", Path(args.out), ".pptx"), ("--report", Path(args.report) if args.report else None, ".json")], args.force)
     plan = load_plan(plan_path, rep)
     if plan is None or rep.blocked:
         for issue in rep.items:
@@ -386,8 +374,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         build(plan, asset_root, out_path)
     except Exception as exc:  # 运行期异常：不覆盖正式输出
         error_path = out_path.with_name(out_path.stem + ".error.pptx")
-        write_error_deck(error_path, f"{type(exc).__name__}: {exc}")
-        print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {exc}\n诊断文件：{error_path}（不是交付物）")
+        note = "诊断文件：" + str(error_path) + "（不是交付物）"
+        if error_path.exists() and not args.force:
+            note = f"诊断文件 {error_path} 已存在，未覆盖（加 --force 才写）"
+        else:
+            write_error_deck(error_path, f"{type(exc).__name__}: {exc}")
+        print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {exc}\n{note}")
         return 3
 
     problems = package_problems(out_path)

@@ -298,10 +298,9 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
             ca.format.line.fill.background()
             ca.major_tick_mark = XL_TICK_MARK.NONE
             ca.minor_tick_mark = XL_TICK_MARK.NONE
-        try:
-            ca.tick_labels.position = XL_TICK_LABEL_POSITION.LOW
-        except Exception:
-            pass
+        # 类别标签放到绘图区最低处：含负值时标签不会压在零线下的柱上。
+        # 旧写法 ca.tick_labels.position 在 python-pptx 里不是属性，赋值被静默吞掉，XML 里始终是 nextTo。
+        ca.tick_label_position = XL_TICK_LABEL_POSITION.LOW
 
     titles = chart.get("axis_titles") or {}
     pairs = (("y", obj.value_axis), ("x", obj.category_axis)) if kind not in ("pie", "donut") else ()
@@ -464,7 +463,8 @@ def _point_numfmt(point: Any, fmt: str) -> None:
 
 def _best_ink(surface: str, style: Dict[str, str], bg: str) -> str:
     """在给定表面上，深墨与白墨哪个对比更高就用哪个。只在这两档之间选，不发明第三种颜色。"""
-    dark, light = style["title"], "#FFFFFF"
+    # 深墨必须真的是深色：深底样式里 style["title"] 是浅色，旧写法在荧光/白色色块上两个候选都是浅字（读不出）。
+    dark, light = LIMITS["chart"]["style"]["light"]["title"], "#FFFFFF"
     return dark if contrast_ratio(dark, surface) >= contrast_ratio(light, surface) else light
 
 def _add_dlbls(plot_element, style: Dict[str, str], number_format: str, position: Optional[str] = None) -> None:

@@ -1022,6 +1022,22 @@ def _norm_key(text: str) -> str:
     return "".join(str(text).split())
 
 
+def _split_line_segments(line: Dict[str, Any]) -> List[List[Dict[str, Any]]]:
+    """把 PyMuPDF 的一行按字号比（>1.25）或水平间隙（>0.6 em）切成段；普通行原样返回一段。"""
+    spans = [sp for sp in line.get("spans", []) if sp.get("text", "") != ""]
+    if not spans:
+        return []
+    segments: List[List[Dict[str, Any]]] = [[spans[0]]]
+    for prev, cur in zip(spans, spans[1:]):
+        ps, cs = float(prev.get("size") or 0) or 1.0, float(cur.get("size") or 0) or 1.0
+        gap = cur["bbox"][0] - prev["bbox"][2]
+        if max(ps, cs) / min(ps, cs) > 1.25 or gap > 0.6 * max(ps, cs):
+            segments.append([cur])
+        else:
+            segments[-1].append(cur)
+    return segments
+
+
 def _render_text(pdf_page) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """一次遍历取出渲染里的行与 span。
 
@@ -1034,10 +1050,15 @@ def _render_text(pdf_page) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     for block in pdf_page.get_text("dict")["blocks"]:
         blines = block.get("lines", [])
         for i, line in enumerate(blines):
-            text = "".join(span.get("text", "") for span in line.get("spans", []))
             direction = tuple(line.get("dir", (1.0, 0.0)))
-            x0, y0, x1, y1 = line["bbox"]
-            if text.strip():
+            # 同一基线上字号悬殊（巨型数字＋小单位）或间隔很大的 span，PyMuPDF 会并成一行，
+            # 中心落到别的元素框里，归属就错了（12.1 前把“24.6｜亿元”判成单位缺失）。按字号/间隙切成独立段。
+            for seg in _split_line_segments(line):
+                text = "".join(span.get("text", "") for span in seg)
+                if not text.strip():
+                    continue
+                x0 = min(sp["bbox"][0] for sp in seg); y0 = min(sp["bbox"][1] for sp in seg)
+                x1 = max(sp["bbox"][2] for sp in seg); y1 = max(sp["bbox"][3] for sp in seg)
                 lines.append({"text": text, "dir": direction,
                               "bbox": (x0 / 72, y0 / 72, x1 / 72, y1 / 72),
                               "last": i == len(blines) - 1, "n_lines": len(blines)})
@@ -1477,7 +1498,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("pptx")
     parser.add_argument("--assets", default=None, help="素材目录；须与编译时一致，缺省为 plan 同级 assets/ 或 plan 所在目录")
     parser.add_argument("--render-dir", default=None, help="写 PDF/PNG/缩略总览的目录")
-    parser.add_argument("--report", default=None)
+    parser.add_argument("--report", default=None, help="核验报告 JSON；已存在时需 --force，且不得是 plan / pptx")
+    parser.add_argument("--force", action="store_true", help="允许替换已存在的报告")
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan).resolve()
@@ -1486,6 +1508,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"找不到 {pptx}")
         return 2
     rep = M.Report()
+    render_arg = Path(args.render_dir).resolve() if args.render_dir else pptx.parent / "render" / pptx.stem
+    M.guard_paths(rep, {"plan": plan_path, "pptx": pptx},
+                  [("--report", Path(args.report) if args.report else None, ".json")], args.force,
+                  dirs={"--render-dir": render_arg})
+    if rep.blocked:
+        for issue in rep.items:
+            print(issue)
+        print("\n核验中止：路径会覆盖输入或工作目录，未写任何文件。")
+        return 2
     plan = M.load_plan(plan_path, rep)
     if plan is None or rep.blocked:
         for issue in rep.items:
@@ -1515,7 +1546,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     facts["structure"] = verify_structure(plan, pptx, facts, obj_rep)
 
     # 每份 pptx 一个子目录：同一目录里核验两份稿时，PNG 与缩略总览不会互相覆盖。
-    render_dir = Path(args.render_dir).resolve() if args.render_dir else pptx.parent / "render" / pptx.stem
+    render_dir = render_arg
     render_rep = M.Report()
     pdf = render(pptx, render_dir, render_rep)
     if pdf is not None:

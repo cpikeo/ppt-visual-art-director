@@ -384,6 +384,19 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], rep: Report)
         return
 
     series = data.get("series") or []
+    # 数据契约：名称是 color_map、combo_line_series、图例与核验的唯一键，重名会让映射静默指向第一个。
+    names = [str(x.get("name")) for x in series]
+    dup = sorted({n for n in names if names.count(n) > 1})
+    if dup:
+        rep.hard("E-CHART", loc, f"系列名重复 {dup}：名称是颜色、组合线与图例的唯一键")
+    cats_all = [str(c) for c in (data.get("categories") or [])]
+    dup_c = sorted({c for c in cats_all if cats_all.count(c) > 1})
+    if dup_c:
+        rep.hard("E-CHART", loc, f"类别名重复 {dup_c}：类别是饼/环取色与 color_map 的键")
+    for x in series:
+        flat = [v for v in (x.get("values") or [])] + [c for pt in (x.get("points") or []) for c in pt]
+        if any(v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or abs(v) == float("inf")) for v in flat):
+            rep.hard("E-CHART", loc, f"系列「{x.get('name')}」含非有限数值（NaN / Infinity / 非数字）")
     if kind == "scatter":
         if "points" not in (series[0] if series else {}):
             rep.hard("E-CHART", loc, "scatter 的 data 需为 series[].points=[[x,y],…]")

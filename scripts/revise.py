@@ -1398,9 +1398,20 @@ def inspect_cli(argv: List[str]) -> int:
     M.utf8_stdio()
     parser = argparse.ArgumentParser(prog="revise.py inspect", description="只读解析既有 PPTX（不改原文件）")
     parser.add_argument("pptx")
-    parser.add_argument("--json", default=None, help="同时写出完整 JSON")
+    parser.add_argument("--json", default=None, help="同时写出完整 JSON（只能是 .json，不得是原稿；已存在需 --force）")
+    parser.add_argument("--force", action="store_true", help="允许替换已存在的 --json 文件")
     args = parser.parse_args(argv)
-    data = inspect_deck(Path(args.pptx))
+    src = Path(args.pptx).resolve()
+    rep = M.Report()
+    if not src.is_file():
+        rep.hard("E-SRC", str(src), "找不到原稿")
+    M.guard_paths(rep, {"原稿": src}, [("--json", Path(args.json) if args.json else None, ".json")], args.force)
+    if not rep.blocked:
+        for problem in M.package_problems(src):
+            rep.hard("E-FORMAT", str(src), f"原稿{problem}；拒绝解析")
+    if rep.blocked:
+        return _blocked(rep)
+    data = inspect_deck(src)
     print(to_markdown(data))
     if args.json:
         Path(args.json).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1431,15 +1442,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     rep = M.Report()
     if not src.is_file():
         rep.hard("E-SRC", str(src), "找不到原稿")
-    for label, target in (("输出文件", out), ("--report", report_path)):
-        if target is not None and target in (src, ops_path):
-            rep.hard("E-EXIST", str(target), f"{label}与输入同路径，会覆盖源文件")
-    if report_path is not None and report_path == out:
-        rep.hard("E-EXIST", str(out), "--report 与输出文件同路径")
-    if out.suffix.lower() != ".pptx":
-        rep.hard("E-FORMAT", str(out), f"只输出 .pptx；收到 {out.name!r}（不支持 .pptm 等宏格式）")
-    if out.exists() and not args.force:
-        rep.hard("E-EXIST", str(out), "目标文件已存在，未写入；确认要替换就加 --force")
+    M.guard_paths(rep, {"原稿": src, "edit.json": ops_path},
+                  [("输出文件", Path(args.out), ".pptx"), ("--report", Path(args.report) if args.report else None, ".json")], args.force)
     if rep.blocked:
         return _blocked(rep)
     for problem in M.package_problems(src):
@@ -1499,6 +1503,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         os.replace(tmp, out)
     else:
         rejected = out.with_name(out.stem + ".preserve-failed.pptx")
+        if rejected in (src, ops_path):  # 诊断稿也不许压到输入上
+            rejected = out.with_name(f"{out.stem}.{os.getpid()}.preserve-failed.pptx")
         os.replace(tmp, rejected)
         facts["rejected"] = str(rejected)
     status = "BLOCK" if rep.blocked else "READY"

@@ -104,7 +104,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 - **自定义图例用 `legend` 元素，不要手绘色块**：`{"type":"legend","for_chart":"<本页 chart 的 id>","x":…,"y":…,"w":…,"h":…}`，可选 `direction`（`vertical` 缺省／`horizontal`）、`swatch_in`（缺省 0.16）、`show_value`（仅饼/环附读数）、`font_size`、`color`。色块与标签由被引用图表的**同一份映射**生成，编译成可编辑的组合对象；核验器逐块比对色值与标签，错色即 `V-CHART` 阻断。手绘色块会收到 `W-CHART`（疑似手绘图例）。
 - 组合图共用一根数值轴（`combo_line_series` 指定系列改画折线）。**没有双数值轴**。
 - 直标：`data_labels` 作用于柱、线、面积、饼、环与组合图的柱层；组合折线的直标需 `combo_line_labels: true`。
-- 硬检查：同图单位一致；期间与口径不一致阻断；`axis_labels: false` 须同时 `data_labels: true`；百分比堆叠每列合计 100；截轴（`min > 0`）须在 `value_axis.note` 写明起点，且该起点要落在页面可见的 caption、轴名或图题上（否则 `W-NOTE`）；饼与环既无直标也无图例即阻断。
+- 硬检查：系列名唯一、类别名唯一（它们是颜色映射与 `combo_line_series` 的键）、数值有限（非 NaN / Infinity）；同图单位一致；期间与口径不一致阻断；`axis_labels: false` 须同时 `data_labels: true`；百分比堆叠每列合计 100；截轴（`min > 0`）须在 `value_axis.note` 写明起点，且该起点要落在页面可见的 caption、轴名或图题上（否则 `W-NOTE`）；饼与环既无直标也无图例即阻断。
 - 不支持气泡、雷达、树图、瀑布、桑基、甘特、趋势线、误差线。其余关系用形状与路径手工组合，不与数据绑定。
 
 ## 页码
@@ -126,13 +126,13 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 ```bash
 python scripts/compile.py plan.json out.pptx [--assets DIR] [--report r.json] [--force]
-python scripts/verify.py plan.json out.pptx [--assets DIR] [--render-dir DIR] [--report v.json]
-python scripts/revise.py inspect 原稿.pptx [--json i.json]
+python scripts/verify.py plan.json out.pptx [--assets DIR] [--render-dir DIR] [--report v.json] [--force]
+python scripts/revise.py inspect 原稿.pptx [--json i.json] [--force]
 python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report r.json] [--force]
 ```
 
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
-- `out` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。输出与报告不得指向输入或成品。
+- `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积）。
 - `--assets` 缺省取 plan 同级 `assets/`，否则取 plan 所在目录。`verify.py` 的渲染目录缺省为 `render/<pptx 名>/`。
 - 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物）；`verify.py` 0 无阻断、1 有阻断或格式不合格；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
 
