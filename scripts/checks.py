@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
+from audit import plan_signals
 from model import backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
@@ -146,12 +147,22 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                 if ubox is None:
                     continue
                 ubox = rot_box(ubox, upper["el"].get("rotation"))
+                # 容器关系：文字/图/形状完整落在色块或线框内是有意的“放在面板上”，不是意外重叠。
+                if lower["el"]["type"] in ("shape", "divider") and _contains(lbox, ubox):
+                    continue
                 if substantive_overlap(lbox, ubox):
                     rep.hard("E-OVERLAP", f"{pid}/{upper['el'].get('id')}",
                              f"与先声明的 {lower['el'].get('id')} 实质重叠；若后者是承载层（背景图/蒙版/色块），"
                              f"在 {lower['el'].get('id')} 上声明 overlap_allowed，否则移开")
     return rep
 
+def _contains(outer, inner, tol: float = 0.02) -> bool:
+    return (inner[0] >= outer[0] - tol and inner[1] >= outer[1] - tol
+            and inner[0] + inner[2] <= outer[0] + outer[2] + tol and inner[1] + inner[3] <= outer[1] + outer[3] + tol)
+
+# 中西文间距：PowerPoint 不像 LibreOffice 那样自动补中西文间距，哪种写法“对”取决于渲染器；
+# 真正的排印问题是整稿不一致，所以只查混用。
+_TIGHT = re.compile(r"[\u3400-\u9fff][A-Za-z0-9%]|[A-Za-z0-9%][\u3400-\u9fff]")
 # 中西文间的手敲空格：字体自身的字距已够，空格宽度又因渲染器而异
 # （Noto CJK 空格约 0.22–0.26 em；LibreOffice 还会叠加中西文自动间距，实测明显偏松；宋体空格 0.5 em）。
 _CJK_SPACE = re.compile(r"[\u3400-\u9fff][ \u00a0]+[A-Za-z0-9]|[A-Za-z0-9%][ \u00a0]+[\u3400-\u9fff]")
@@ -166,9 +177,6 @@ def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> No
     need = fit_height_in(el, st, ew)
     if need > eh * LIMITS["type"]["fit_tolerance"]:
         rep.soft("W-FIT", loc, f"按 {st['size']:g}pt 估算需 {need:.2f}in，框高 {eh:.2f}in：先编辑文案，再加宽/拆页")
-    spaced = _CJK_SPACE.findall(str(content))
-    if spaced:
-        rep.soft("W-SPACE", loc, f"中文与数字/西文之间有手敲空格（{'、'.join(spaced[:3])}）：宽度随渲染器变化，常显得松散；删掉空格，依赖字体原生字距，需要时用 runs 调整")
     minimum = LIMITS["type"]["min_pt"].get(el["type"], 0)
     if st["size"] < minimum:
         rep.soft("W-PT", loc, f"{el['type']} {st['size']:g}pt 低于 {minimum}pt 下限")
@@ -413,6 +421,21 @@ def design_signals(plan: Dict[str, Any]) -> Report:
     """
     rep = Report()
     pages = plan.get("pages") or []
+    rep.extend(plan_signals(plan))
+    spaced_at: List[str] = []
+    tight_at: List[str] = []
+    for page in pages:
+        for el in all_elements(page):
+            if el.get("type") in TEXT_TYPES:
+                text = str(el.get("content") or "")
+                if _CJK_SPACE.search(text):
+                    spaced_at.append(f"{page.get('id')}/{el.get('id')}")
+                if _TIGHT.search(text):
+                    tight_at.append(f"{page.get('id')}/{el.get('id')}")
+    if spaced_at and tight_at:
+        rep.soft("W-SPACE", "整稿", f"中西文间距写法混用：有空格 {spaced_at[:3]}…，无空格 {tight_at[:3]}…；整稿选一种（见 design.md 六）")
+    elif spaced_at:
+        rep.info("I-SPACE", "整稿", f"中西文间用了手敲空格（{len(spaced_at)} 处）：整稿一致即可；改用无空格写法要在目标机看一眼字距")
     if len(pages) < 2:
         return rep
     w, h = canvas(plan)

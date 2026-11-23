@@ -131,16 +131,16 @@ def canvas(plan: Dict[str, Any]) -> Tuple[float, float]:
 
 def _em_width(ch: str) -> float:
     if ch in " \u00a0\t":
-        return 0.30
+        return 0.23          # Noto 实测 0.22–0.25
     code = ord(ch)
     if code < 128:
         if ch.isdigit():
-            return 0.58          # 粗体数字偏宽；按 0.55 估，100pt 的“41%”会被低估到刚好放下
+            return 0.59          # Noto Sans CJK Bold 实测 0.590（Regular 0.555）
         if ch in "%@&":
-            return 0.90          # 百分号、@、& 接近一个字宽；按标点的 0.34 估会漏掉大字号数字的折行
+            return 0.96          # Noto 实测 % = 0.96–0.97 em，接近一个字宽
         return 0.55 if ch.isalnum() else 0.34
     if ch in "×÷±":
-        return 0.90
+        return 1.0
     if ch in "，。、；：？！（）【】《》「」『』“”‘’—…·～":
         return 1.0
     if code >= 0x2E80:
@@ -168,28 +168,18 @@ def fit_lines(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> List[int]
     out: List[int] = []
     for seg, pieces in paras:
         base = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
-        cap = usable / (base / 72.0)
+        cap = usable * LIMITS["type"].get("fit_width_safety", 1.0) / (base / 72.0)
         out.append(max(1, math.ceil(_para_width_em(seg, pieces, base) / cap - 1e-9)))
     return out or [1]
 
-def line_pitch_em(family: Optional[str]) -> float:
-    """单倍行距的行高（em）：按字体族名子串匹配 limits.json，未知字体取默认。"""
-    cfg = LIMITS["type"]["line_pitch_em"]
-    key = str(family or "").lower().replace(" ", "")
-    for name, value in cfg["by_font"].items():
-        if name in key:
-            return float(value)
-    return float(cfg["default"])
-
 def fit_height_in(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> float:
-    """框高需求（英寸）。行数、字号、行距、段后距都算进去；估不准时以真实渲染为准。"""
-    pitch = line_pitch_em(st.get("family"))
+    """框高需求（英寸）。行距是固定磅值（字号 × em 行距），与字体自带行高无关；行数按字宽折算，估不准时以渲染为准。"""
     paras = paragraph_runs(el) or [(str(el.get("content", "")), [])]
     lines = fit_lines(el, st, box_w)
     total = 0.0
     for (seg, pieces), count in zip(paras, lines):
         base = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
-        total += count * base * pitch * st["line_spacing"] / 72.0
+        total += count * base * st["line_spacing"] / 72.0
     space_after = float(el.get("space_after_pt") or 0)
     if space_after:
         total += space_after * max(len(paras) - 1, 1) / 72.0

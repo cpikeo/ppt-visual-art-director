@@ -1,33 +1,30 @@
 # ppt-visual-art-director
 
-以视觉艺术总监的判断制作、改稿或评审 PPT。**AI 负责设计判断，脚本负责确定性执行与事实核验，真实渲染负责证明表现，人负责最终签收。** 交付原生可编辑的 `.pptx`。机器检查不等于好看，预览不等于目标环境通过。
+以视觉艺术总监的判断制作、改稿或评审 PPT。**AI 负责判断，脚本负责确定性执行与事实核验，真实渲染证明表现，人负责签收。** 交付原生可编辑 `.pptx`。机器检查不等于好看，预览不等于目标环境通过。
 
-## 仓库结构
+## 结构
 
 ```
-ppt-visual-art-director/      ← 正式技能包（只打包这个目录）
-  SKILL.md                    判断原则、判断顺序、任务路线、验收、交付
-  references/design.md        概念、艺术指导、叙事、空间、信息设计、排印、色彩、诊断、复核
-  references/imagery.md       图片与视觉资产
-  references/build.md         plan 语义、素材、图表、命令、诊断码、定点改稿、能力边界
-  scripts/                    model · ooxml · charts · checks · compile · verify · revise
-                              plan.schema.json（数据契约）  limits.json（技术阈值）
-  requirements.txt            必需依赖（python-pptx · jsonschema · Pillow · lxml）
-  requirements-render.txt     可选：渲染核验（PyMuPDF，AGPL-3.0；另需 LibreOffice）
+SKILL.md                  判断原则、顺序、路线、验收、交付（入口，约 100 行）
+references/
+  design.md               概念 · 艺术指导 · 叙事 · 空间 · 信息设计 · 排印 · 色彩 · 诊断 · 复核 · 真稿判断
+  imagery.md              图片与视觉资产、镜头单
+  build.md                plan 语义 · 图表 · 命令 · 诊断码 · 定点改稿 · 能力边界
+scripts/                  model · ooxml · charts · checks · audit · compile · verify · revise
+                          plan.schema.json（契约）  limits.json（阈值）
+requirements.txt          必需：python-pptx · jsonschema · Pillow · lxml
+requirements-render.txt   可选：PyMuPDF（AGPL-3.0）· numpy；另需 LibreOffice
+
 ```
 
-## 命令
+打包技能时只取 `SKILL.md`、`references/`、`scripts/`、`requirements*.txt`。
+
+## 命令（在仓库根目录运行）
 
 ```bash
-pip install -r ppt-visual-art-director/requirements.txt
-python ppt-visual-art-director/scripts/compile.py plan.json out.pptx [--assets DIR]
-python ppt-visual-art-director/scripts/verify.py  plan.json out.pptx [--assets DIR]
-python ppt-visual-art-director/scripts/revise.py inspect 原稿.pptx
-python ppt-visual-art-director/scripts/revise.py 原稿.pptx edit.json out.pptx
+pip install -r requirements.txt                # 渲染核验：pip install -r requirements-render.txt
+python scripts/compile.py plan.json out.pptx [--assets DIR]
+python scripts/verify.py  plan.json out.pptx [--assets DIR]
+python scripts/revise.py inspect 原稿.pptx
+python scripts/revise.py 原稿.pptx edit.json out.pptx
 ```
-
-## 11.0.0 修订要点
-
-* **交付质量**：母版与版式按画布铺开（原来 16:9 成品里仍是 4:3 占位符）；主题字体改为 plan 字族（原来是 Calibri＋空东亚字体）；新建文字带 `lang`。
-* **判断依据修正**：`W-FIT` 行高按字体取值（Noto CJK 1.45，原来一律 1.2，真实渲染里大字与两行标题溢出）；`W-SPACE` 理由改为实测依据；巨型数字/标题可作承载层（字体即图像）；声明出血的文字不再被 `V-CLIP` 阻断（改 `V-BLEED` 提示）；环/饼图例不再误报缺系列名。
-* **结构**：技能包与开发材料分开；README 不再引用不存在的文件；`design.md` 十补入 4 条来自真实渲染的判断。

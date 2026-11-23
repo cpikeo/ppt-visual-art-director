@@ -34,6 +34,7 @@ sys.path.insert(0, str(HERE))
 
 import model as M  # noqa: E402
 import checks as K  # noqa: E402
+import audit as A  # noqa: E402
 import charts as H  # noqa: E402
 
 EMU = M.EMU
@@ -214,9 +215,14 @@ def verify_text(plan, page, el, shape, name, f: M.Report) -> None:
         got_align = str(para.alignment).split(" ")[0] if para.alignment is not None else "NONE"
         if got_align.upper() != st["align"].upper():
             f.add("HARD", "V-STYLE", f"{name}#p{i + 1}", f"对齐 {got_align} ≠ {st['align']}")
-        if para.line_spacing is not None and abs(float(para.line_spacing) - st["line_spacing"]) > 0.02:
-            f.add("SOFT", "V-STYLE", f"{name}#p{i + 1}",
-                  f"行距 {float(para.line_spacing):.2f} ≠ plan {st['line_spacing']:.2f}")
+        pieces = want_paras[i][1] if i < len(want_paras) else []
+        base_pt = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
+        want_pt = round(base_pt * st["line_spacing"], 1)
+        got_ls = para.line_spacing
+        if got_ls is None or not hasattr(got_ls, "pt"):
+            f.add("SOFT", "V-STYLE", f"{name}#p{i + 1}", f"行距不是固定磅值（{got_ls}），plan 要求 {want_pt}pt（字号×{st['line_spacing']}）")
+        elif abs(got_ls.pt - want_pt) > 0.6:
+            f.add("SOFT", "V-STYLE", f"{name}#p{i + 1}", f"行距 {got_ls.pt:.1f}pt ≠ plan {want_pt}pt")
 
     pad_x, pad_y = st["pad"]
     for side, want_pad in (("left", pad_x), ("right", pad_x), ("top", pad_y), ("bottom", pad_y)):
@@ -975,6 +981,19 @@ def _norm_key(text: str) -> str:
     return "".join(str(text).split())
 
 
+def _trim_span_bbox(sp: Dict[str, Any], fallback) -> Tuple[float, float, float, float]:
+    """span 的外接框（英寸）扣掉首尾空白：渲染器常把相邻两个文本框之间的空格归进后一个 span，
+    不扣的话空格的宽度会让该 span 看起来“伸出”自己的框。空格宽按 0.25 em 近似。"""
+    x0, y0, x1, y1 = sp.get("bbox") or fallback
+    text = sp.get("text", "")
+    size = float(sp.get("size") or 0)
+    lead, trail = len(text) - len(text.lstrip()), len(text) - len(text.rstrip())
+    if text.strip() and size:
+        x0 += lead * size * 0.25
+        x1 -= trail * size * 0.25
+    return (x0 / 72, y0 / 72, x1 / 72, y1 / 72)
+
+
 def _render_text(pdf_page) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """一次遍历取出渲染里的行与 span。
 
@@ -993,11 +1012,12 @@ def _render_text(pdf_page) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
             if text.strip():
                 lines.append({"text": text, "dir": direction,
                               "bbox": (x0 / 72, y0 / 72, x1 / 72, y1 / 72),
-                              "last": i == len(blines) - 1, "n_lines": len(blines)})
+                              "last": i == len(blines) - 1, "n_lines": len(blines),
+                              "spans": [{"text": sp.get("text", ""), "bbox": _trim_span_bbox(sp, line["bbox"])}
+                                        for sp in line.get("spans", [])]})
             for span in line.get("spans", []):
-                sx0, sy0, sx1, sy1 = span.get("bbox") or line["bbox"]
                 spans.append({"text": span.get("text", ""), "font": span.get("font", ""),
-                              "bbox": (sx0 / 72, sy0 / 72, sx1 / 72, sy1 / 72)})
+                              "bbox": _trim_span_bbox(span, line["bbox"])})
     return lines, spans
 
 
@@ -1069,7 +1089,13 @@ def _owners(lines: List[Dict[str, Any]], boxes: Dict[str, Tuple[float, float, fl
     """
     tol = M.LIMITS["render_check"]["span_tol_in"]
     owned: Dict[str, List[Dict[str, Any]]] = {}
+    # PDF 会把同一基线上、分属不同文本框的字合成一行（如并置的 31% 与 18%）。
+    # 行内有多个 span 时按 span 认领归属，否则右边那个框会被判“文字缺失”。
+    units: List[Dict[str, Any]] = []
     for line in lines:
+        spans = [sp for sp in line.get("spans") or [] if sp["text"].strip()]
+        units.extend(spans if len(spans) > 1 else [line])
+    for line in units:
         hits = [(w * h, name) for name, (bx, by, w, h) in boxes.items()
                 if _inside((bx, by, w, h), line["bbox"], tol)]
         if hits:
@@ -1372,6 +1398,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     for issue in K.design_signals(plan).items:
         obj_rep.items.append(issue)
     facts["structure"] = verify_structure(plan, pptx, facts, obj_rep)
+    for problem in A.lint_ooxml(pptx):
+        obj_rep.add("HARD", "V-XML", pptx.name, problem + "（PowerPoint 可能提示修复）")
 
     # 每份 pptx 一个子目录：同一目录里核验两份稿时，PNG 与缩略总览不会互相覆盖。
     render_dir = Path(args.render_dir).resolve() if args.render_dir else pptx.parent / "render" / pptx.stem
@@ -1380,6 +1408,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if pdf is not None:
         facts["render"] = {"done": True, "pdf": str(pdf)}
         facts["render"].update(verify_render(plan, pptx, pdf, render_dir, render_rep))
+        import re as _re
+        page_pngs = [Path(p) for p in facts["render"].get("pngs", []) if _re.fullmatch(r"p\d+\.png", Path(p).name)]
+        try:
+            facts["audit"], audit_rep = A.render_metrics(page_pngs, plan, render_dir)
+            render_rep.extend(audit_rep)
+        except ImportError:
+            render_rep.info("V-RENDER", "环境", "缺少 numpy（requirements-render.txt）：版面度量与灰度总览跳过")
     facts["environment"] = environment_facts(pdf is not None)
     f.extend(obj_rep)
     f.extend(render_rep)

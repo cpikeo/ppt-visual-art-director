@@ -5,4 +5,4 @@ __pycache__/
 *.pdf
 # 评测证据（渲染 PNG）入库；日常核验产生的 render/ 不入库
 render/
-!dev/evals/**/render/
+!examples/**/render/
