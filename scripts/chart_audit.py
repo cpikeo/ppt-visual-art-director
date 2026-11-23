@@ -19,7 +19,7 @@ from typing import Any, List, Optional, Tuple
 
 from lxml import etree
 
-from model import INSIDE_POSITIONS, LABEL_INK_MIN, LIMITS, allowed_label_positions, contrast_ratio, qn
+from model import INSIDE_POSITIONS, LABEL_INK_MIN, LIMITS, allowed_label_positions, contrast_ratio, gray_conflicts, qn
 
 Finding = Tuple[str, str, str]  # (HARD|SOFT|INFO, code, message)
 
@@ -217,5 +217,54 @@ def audit_series_surface(chart_space, surface: str, kind: str) -> List[Finding]:
     return out
 
 
+def audit_gray(chart_space, kind: str) -> List[Finding]:
+    """成品里各系列的实际颜色，转灰度后两两比较（只读 XML，不读 plan）。
+
+    饼/环的扇区有直标或图例，且彼此以承载面色描边隔开，不按系列灰度判；单系列图没有可比对象。
+    """
+    if kind in ("pie", "donut", "table"):
+        return []
+    named: List[Tuple[str, str]] = []
+    for plot in _plots(chart_space):
+        tag = etree.QName(plot).localname
+        for ser in plot.findall(qn("c:ser")):
+            color = _fill(ser, tag, None)
+            if color:
+                named.append((_ser_name(ser) or f"#{len(named) + 1}", color))
+    if len(named) < 2:
+        return []
+    pairs = gray_conflicts([c for _, c in named])
+    if not pairs:
+        return []
+    shown = "；".join(f"「{named[i][0]}」{named[i][1]} 与「{named[j][0]}」{named[j][1]}（ΔL* {d:.1f}）" for i, j, d in pairs[:3])
+    return [("SOFT", "V-GRAY", f"成品里 {len(pairs)} 对系列转灰度后难以区分：{shown}；"
+                               "需有颜色之外的区分（直标系列名、线型、标记），否则投影与黑白输出会读错")]
+
+
+def audit_readout(chart_space, kind: str, legend_element: bool = False, legend_shows_value: bool = False) -> List[Finding]:
+    """饼/环成品的读数闭环：只看 XML 里真实存在的图例与数据标签。
+
+    类别来源 = 原生 c:legend、showCatName（仅饼；环内直标只有数值）或页上 legend 元素；数值来源 = showVal 或带读数的 legend 元素。
+    """
+    if kind not in ("pie", "donut"):
+        return []
+    chart = chart_space.find(qn("c:chart"))
+    native_legend = chart is not None and chart.find(qn("c:legend")) is not None
+    cat_on = val_on = False
+    for plot in _plots(chart_space):
+        for node in plot.iter(qn("c:dLbls"), qn("c:dLbl")):
+            if _shown(node):
+                cat_on = cat_on or _on(node, "c:showCatName")
+                val_on = val_on or _on(node, "c:showVal")
+    names_ok = native_legend or legend_element or (kind == "pie" and cat_on)
+    out: List[Finding] = []
+    if not names_ok:
+        out.append(("HARD", "V-READOUT", f"成品{kind}没有任何类别读数（无图例、无类别名直标）：读者认不出每个扇区是什么"))
+    if not (val_on or legend_shows_value):
+        out.append(("SOFT", "V-READOUT", f"成品{kind}没有数值读数：只能凭扇区面积估数"))
+    return out
+
+
 def audit_chart(chart_space, surface: str, kind: str) -> List[Finding]:
-    return audit_labels(chart_space, surface) + audit_structure(chart_space, surface) + audit_series_surface(chart_space, surface, kind)
+    return (audit_labels(chart_space, surface) + audit_structure(chart_space, surface)
+            + audit_series_surface(chart_space, surface, kind) + audit_gray(chart_space, kind))

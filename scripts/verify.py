@@ -457,8 +457,8 @@ def verify_image(plan, el, shape, name, facts, asset_root: Path, f: M.Report) ->
         with Image.open(io.BytesIO(shape.image.blob)) as embedded, Image.open(path) as original:
             if embedded.size != original.size:
                 f.add("HARD", "V-ASSET", name, f"内嵌像素 {embedded.size} ≠ 原件 {original.size}")
-    except Exception:
-        pass
+    except Exception as exc:  # 解码失败就是失败：静默放行等于没核对
+        f.add("HARD", "V-ASSET", name, f"无法解码内嵌图片或素材原件，像素核对无法完成：{type(exc).__name__}")
     want_crop = M._crop_geometry(shape.image.size[0], shape.image.size[1],
                                  float(el["w"]), float(el["h"]), el.get("crop_focus"))
     got_crop = (shape.crop_left, shape.crop_right, shape.crop_top, shape.crop_bottom)
@@ -595,7 +595,7 @@ def verify_chart(plan, page, el, shape, name, f: M.Report) -> None:
     elif has_title:
         f.add("SOFT", "V-CHART", name, f"未声明图题，成品却有「{obj.chart_title.text_frame.text}」")
 
-    labels = spec.get("data_labels") is True or bool(spec.get("combo_line_labels"))
+    labels = M.chart_flags(spec)["data_labels"] or bool(spec.get("combo_line_labels"))
     has_labels = _labels_on(obj._chartSpace)
     if labels and not has_labels:
         f.add("HARD", "V-CHART", name, "声明了直标，成品没有数据标签")
@@ -605,6 +605,10 @@ def verify_chart(plan, page, el, shape, name, f: M.Report) -> None:
     # 有效色审计：只读成品 XML，不读 plan 的任何颜色（见 chart_audit.py）。
     surface = M.chart_surface(page, el)
     for sev, code, message in A.audit_chart(obj._chartSpace, surface, kind):
+        f.add(sev, code, name, message)
+    legend_els = [e for e in M.all_elements(page) if e.get("type") == "legend" and str(e.get("for_chart")) == str(el.get("id"))]
+    for sev, code, message in A.audit_readout(obj._chartSpace, kind, bool(legend_els),
+                                              any(e.get("show_value") for e in legend_els)):
         f.add(sev, code, name, message)
 
     if spec.get("highlight_category") is not None and not list(obj._chartSpace.iter(qn("c:dPt"))):
@@ -733,7 +737,7 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
             f.add("SOFT", "V-CHART", name, f"柱宽间隙 {got} ≠ plan {spec['gap_width']}")
 
     if kind in ("pie", "donut"):
-        want_legend = bool(spec.get("legend", False))
+        want_legend = M.chart_flags(spec)["legend"]
         if bool(obj.has_legend) != want_legend:
             f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
         _verify_labels(plan, page, el, obj, name, f)
@@ -776,7 +780,7 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
 
     _verify_labels(plan, page, el, obj, name, f)
     series_spec = spec["data"].get("series") or []
-    want_legend = bool(spec.get("legend", len(series_spec) > 1))
+    want_legend = M.chart_flags(spec)["legend"]
     if bool(obj.has_legend) != want_legend:
         f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
 
@@ -796,7 +800,7 @@ def _verify_labels(plan, page, el, obj, name: str, f: M.Report) -> None:
     for ser in obj._chartSpace.iter(qn("c:ser")):
         sname = _ser_name(ser)
         entry = entries[0] if kind in ("pie", "donut") else by_name.get(sname)
-        want_on = bool(spec.get("combo_line_labels")) if sname in combo else bool(spec.get("data_labels"))
+        want_on = bool(spec.get("combo_line_labels")) if sname in combo else M.chart_flags(spec)["data_labels"]
         dl = ser.find(qn("c:dLbls"))
         if dl is None:  # 他人或旧版写法：直标挂在 plot 级，系列继承
             dl = ser.getparent().find(qn("c:dLbls"))
@@ -1112,7 +1116,8 @@ def expected_text(el: Dict[str, Any], page: Optional[Dict[str, Any]] = None) -> 
     # 一律要求会让核对永远误报（旧版对环图 + 手绘图例报 V-TEXT-RENDER 就是这么来的）。
     kind_c = chart.get("kind")
     if kind_c in ("pie", "donut"):
-        if chart.get("legend", False) or (kind_c == "pie" and chart.get("data_labels")):
+        flags = M.chart_flags(chart)
+        if flags["legend"] or (kind_c == "pie" and flags["data_labels"]):
             out.extend(str(c) for c in data.get("categories") or [])
     elif chart.get("axis_labels", True):
         out.extend(str(c) for c in data.get("categories") or [])
@@ -1120,7 +1125,7 @@ def expected_text(el: Dict[str, Any], page: Optional[Dict[str, Any]] = None) -> 
     for row in data.get("rows") or []:
         out.extend(str(v) for v in row)
     # 与 compile 一致：legend 缺省时两个以上系列才显示图例；显式 false 就不会渲染系列名。
-    show_legend = chart.get("legend", len(data.get("series") or []) > 1)
+    show_legend = M.chart_flags(chart)["legend"]
     # 饼与环的图例列的是类别而不是系列名，系列名不会出现在渲染里。
     for series in data.get("series") or []:
         if show_legend and chart.get("kind") not in ("pie", "donut"):

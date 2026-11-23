@@ -1129,11 +1129,11 @@
         },
         "legend": {
           "type": "boolean",
-          "description": "原生图例开关；缺省两个以上系列时显示。能直标就不要图例。highlight_category 的图不能开（图例是系列色，柱是退隐灰）。"
+          "description": "原生图例开关；缺省：饼/环关，其余两个以上系列时开（见 model.chart_flags）。能直标就不要图例；环图的环内直标只有数值，需要原生图例或 legend 元素。highlight_category 的图不能开（图例是系列色，柱是退隐灰）。"
         },
         "data_labels": {
           "type": "boolean",
-          "description": "柱/线/面积/饼/环的直标；位置与墨色由 model.chart_label_plan 按真实承载表面决定。多系列非堆叠面积不能开。组合图只作用于柱层。"
+          "description": "柱/线/面积/饼/环的直标；缺省：饼/环开，其余关；位置与墨色由 model.chart_label_plan 按真实承载表面决定。多系列非堆叠面积不能开。组合图只作用于柱层。"
         },
         "combo_line_labels": {
           "type": "boolean",

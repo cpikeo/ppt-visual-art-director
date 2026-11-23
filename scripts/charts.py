@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from lxml import etree
 
-from model import (LIMITS, PT_EMU, chart_color_map, chart_items, chart_label_plan, chart_mode,
+from model import (LIMITS, chart_flags, PT_EMU, chart_color_map, chart_items, chart_label_plan, chart_mode,
                    chart_style, chart_surface, chart_unit, contrast_ratio, explicit_box, mix_toward, qn)
 from ooxml import _ensure_family, _set_run_font, _strip_style
 
@@ -115,12 +115,13 @@ def add_chart(slide, plan, page, el):
     # 颜色只有一处来源：model.chart_color_map。扇区、系列、自定义图例与核验器读同一份映射，
     # 手绘色块与扇区对不上这类错色从根上不可能发生。
     colors = chart_color_map(plan, chart)
+    flags = chart_flags(chart)
     plot = obj.plots[0]
     combo = set(chart.get("combo_line_series") or [])
     stacked = bool(chart.get("stacked"))
 
     if kind in ("pie", "donut"):
-        obj.has_legend = bool(chart.get("legend", False))
+        obj.has_legend = flags["legend"]
         if obj.has_legend:
             _style_legend(obj, style, family)
         for j, point in enumerate(plot.series[0].points):
@@ -129,7 +130,7 @@ def add_chart(slide, plan, page, el):
             point.format.line.color.rgb = RGBColor.from_string(bg.lstrip("#"))
     elif kind == "scatter":
         from pptx.enum.chart import XL_MARKER_STYLE
-        obj.has_legend = bool(chart.get("legend", len(series) > 1))
+        obj.has_legend = flags["legend"]
         for i, s in enumerate(plot.series):
             color = RGBColor.from_string(colors[i].lstrip("#"))
             s.format.line.fill.background()  # 散点不连线：连线会暗示不存在的顺序
@@ -140,7 +141,7 @@ def add_chart(slide, plan, page, el):
             s.marker.format.line.color.rgb = color
     else:
         from pptx.enum.chart import XL_MARKER_STYLE
-        obj.has_legend = bool(chart.get("legend", len(series) > 1))
+        obj.has_legend = flags["legend"]
         for i, s in enumerate(plot.series):
             color = RGBColor.from_string(colors[i].lstrip("#"))
             if kind == "line":
@@ -186,7 +187,7 @@ def add_chart(slide, plan, page, el):
     if chart.get("horizontal") and kind == "bar":
         _flip_category_axis(obj)
 
-    if chart.get("data_labels"):
+    if flags["data_labels"]:
         _write_labels(plot, chart_label_plan(plan, chart, bg), chart, style, family, _label_format(chart))
 
     if combo:
@@ -277,15 +278,12 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
         text = titles.get(key)
         if not text:
             continue
-        try:
-            axis.has_title = True
-            title_frame = axis.axis_title.text_frame
-            title_frame.text = str(text)
-            for para in title_frame.paragraphs:
-                for run in para.runs:
-                    _set_run_font(run, family, LIMITS["chart"]["font_pt"]["legend"], style["body"], False)
-        except Exception:
-            pass
+        axis.has_title = True
+        title_frame = axis.axis_title.text_frame
+        title_frame.text = str(text)
+        for para in title_frame.paragraphs:
+            for run in para.runs:
+                _set_run_font(run, family, LIMITS["chart"]["font_pt"]["legend"], style["body"], False)
 
 def _split_combo(obj, combo: set, names: List[str], colors: List[str]):
     """把指定系列从柱图移到折线图：两条 plot 共用同一数值轴。返回折线层元素，供直标使用。"""

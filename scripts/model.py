@@ -269,6 +269,66 @@ def chart_color_map(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
     base = chart_palette(plan, chart) or LIMITS["defaults"]["palette"]
     return [explicit.get(name, base[i % len(base)]) for i, name in enumerate(items)]
 
+def chart_flags(chart: Dict[str, Any]) -> Dict[str, bool]:
+    """原生图例与直标的**有效**开关：compile、checks、verify 只读这里，没有第二份缺省。
+
+    缺省值（plan 里没写该键时）：
+      - 饼/环：`data_labels` 开（饼带类别名与读数，环只有读数）、`legend` 关。
+        旧版两个都缺省为关，饼/环会被编译成既无类别也无数值的图。
+      - 柱/线/面积/散点：`data_labels` 关；`legend` 在两个以上系列时开。
+      - 表格：两者都不适用，恒为关。
+    显式写了的值（含 false）永远优先；是否放行由 `chart_readout_problems` 判断。
+    """
+    kind = chart.get("kind")
+    if kind == "table":
+        return {"legend": False, "data_labels": False}
+    pie_like = kind in ("pie", "donut")
+    n_series = len((chart.get("data") or {}).get("series") or [])
+    legend = chart.get("legend")
+    labels = chart.get("data_labels")
+    return {
+        "legend": bool(legend) if legend is not None else (False if pie_like else n_series > 1),
+        "data_labels": bool(labels) if labels is not None else pie_like,
+    }
+
+def chart_readout_problems(chart: Dict[str, Any], has_legend_element: bool = False) -> List[Tuple[str, str]]:
+    """饼/环的读数闭环：每个扇区必须能认出“是什么”，最好还能读到“多少”。
+
+    返回 [(HARD|SOFT, 说明)]。checks 据此阻断，compile 不另立规则。
+      - 类别可识别：饼 = 直标（带类别名）/ 原生图例 / legend 元素；环 = 原生图例 / legend 元素（环内直标只有数值）。
+      - 数值可读：直标，或带 show_value 的 legend 元素。纯图例只给占比的视觉印象，提示而不阻断。
+    """
+    kind = chart.get("kind")
+    if kind not in ("pie", "donut"):
+        return []
+    flags = chart_flags(chart)
+    out: List[Tuple[str, str]] = []
+    names_ok = flags["legend"] or has_legend_element or (kind == "pie" and flags["data_labels"])
+    if not names_ok:
+        out.append(("HARD", f"{kind} 没有任何类别读数：" + (
+            "环内直标只有数值，需要原生图例（legend: true）或 legend 元素" if kind == "donut"
+            else "需要直标（data_labels）、原生图例或 legend 元素")))
+    elif not flags["data_labels"] and not has_legend_element:
+        out.append(("SOFT", f"{kind} 没有数值直标：读者只能凭扇区面积估数；"
+                            "开 data_labels，或用 legend 元素并设 show_value"))
+    return out
+
+def lightness(hex_color: str) -> float:
+    """CIE L*（0–100）：颜色转成灰度后的感知明度。灰度打印、投影与色觉差异下，区分系列靠的是它。"""
+    y = rel_luminance(hex_color)
+    return 116.0 * (y ** (1 / 3)) - 16.0 if y > 216 / 24389 else y * 24389 / 27
+
+def gray_conflicts(colors: List[str], floor: Optional[float] = None) -> List[Tuple[int, int, float]]:
+    """全部两两比较（不只相邻），返回灰度明度差 ΔL* 低于下限的 (i, j, ΔL*)。"""
+    floor = LIMITS["chart"]["min_series_delta_lstar"] if floor is None else floor
+    out = []
+    for i in range(len(colors)):
+        for j in range(i + 1, len(colors)):
+            d = abs(lightness(colors[i]) - lightness(colors[j]))
+            if d < floor:
+                out.append((i, j, d))
+    return out
+
 # ---------------------------------------------------------------- 图表视觉契约
 # 颜色的职责分四类，各有唯一来源，compile / checks / verify / chart_audit 都读这里：
 #   语义色  chart_color_map      系列、类别、强调项的身份色（数据）
@@ -874,7 +934,83 @@ def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
         problems.append(f"主部件内容类型为 {main_ct}，不是 .pptx 格式（可能是宏启用或其他格式）")
     if any("vbaProject" in n for n in names) or any("macroEnabled" in v for v in overrides.values()):
         problems.append("含宏部件（vbaProject）或宏启用内容类型")
+    problems.extend(package_integrity(path))
     return problems
+
+def content_types(zf) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """([Content_Types].xml) → (Default：扩展名→类型, Override：/部件名→类型)。扩展名小写。"""
+    root = parse_xml(zf.read("[Content_Types].xml"))
+    defaults = {(d.get("Extension") or "").lower(): d.get("ContentType") or "" for d in root if etree.QName(d).localname == "Default"}
+    overrides = {o.get("PartName"): o.get("ContentType") or "" for o in root if etree.QName(o).localname == "Override"}
+    return defaults, overrides
+
+def effective_content_types(zf) -> Dict[str, str]:
+    """包内每个部件实际生效的内容类型（Override 优先，其次按扩展名的 Default；都没有则为空串）。
+
+    Default 与 Override 的写法互换（python-pptx 保存时会重排）不改变语义，比较要比这个，不比 XML 文本。
+    """
+    defaults, overrides = content_types(zf)
+    out: Dict[str, str] = {}
+    for name in zf.namelist():
+        if name == "[Content_Types].xml" or name.endswith("/"):
+            continue
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name.rsplit("/", 1)[-1] else ""
+        out[name] = overrides.get("/" + name) or defaults.get(ext, "")
+    return out
+
+def _rel_target(source: str, target: str) -> str:
+    """关系目标 → 包内部件名。source 为关系所属的源部件（根关系为空串）。"""
+    import posixpath
+    target = target.split("#", 1)[0]
+    if target.startswith("/"):
+        return target.lstrip("/")
+    return posixpath.normpath(posixpath.join(posixpath.dirname(source), target))
+
+def package_integrity(path: Path) -> List[str]:
+    """OPC 包的结构完整性：机器能证明的“文件会不会被 PowerPoint 判损坏”的那一部分。
+
+    查：CRC、重名部件、每个部件都有内容类型、Override 指向存在的部件、内部关系的目标存在、
+    关系文件指向存在的源部件。不能证明：部件内容本身符合 schema、PowerPoint 是否提示修复（需实机）。
+    """
+    import zipfile
+
+    out: List[str] = []
+    try:
+        with zipfile.ZipFile(Path(path)) as zf:
+            bad = zf.testzip()
+            if bad:
+                out.append(f"部件 CRC 校验失败：{bad}")
+            names = zf.namelist()
+            dup = sorted({n for n in names if names.count(n) > 1})
+            if dup:
+                out.append(f"包内有重名部件：{dup[:4]}")
+            nameset = set(names)
+            _defaults, overrides = content_types(zf)
+            effective = effective_content_types(zf)
+            untyped = sorted(n for n, t in effective.items() if not t and not n.endswith(".rels"))
+            if untyped:
+                out.append(f"部件没有内容类型（[Content_Types].xml 缺 Default/Override）：{untyped[:4]}")
+            ghost = sorted(p for p in overrides if p.lstrip("/") not in nameset)
+            if ghost:
+                out.append(f"[Content_Types].xml 的 Override 指向不存在的部件：{ghost[:4]}")
+            dangling: List[str] = []
+            for name in names:
+                if not name.endswith(".rels"):
+                    continue
+                source = name.replace("_rels/", "", 1)[: -len(".rels")] if "_rels/" in name else ""
+                if source and source not in nameset and not name.startswith("_rels/"):
+                    dangling.append(f"{name} 的源部件 {source} 不存在")
+                for rel in parse_xml(zf.read(name)):
+                    if rel.get("TargetMode") == "External":
+                        continue
+                    target = _rel_target(source, rel.get("Target") or "")
+                    if target not in nameset:
+                        dangling.append(f"{name} → {rel.get('Target')}")
+            if dangling:
+                out.append(f"关系指向不存在的部件：{dangling[:4]}")
+    except (OSError, KeyError, zipfile.BadZipFile, etree.XMLSyntaxError):
+        pass  # 打不开的情形由 package_problems 主体报告
+    return out
 
 def guard_paths(rep: "Report", inputs: Dict[str, Optional[Path]], outputs: List[Tuple[str, Optional[Path], str]],
                 force: bool = False, dirs: Optional[Dict[str, Optional[Path]]] = None) -> None:

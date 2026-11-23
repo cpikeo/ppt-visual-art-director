@@ -139,6 +139,20 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
+def _color_sig(color) -> str:
+    """颜色的可比较签名：RGB 取十六进制；主题色取“主题名 + 明度偏移”（.rgb 对它会抛错）。"""
+    from pptx.enum.dml import MSO_COLOR_TYPE
+
+    try:
+        if color.type == MSO_COLOR_TYPE.RGB:
+            return f"#{color.rgb}"
+        if color.type is None:
+            return "none"
+        return f"theme:{color.theme_color}:{round(float(color.brightness or 0), 3)}"
+    except (AttributeError, ValueError, TypeError):
+        return "unreadable"
+
+
 def describe(shape, depth: int = 0) -> Dict[str, Any]:
     kind = kind_of(shape)
     item: Dict[str, Any] = {
@@ -219,20 +233,21 @@ def describe(shape, depth: int = 0) -> Dict[str, Any]:
             fill = shape.fill
             ftype = fill.type
             if ftype == MSO_FILL_TYPE.SOLID:
-                item["fill"] = f"#{fill.fore_color.rgb}"
+                item["fill"] = _color_sig(fill.fore_color)
             elif ftype == MSO_FILL_TYPE.GRADIENT:
-                item["fill"] = "gradient"
+                # 只记“gradient”会让渐变的色标、角度、透明度被改而指纹不变；记 gradFill 的内容摘要
+                node = shape._element.find(".//" + A + "gradFill")
+                item["fill"] = "gradient:" + (_digest(etree.tostring(node, method="c14n").decode("utf-8")) if node is not None else "?")
             elif ftype == MSO_FILL_TYPE.BACKGROUND:
                 item["fill"] = "none"
+            elif ftype is not None:
+                item["fill"] = str(ftype).split(" ")[0].lower()
             if shape.line.width:
                 item["stroke_pt"] = round(shape.line.width.pt, 2)
-            try:
-                if shape.line.color and shape.line.color.type is not None:
-                    item["stroke"] = f"#{shape.line.color.rgb}"
-            except (AttributeError, ValueError):
-                pass
-        except Exception:
-            pass
+            if shape.line.color and shape.line.color.type is not None:
+                item["stroke"] = _color_sig(shape.line.color)
+        except Exception as exc:  # 读不出就明说：静默跳过会让后续的填充/描边改动无从发现
+            item["fill_unreadable"] = type(exc).__name__
     return item
 
 
@@ -1183,6 +1198,70 @@ def compare_parts(before: Dict[str, str], after: Dict[str, str], before_slides: 
 
 
 
+# 定点改稿允许出现的包结构变化（白名单）：其余一律视为越界。
+#   新增部件：ppt/media/*（图片/音视频）、ppt/embeddings/*（图表工作簿），内容类型须与目录相称；
+#   被点名页的关系：只允许 image / chart / hyperlink / package(oleObject) 类关系变化；
+#   内容类型：已有部件的有效类型不得改变；新增部件须有类型（Default 或 Override 皆可）。
+_MEDIA_CT_PREFIX = ("image/", "audio/", "video/")
+_FREE_REL_TYPES = ("/image", "/chart", "/hyperlink", "/package", "/oleObject", "/video", "/audio", "/media")
+
+
+def compare_content_types(before: Path, after: Path, f: M.Report) -> Dict[str, Any]:
+    """[Content_Types].xml 的语义比对：比每个部件生效的内容类型，不比 XML 写法。
+
+    python-pptx 保存时会重排 Default/Override，写法变了而语义不变是合法的；
+    已有部件的类型被换掉、新增部件出现在白名单之外或类型与目录不符，才是越界。
+    """
+    import zipfile
+
+    with zipfile.ZipFile(before) as zb, zipfile.ZipFile(after) as za:
+        old, new = M.effective_content_types(zb), M.effective_content_types(za)
+    changed = sorted(n for n in old if n in new and old[n] != new[n])
+    bad_new = []
+    for n in sorted(set(new) - set(old)):
+        ct = new[n]
+        if n.startswith("ppt/media/") and not ct.startswith(_MEDIA_CT_PREFIX):
+            bad_new.append(f"{n}（{ct or '无类型'}）")
+        elif n.startswith("ppt/embeddings/") and not ct:
+            bad_new.append(f"{n}（无类型）")
+    if changed:
+        f.hard("E-PRESERVE", "[Content_Types].xml", f"已有部件的内容类型被改变：{[(n, old[n], new[n]) for n in changed[:3]]}")
+    if bad_new:
+        f.hard("E-PRESERVE", "[Content_Types].xml", f"新增部件的内容类型与目录不符：{bad_new[:4]}")
+    return {"changed": len(changed), "bad_new": len(bad_new)}
+
+
+def _rel_profile(pptx: Path, part_name: str) -> Dict[str, int]:
+    """某 slide 的关系按“类型 + 模式”计数；image/chart/hyperlink 等允许变化的类型不计。
+    只比计数不比目标名：python-pptx 保存时会重新编号 slide/notes 部件，目标名随之变，语义不变。"""
+    import zipfile
+    from collections import Counter
+
+    rels = part_name.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels"
+    with zipfile.ZipFile(pptx) as zf:
+        if rels not in zf.namelist():
+            return {}
+        root = M.parse_xml(zf.read(rels))
+    prof: Counter = Counter()
+    for rel in root:
+        kind = (rel.get("Type") or "")
+        if kind.endswith(_FREE_REL_TYPES):
+            continue
+        prof[f"{kind.rsplit('/', 1)[-1]}|{rel.get('TargetMode') or 'Internal'}"] += 1
+    return dict(prof)
+
+
+def compare_slide_rels(before: Path, after: Path, before_slides: List[str], after_slides: List[str],
+                       touched_pages: set, f: M.Report) -> None:
+    """被点名页的 slide 部件允许变，但版式、备注、批注、动画媒体等关系不得悄悄增减。"""
+    for i in sorted(touched_pages):
+        if not (1 <= i <= min(len(before_slides), len(after_slides))):
+            continue
+        old, new = _rel_profile(before, before_slides[i - 1]), _rel_profile(after, after_slides[i - 1])
+        if old != new:
+            f.hard("E-PRESERVE", f"第 {i} 页关系", f"版式/备注/批注等关系被改动：{old} → {new}")
+
+
 # ---------------------------------------------------------------- 文本保真
 
 
@@ -1498,6 +1577,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     facts = compare(before, after, grants, bg_touched, declared_deleted, rep, image_pages=image_pages)
     facts["parts"] = compare_parts(before_parts, after_parts, before_slides, after_slides,
                                    touched_pages, rep, movable)
+    facts["content_types"] = compare_content_types(src, tmp, rep)
+    compare_slide_rels(src, tmp, before_slides, after_slides, touched_pages, rep)
     if not rep.blocked:
         post_check(after, rep)
         os.replace(tmp, out)

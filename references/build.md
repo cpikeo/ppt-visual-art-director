@@ -76,6 +76,8 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 ## 图表
 
+**有效开关只有一处**：`model.chart_flags(chart)`。plan 里没写 `legend`／`data_labels` 时，饼/环 `data_labels` 缺省开、`legend` 缺省关；柱线面散 `data_labels` 缺省关，`legend` 在两个以上系列时开；表格恒关。compile、checks、verify 一律读它，显式写出的值（含 `false`）优先。读数闭环（每个扇区认得出是什么）由 `model.chart_readout_problems` 判定，checks 据此阻断，verify 另从成品 XML 复核（`V-READOUT`）。
+
 ```json
 {"kind": "bar", "horizontal": true, "data_labels": true, "axis_labels": false,
  "title": "自然搜索撑住了留存", "unit": "%", "period": "2025 全年", "basis": "次月留存",
@@ -87,7 +89,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 | `bar` | `horizontal`、`stacked`（`true`／`"percent"`）、`combo_line_series` | 竖柱、横条、堆叠、百分比堆叠、柱＋线组合 |
 | `line` | — | 等距类别折线（不按真实日期定位） |
 | `area` | `stacked` | 面积、堆叠面积 |
-| `pie` `donut` | — | 单系列、非负值 |
+| `pie` `donut` | — | 单系列、非负值。缺省 `data_labels` 开（饼带类别名，环只有读数）、`legend` 关；读数闭环见下 |
 | `scatter` | — | `series[].points = [[x, y], …]` |
 | `table` | `column_weights`、`column_align` | 原生表格；数据写 `data: {"headers": [...], "rows": [[...], ...]}`，不是 series |
 
@@ -167,7 +169,9 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
 | `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块）、系列色沉进承载面、图例与强调柱对不上 | 改措辞、拆图、补颜色映射；错色没有放行开关 |
 | `V-LABEL-INK` `V-LABEL-POS` | 成品图表里：直标/轴/图例墨色落在其真实表面上 < 4.5:1（`chart_audit.py` 只读 XML）；或 `dLblPos` 对该图表类型非法；或墨色与决策表不一致 | 重新编译；手改成品会再次被拦 |
-| `W-GRAY` | 相邻系列颜色转灰度后明度比低于 `chart.min_series_luminance_ratio` | 拉开明度，或直标系列名、换线型与标记 |
+| `W-GRAY` | **任意两个**系列的颜色转灰度后明度差 ΔL* 低于 `chart.min_series_delta_lstar`（成品里同一判断为 `V-GRAY`） | 拉开明度，或直标系列名、换线型与标记 |
+| `E-CHART`（读数） | 饼/环没有任何类别来源：饼需直标、原生图例或 `legend` 元素之一；环内直标只有数值，需原生图例或 `legend` 元素 | 开 `legend`／加 `legend` 元素；纯图例无数值直标给 `W-CHART` |
+| `V-READOUT` | 成品饼/环里读不到类别（HARD）或数值（SOFT）：只读 XML 里的 `c:legend`、`showCatName`、`showVal` | 与 plan 无关，成品被改过或编译链有误 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
 | `W-FIT` | 装载估算溢出（行数按字宽折算；`%` `×` `@` 按近全角宽度计；高度按“首行可见高度＋后续行距推进”估，12.0.0 起按渲染实测校准） | 先改文案，再加框，不压字号 |
@@ -185,6 +189,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `V-NOTES` `V-ALT` | 成品里的备注／替代文字与 plan 不一致 | 重新编译；不要手改成品 |
 
 ## 定点编辑：改既有稿
+
+**包结构保留（白名单）**：写出前比 (1) 每个部件**生效**的内容类型（`Override` 优先、其次扩展名 `Default`；写法互换不算变），已有部件的类型被换、新增 `ppt/media/` 部件类型不是 image/audio/video，均阻断；(2) 被点名页的非 image/chart/hyperlink/oleObject 关系（版式、备注、批注等）按类型计数须一致；(3) 未点名页的 slide 与 rels、其余部件按规范化指纹逐一一致；(4) 整包 OPC 完整性（`model.package_integrity`：CRC、重名、缺内容类型、Override 指向不存在的部件、关系悬空）。合法变化只有：被点名页与声明改数的图表部件，以及新增 `ppt/media/`、`ppt/embeddings/`。填充与描边的指纹包含主题色（主题名＋明度）与渐变内容摘要，读不出时记 `fill_unreadable` 而不是跳过。
 
 只改已有对象时写 `edit.json`，在原文件上做声明的改动，输出新文件，原稿不动。
 
@@ -227,6 +233,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 `sha256` 用于确认“这份文件是不是我验的那一份”，不是复现凭据。
 
 ## 能力边界
+
+- 判断记录字段（`brief.*`、`audience`、`goal`、`core_claim`、页 `focus` `composition_rationale` `open_questions`、`brief.motif`、`brief.art.*`）由 schema 校验必填与形状，脚本不对其内容做语义判断——它们是写给人与下一轮 AI 的决策记录，不是机器可证明的字段。
 
 | 能力 | 级别 | 说明 |
 | --- | --- | --- |

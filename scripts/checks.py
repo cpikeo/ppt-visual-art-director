@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-from model import LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
 def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
@@ -110,16 +110,8 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
             elif kind == "legend":
                 check_legend(plan, page, el, eloc, rep)
 
-        # 环图的直标只有数值：类别要靠图例。手绘色块无法与扇区核对，优先用 legend 元素。
         elems = all_elements(page)
         has_legend_el = any(e.get("type") == "legend" for e in elems)
-        for item in elems:
-            spec = item.get("chart") or {}
-            if (item.get("type") == "chart" and spec.get("kind") == "donut"
-                    and not spec.get("legend") and not has_legend_el):
-                rep.soft("W-CHART", f"{pid}/{item.get('id')}",
-                         "环图既无原生图例也无 legend 元素：类别只能靠手绘色块，颜色与扇区无法核对；"
-                         "改用 legend 元素，或开原生图例")
         # 手绘图例色块的识别：小方块 + 右侧标签 + 颜色不在本页任何图表的颜色映射里。
         # 出现即提示——手绘色块没有数据对应关系，是"扇区与图例错色"的高发形态。
         charts_here = [e for e in elems if e.get("type") == "chart" and e["chart"].get("kind") != "table"]
@@ -347,7 +339,7 @@ def check_legend(plan: Dict[str, Any], page: Dict[str, Any], el: Dict[str, Any],
     if spec.get("kind") == "table":
         rep.hard("E-CHART", loc, "表格没有图例；用表头与细线分组表达结构")
         return
-    if spec.get("legend") is True:
+    if chart_flags(spec)["legend"]:
         rep.soft("W-CHART", loc, f"{ref} 已开原生图例，再放自定义图例会重复表达同一批类别")
     items = chart_items(spec)
     if spec.get("kind") in ("pie", "donut") and not items:
@@ -419,8 +411,12 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
             for s in series:
                 if any(v < 0 for v in s["values"]):
                     rep.hard("E-CHART", loc, "饼/环不能有负值")
-            if not chart.get("data_labels") and chart.get("legend") is False:
-                rep.hard("E-CHART", loc, "饼/环既没有直标也没有图例：读者不知道每一块是什么")
+            # 读数闭环用有效开关（model.chart_flags）判断，与编译器、核验器同一份缺省；
+            # legend 元素（for_chart 指向本图）同样算类别来源。
+            has_legend_el = any(e.get("type") == "legend" and str(e.get("for_chart")) == str(el.get("id"))
+                                for e in all_elements(page))
+            for severity, message in chart_readout_problems(chart, has_legend_el):
+                (rep.hard if severity == "HARD" else rep.soft)("E-CHART" if severity == "HARD" else "W-CHART", loc, message)
 
     # 单位与期间：不一致就不能共轴。口径不同也不能，必须统一措辞或拆图。
     units = {str(s["unit"]).strip() for s in series if s.get("unit")}
@@ -462,7 +458,7 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
                     bad.append(f"{data['categories'][j]}={total:g}")
             if bad:
                 message = f"百分比堆叠要求每列合计 100，实际 {bad}；图形会归一化而直标仍是原值"
-                if chart.get("data_labels"):
+                if chart_flags(chart)["data_labels"]:
                     rep.hard("E-CHART", loc, message)
                 else:
                     rep.soft("W-CHART", loc, message)
@@ -504,15 +500,15 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
     if len(base) < len(items) and kind not in ("pie", "donut", "table"):
         rep.soft("W-CHART", loc, f"palette 只有 {len(base)} 色，需要 {len(items)}；将循环取色")
     # 灰度自检：系列只靠颜色区分时，转成灰度后明度要拉得开（投影与黑白打印都会丢掉色相）。
+    # 全部系列两两比较：相邻拉开不代表隔一个的两条线分得清。
     if kind not in ("pie", "donut", "table") and len(series) >= 2:
-        floor = LIMITS["chart"].get("min_series_luminance_ratio", 1.4)
-        shades = colors
-        for i in range(len(shades) - 1):
-            if contrast_ratio(shades[i], shades[i + 1]) < floor:
-                rep.soft("W-GRAY", loc, f"系列 {i + 1} 与 {i + 2} 的颜色转灰度后明度几乎相同（{shades[i]} / {shades[i + 1]}）："
-                                        "拉开明度，或换成直接标注系列名、不同线型与标记，不要只靠色相")
-                break
-    if chart.get("axis_labels") is False and not chart.get("data_labels"):
+        pairs = gray_conflicts(colors)
+        if pairs:
+            shown = "；".join(f"「{items[i]}」{colors[i]} 与「{items[j]}」{colors[j]}（ΔL* {d:.1f}）" for i, j, d in pairs[:3])
+            more = f"，另有 {len(pairs) - 3} 对" if len(pairs) > 3 else ""
+            rep.soft("W-GRAY", loc, f"{len(pairs)} 对系列转灰度后明度差 < {LIMITS['chart']['min_series_delta_lstar']}：{shown}{more}。"
+                                    "拉开明度，或改为直接标注系列名、不同线型与标记，不要只靠色相")
+    if chart.get("axis_labels") is False and not chart_flags(chart)["data_labels"]:
         rep.hard("E-CHART", loc, "axis_labels=false 时必须 data_labels=true，否则无读数")
     hi = chart.get("highlight_category")
     # 承载面：轴、图例、直标的墨色与系列色都相对它取，不是相对页面底色。
@@ -533,10 +529,10 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
         elif ratio < floor_kind:
             rep.soft("W-CHART", loc, f"「{name}」色 {color} 对承载面 {surface} 仅 {ratio:.2f}:1"
                                      f"（{kind} 建议 ≥ {floor_kind}）：这一项在投影上会发虚")
-    if hi is not None and chart.get("legend") is True:
+    if hi is not None and chart_flags(chart)["legend"]:
         rep.hard("E-CHART", loc, "highlight_category 的图不能开原生图例：图例色块是系列色，而退隐的柱是灰，两边对不上；"
                                  "强调靠直标或图题说清")
-    if kind == "area" and not stacked and len(series) > 1 and chart.get("data_labels"):
+    if kind == "area" and not stacked and len(series) > 1 and chart_flags(chart)["data_labels"]:
         rep.hard("E-CHART", loc, "多系列非堆叠面积相互遮挡，直标落在哪块面上无法保证；改折线、改堆叠，或去掉直标")
     if hi is not None:
         if kind != "bar" or len(series) != 1:
