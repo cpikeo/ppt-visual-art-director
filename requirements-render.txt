@@ -5,4 +5,3 @@
 # 若你的合规要求不接受 AGPL，请不要安装。
 -r requirements.txt
 pymupdf>=1.24
-numpy>=1.24

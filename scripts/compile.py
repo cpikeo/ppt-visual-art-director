@@ -71,10 +71,7 @@ def add_text(slide, plan, page, el, top_level=True):
     for idx, (seg, pieces) in enumerate(paragraphs):
         para = tf.paragraphs[0] if idx == 0 else tf.add_paragraph()
         para.alignment = align
-        # 固定磅值行距：字号 × em 行距。倍数行距乘的是字体自带行高（Noto 1.45 em、宋体 1.15 em），
-        # 同一个 1.2 在不同字体里差出 0.3 em，且 PowerPoint 与 LibreOffice 的取法也不同。
-        base_pt = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
-        para.line_spacing = Pt(round(base_pt * st["line_spacing"], 1))
+        para.line_spacing = st["line_spacing"]
         if el.get("space_after_pt"):
             para.space_after = Pt(float(el["space_after_pt"]))
         for piece in pieces:
@@ -277,33 +274,6 @@ def _set_theme_fonts(prs, plan: Dict[str, Any]) -> None:
     theme_part._blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
-def _set_theme_colors(prs, plan: Dict[str, Any]) -> None:
-    """主题色 = plan 色彩系统：accent1–6 取 palette，dk1/dk2 取墨色，lt2 取首页底色。
-    不写的话，用户在 PowerPoint 里新插入的形状、图表、SmartArt 会落回 Office 默认蓝橙。"""
-    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
-    from model import deck_palette, page_bg
-    theme_part = prs.slide_master.part.part_related_by(RT.THEME)
-    root = etree.fromstring(theme_part.blob)
-    ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
-    scheme = root.find(".//a:clrScheme", ns)
-    if scheme is None:
-        return
-    pal = deck_palette(plan)
-    ink = LIMITS["defaults"]["ink"]
-    bg = page_bg(plan["pages"][0]) if plan.get("pages") else LIMITS["defaults"]["background"]
-    mapping = {"dk2": ink, "lt2": bg}
-    for i in range(6):
-        mapping[f"accent{i + 1}"] = pal[i % len(pal)]
-    for name, color in mapping.items():
-        node = scheme.find(f"a:{name}", ns)
-        if node is None:
-            continue
-        for child in list(node):
-            node.remove(child)
-        etree.SubElement(node, "{%s}srgbClr" % ns["a"]).set("val", str(color).lstrip("#").upper())
-    theme_part._blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
-
-
 def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     from pptx import Presentation
     from pptx.util import Inches
@@ -316,7 +286,6 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     prs.slide_height = Inches(h)
     _fit_master_to_canvas(prs, old_w)
     _set_theme_fonts(prs, plan)
-    _set_theme_colors(prs, plan)
     # “Title Only” 版式提供标题占位符；没有 title 元素的页会删掉空占位符，不留“单击添加标题”。
     layout = next((l for l in prs.slide_layouts if l.name == "Title Only"), prs.slide_layouts[5])
 

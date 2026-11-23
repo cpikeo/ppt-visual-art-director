@@ -2,6 +2,21 @@
 
 字段形状以 `scripts/plan.schema.json` 为准，技术阈值以 `scripts/limits.json` 为准。本文只讲 schema 表达不了的语义、坑与命令。
 
+## 必填与枚举速查（写 plan 之前先对一遍）
+
+schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读不到、但一次写错就整份被拒**：
+
+| 位置 | 必填 | 类型／枚举的坑 |
+| --- | --- | --- |
+| 根 | `deck_id` `title` `audience` `goal` `core_claim` `brief` `pages` | `aspect_ratio` 只有 `16:9`／`4:3` |
+| `brief` | `insight` `concept` `veto` | `veto` 与 `motif` 都是**数组**（`motif` 写成字符串会被拒）；`art` 要填就五个键 `light` `lens` `material` `gamut` `grain` 齐填 |
+| `page` | `id` `role` `focus` `elements` | `role` 只有六个值：`open` `build` `breathe` `turn` `hold` `close`（叙事动作，不是自定义标签；页面职责写进 `composition_rationale`）；`evidence` 是**字符串数组**；`rhythm` 条数要等于页数 |
+| `page_numbers.hide` | — | 是**页 id 的字符串数组**，不是页码数字 |
+| `element` | `id` `type` | `additionalProperties: false`：拼错的键直接被拒；`x y w h` 除 `path`／`group` 外都要写 |
+| `chart` | `kind` `data` | `table` 的数据是 `data: {headers, rows}`，不是 `series`；`scatter` 用 `series[].points = [[x,y],…]` |
+
+六种 `role` 的重量分配见 `design.md` 五（节奏）；写不出对应叙事动作，说明页序还没定。
+
 ## 坐标与元素
 
 - `x y w h` 为英寸，原点左上，y 向下；`font_size` 为 pt。16:9 = 13.333 × 7.5；4:3 = 10 × 7.5。
@@ -14,16 +29,16 @@
 
 - `content` 用 `\n` 分段。同一行内换字重、字号、颜色或字族用 `runs`；`runs` 拼接必须与 `content` 逐字相等。不要把一个句子拆成两个框。
 - 文本自带内边距（左右 0.05、上下 0.03 in）。要贴住网格轴线（大标题、数字）写 `pad_in: 0`。
-- 默认：`title` 40pt 粗、`number` 72pt 粗、`body` `text` 20pt、`caption` `footer` 13pt（样稿用 14）。**`line_spacing` 是 em 行距**（字号的倍数），编译为固定磅值 `a:spcPts`：标题 1.2、数字 1.0、正文 1.5、注释 1.4；同一份 plan 换字体行距不变。`revise.py` 的 `line_spacing` 仍是 PowerPoint 倍数语义（改既有稿时沿用原稿的行距体系）。深底（亮度 < 0.18）未声明颜色时用浅墨。
+- 默认：`title` 40pt 粗、`number` 72pt 粗、`body` `text` 20pt、`caption` `footer` 13pt；行距 1.12（标题、数字）、1.32（正文）、1.25（注释）。深底（亮度 < 0.18）未声明颜色时用浅墨。
 - 字族三分：`fonts.heading`、`fonts.body`（正文、图表、页码）、`fonts.number`（缺省同 heading）。
 - `rotation` 对所有对象生效，按 360 取模。
 - 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
-- `W-FIT`：行数按实测字宽折算（数字 0.59 em、`%` 0.96 em、全角 1 em，宽度再乘 0.96 的安全系数），高度 = 行数 × 字号 × em 行距 ÷ 72（+ 段后距）。不再依赖字体自带行高表。
+- `W-FIT` 的行高按字体取值（`limits.json` 的 `type.line_pitch_em.by_font`）：Noto/思源 CJK 1.448、雅黑 1.32、宋体/黑体 1.15，未知字体 1.25。用别的字体且估不准，在 `by_font` 里补一行。
 - 图表与表格内的字号由 `limits.json` 统一给出（表 16、图内标注/轴/图例 14）；要改，改阈值，不逐图改。
 
 ## 叠放、形状、路径、组
 
-- **叠放顺序就是声明顺序**，先写的在下。完整落在 `shape`/`divider` 内的文字、图、形状按“放在面板上”处理，不查重叠。承载层（底图、蒙版、色块、做底的巨型数字或标题）要有东西压在上面，在自己身上声明 `overlap_allowed: true`；`number` 与 `title` 可以做承载层，`body`、`caption`、`footer` 与图表不能自我豁免。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
+- **叠放顺序就是声明顺序**，先写的在下。承载层（底图、蒙版、色块、做底的巨型数字或标题）要有东西压在上面，在自己身上声明 `overlap_allowed: true`；`number` 与 `title` 可以做承载层，`body`、`caption`、`footer` 与图表不能自我豁免。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
 - `shape_kind`：`rect` `round_rect` `oval` `triangle` `diamond` `chevron` `arrow_right` `arrow_up`。`corner_in` 仅用于圆角矩形（半径，英寸）。`fill_alpha` 低于 0.15 基本不可见。
 - `gradient`：`{from, to, angle, from_alpha?, to_alpha?}`，`angle` 0 为左到右、90 为上到下；末端透明度应接近 0。`stroke`：`{color, width_pt, dash, cap}`。
 - 路径顶点为坐标 `[x, y]` 或锚点 `{"el": "n1", "anchor": "right", "at": 0.5}`。两点为直线，三点以上为折线；`closed: true` 加 `color` 为填充。锚点在编译期解析，改形状要重编译；旋转组内的锚点会错位，连线应同组或改用坐标。
@@ -87,7 +102,7 @@
 - 列宽 `col_w = (画布宽 − 2×边距 − 沟槽×(列数−1)) ÷ 列数`。默认 16:9、12 列、边距 x 0.7 / y 0.6、沟槽 0.25。第 i 列起点 `x = 边距 + (i−1)×(col_w+沟槽)`；跨 n 列宽 = n×col_w + (n−1)×沟槽。
 - 比例切分：`free = 版心宽 − 沟槽×(栏数−1)`，第 i 栏宽 = `free × 比例ᵢ ÷ Σ比例`。
 - 参考线：三分 `W/3, 2W/3`、`H/3, 2H/3`；黄金位 `0.382W, 0.618W`、`0.382H, 0.618H`。
-- 装载估算：每行字数 ≈ `(w − 2×内边距) ÷ (字号÷72)`，中文一字一 em，西文数字约 0.55 em；高度 ≈ 行数 × 字号 × em 行距 ÷ 72。估不准以渲染为准。
+- 装载估算：每行字数 ≈ `(w − 2×内边距) ÷ (字号÷72)`，中文一字一 em，西文数字约 0.55 em；高度 ≈ 行数 × 字号 × 1.2 × 行距 ÷ 72。估不准以渲染为准。
 
 ## plan 写作顺序
 
@@ -114,20 +129,14 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 码 | 含义 | 处置 |
 | --- | --- | --- |
 | `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录、简报不一致；生成图作证据 | 补齐记录，或改用真实素材 |
-| `E-OVERLAP` | 实质重叠且不是容器关系（文字/图/形状完整落在 `shape`/`divider` 内不算重叠）；下层未声明承载 | 移开，或在承载层声明 `overlap_allowed` |
+| `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
 | `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明 | 改措辞或拆图，没有放行开关 |
 | `W-GRAY` | 相邻系列颜色转灰度后明度比低于 `chart.min_series_luminance_ratio` | 拉开明度，或直标系列名、换线型与标记 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
-| `W-FIT` | 装载估算溢出（行数按实测字宽折算；`%` `×` `@` 近全角） | 先改文案，再加框，不压字号 |
-| `W-SPACE` `I-SPACE` | 整稿中西文间距写法混用（`W`）；或统一使用手敲空格（`I`） | 整稿选一种；无空格写法在 PowerPoint 里更紧，目标机复核 |
-| `W-MARGIN` | 文字墨迹离画布边小于 0.5 in（竖向 0.4 in）；声明 `overlap_allowed` 的出血层不算 | 收进版心，或声明出血 |
-| `W-AXIS` | 单页文字左缘超过 5 条对齐轴 | 回到网格，合并对齐 |
-| `W-DOMINANCE` | 无大图/表时，最大字号与次大字号之比 < 1.25 | 建立主角：尺度、明度或位置至少一项压过其余 |
-| `W-SCALE` `W-FONTS` | 字号超过 6 档、相邻档比 < 1.15、页标题字号超过 2 种；字族超过 2 个 | 收敛成系统，用字重与墨阶分层 |
-| `W-MEASURE` `W-DENSITY` | 正文一行超过 32 字；单页正文与标题超过约 160 字 | 收窄栏宽、分栏、删到论断＋证据或拆页 |
-| `R-EMPTY` `R-CROWD` `R-EDGE` `R-BALANCE` `R-TONE` | 渲染图度量：墨量过低/过高、内容贴页边、重心偏离且无理由、全稿明度无起伏 | 看对应页 PNG 与 `contact_sheet_gray.png` |
-| `V-XML` | 关键 OOXML 容器子元素次序违例（PowerPoint 可能提示“需要修复”） | 修写入顺序，重编译；不要手改成品 |
+| `W-FIT` | 装载估算溢出（行数按字宽折算；`%` `×` `@` 按近全角宽度计；高度按“首行可见高度＋后续行距推进”估，12.0.0 起按渲染实测校准） | 先改文案，再加框，不压字号 |
+| `W-SPACE` | 中文与数字/西文之间手敲了**多于一个**的空格、不断行空格或全角空格 | 删掉，依赖字体原生字距 |
+| `I-SPACE` | 中西文之间只有**一个**普通空格：通行的中文排法，LibreOffice 会叠加自动间距显松、PowerPoint 里正常 | 是风格取舍不是缺陷；全稿统一取一种并写进交付说明 |
 | `V-BLEED` | 文字落在声明为出血的元素里，被页边裁掉 | 确认被裁部分不含信息；没声明出血的文字出页仍是 `V-CLIP` 阻断 |
 | `W-CONTRAST` `V-CONTRAST` | 对比不足；文字压图时是对真实像素的量测（达标像素占比低于 `limits.json` 的 `image.zone.min_ok_share`） | 换墨色或落点、改 `crop_focus`、重做简报；不靠浓遮罩 |
 | `W-BUSY` | 图上文字对比够，但下方纹理过强（灰度标准差超限） | 换落字区或重做简报 |
@@ -136,6 +145,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `W-RUNS` | 原有混排被统一 | 用 `runs` 写明分区样式 |
 | `V-TEXT-RENDER` | 元素的字未落在自己框内渲染 | 查归属，不因别处有同样的字放行 |
 | `V-FONT` | 声明字体未参与渲染 | 状态降为 PARTIAL，目标机复核 |
+| `W-FONT-FACE` `I-FONT-FACE` | 家族匹配上了，**地区字面**没匹配：声明简体而 PDF 取到日文字面（Noto/思源 CJK 的 `.ttc` 由 LibreOffice 按集合首个字面导出） | 不改状态但必须写进交付说明；直/骨/门/者一类共享码位的字形按别的地区字面渲染，简体字形要人在 PowerPoint 里复核 |
 | `V-NOTES` `V-ALT` | 成品里的备注／替代文字与 plan 不一致 | 重新编译；不要手改成品 |
 
 ## 定点编辑：改既有稿
@@ -187,6 +197,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 画布 16:9、4:3 | 完整 | 其他比例需同时改 `limits.json` 与 schema，未测 |
 | 文本、形状、折线路径、组、图片裁切 | 完整 | 对象核对覆盖几何、旋转、逐 run 样式、字节 |
 | 原生图表：柱、条、堆叠、百分比堆叠、组合、线、面积、饼、环、散点；原生表格 | 完整 | 无双数值轴、瀑布、桑基、甘特、气泡、雷达、趋势线 |
+| 按数据点着色（柱/条/折线里只把一条标成强调色） | 不支持 | 着色按系列取色，只有饼/环按类别取色；强调单条只能靠数据直标、右侧旁注或拆成两张图 |
 | 演讲者备注、替代文字、页码、页标题 | 完整 | 页标题是原生标题占位符；阅读顺序仍按声明顺序，未做逐页阅读顺序审查 |
 | 既有稿定点编辑 | 完整（限白名单操作） | 不新增页、不改页序、不改系列数、不动母版与版式 |
 | 渐变、`duotone` | 有限 | PowerPoint 生效；LibreOffice 只做去饱和或近似 |
@@ -196,9 +207,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 渲染核验 | 外部依赖 | LibreOffice + PyMuPDF（`requirements-render.txt`，可选）；缺失给 `PARTIAL`。Noto CJK 的 `.ttc` 在 PDF 里只能按家族匹配，分不出 SC 与 JP 字面 |
 | PowerPoint 实机验证 | 外部依赖 | 本包从未做过；结论由人在真实 PowerPoint 中签收，未做即 `NOT VERIFIED` |
 | 字体 | 外部依赖 | 只写字体名，不嵌入；目标机缺失会被静默替换。主题字体（拉丁与东亚）取 `fonts`，新建 run 带 `lang`（含中文为 zh-CN） |
-| 母版、版式与主题 | 有限 | 4:3 占位符几何按画布宽度横向缩放；主题字体取 `fonts`，主题色 accent1–6 取 `palette`、dk2/lt2 取墨色与首页底色；只有一套母版，不做自定义版式库 |
-| OOXML 结构体检 | 完整（限列出的容器） | `rPr` `ln` `spPr` `pPr` `bodyPr` `gradFill` 与图表 `ser` `dLbls` `valAx` `catAx` 的子元素次序；不是完整 XSD 校验，通过不等于 PowerPoint 一定无提示 |
-| 版面度量 | 有限 | 墨量、留白、重心、贴边与灰度总览，依赖 LibreOffice 渲染与 numpy；是“该看哪里”的提示，不是美学分数 |
+| 母版与版式 | 有限 | 默认模板的 4:3 占位符几何按画布宽度横向缩放；只有一套母版，不做自定义版式库 |
 | 动画、切换、嵌入字体、新建 SmartArt、宏 | 不支持 | `.pptm` 一律拒绝 |
 
 ## 模块与依赖
@@ -208,10 +217,12 @@ model.py    共用：诊断、plan 载入、度量、颜色、几何、成品包
 ooxml.py    低层写入：填充、渐变、描边、圆角、duotone、run 属性        ← model
 charts.py   原生图表与表格                                           ← model, ooxml
 checks.py   plan 校验与整稿模式信号                                   ← model
-compile.py  元素构建、主题、build、CLI                                ← model, checks, ooxml, charts
+compile.py  元素构建、build、CLI                                      ← model, checks, ooxml, charts
 verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       ← model, checks, charts
-revise.py   inspect 与定点编辑 + 保留核对                              ← model, ooxml
-audit.py    plan 层设计信号、渲染版面度量、OOXML 次序体检              ← model（checks 与 verify 调用）
+revise.py    inspect 与定点编辑 + 保留核对                              ← model, ooxml
+
+tests/test_regressions.py  反向构造回归（装载模型、空格分级、字面核验）
+                            python scripts/tests/test_regressions.py
 ```
 
 `limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
