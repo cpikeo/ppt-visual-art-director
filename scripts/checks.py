@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-from model import backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
 def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
@@ -106,7 +106,40 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
             elif kind == "path":
                 check_path(page, el, eloc, boxes, rep)
             elif kind == "chart":
-                check_chart(eloc, el, palette, rep)
+                check_chart(eloc, el, plan, rep)
+            elif kind == "legend":
+                check_legend(plan, page, el, eloc, rep)
+
+        # 环图的直标只有数值：类别要靠图例。手绘色块无法与扇区核对，优先用 legend 元素。
+        elems = all_elements(page)
+        has_legend_el = any(e.get("type") == "legend" for e in elems)
+        for item in elems:
+            spec = item.get("chart") or {}
+            if (item.get("type") == "chart" and spec.get("kind") == "donut"
+                    and not spec.get("legend") and not has_legend_el):
+                rep.soft("W-CHART", f"{pid}/{item.get('id')}",
+                         "环图既无原生图例也无 legend 元素：类别只能靠手绘色块，颜色与扇区无法核对；"
+                         "改用 legend 元素，或开原生图例")
+        # 手绘图例色块的识别：小方块 + 右侧标签 + 颜色不在本页任何图表的颜色映射里。
+        # 出现即提示——手绘色块没有数据对应关系，是"扇区与图例错色"的高发形态。
+        charts_here = [e for e in elems if e.get("type") == "chart" and e["chart"].get("kind") != "table"]
+        if charts_here and not has_legend_el:
+            mapped = {c for ch in charts_here for c in chart_color_map(plan, ch["chart"])}
+            texts = [e for e in elems if e.get("type") in TEXT_TYPES and e.get("id")]
+            for e in elems:
+                if e.get("type") != "shape" or not e.get("color"):
+                    continue
+                b = boxes.get(str(e.get("id")))
+                if b is None or b[2] > 0.6 or b[3] > 0.6 or abs(b[2] - b[3]) > 0.25:
+                    continue
+                color = str(e["color"]).upper()
+                if color in mapped:
+                    continue
+                if not any(abs(t["x"] - (b[0] + b[2])) <= 0.6 and abs(t["y"] - b[1]) <= 0.35 for t in texts):
+                    continue
+                rep.soft("W-CHART", f"{pid}/{e.get('id')}",
+                         f"疑似手绘图例色块 {color}，不在本页图表的颜色映射内：与扇区/系列无法核对；"
+                         f"改用 legend 元素（色块由同一份映射生成），或给图表写 color_map")
 
         if pid not in pn_cfg["hide"]:
             box = pn_box(plan, page)
@@ -259,8 +292,15 @@ def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
         rep.hard("E-REF", loc, f"image_id 未在 assets 登记：{image_id}")
     else:
         check_asset(loc, image_id, asset, asset_root, rep)
-    if el.get("image_role") == "evidence" and asset is not None and asset.get("generation") is not None:
-        rep.hard("E-ASSET", loc, f"{image_id} 是生成图，image_role 不能是 evidence；证据只能是真实素材")
+    # 信息职责（info_duty）与资产角色（image_role）是两个维度：只有"证据"这一职责带来源约束。
+    duty = el.get("info_duty") or ("evidence" if el.get("image_role") == "evidence" else None)
+    if duty == "evidence" and asset is not None and asset.get("generation") is not None:
+        rep.hard("E-ASSET", loc, f"{image_id} 是生成图，信息职责不能是 evidence；证据只能是真实素材")
+    elif duty is None:
+        rep.soft("W-ASSET", loc, "未声明信息职责 info_duty：这张图承担什么信息、删掉损失什么？"
+                                "（evidence/structure/identity/atmosphere/mood/material/none）")
+    elif duty == "none":
+        rep.soft("W-ASSET", loc, "info_duty: none = 纯装饰：确认删掉它不损失信息，或改写 asset_reason 说明它留下的理由")
     path = resolve_asset(asset_root, image_id)
     if path is None:
         rep.hard("E-IMG", loc, f"素材文件不存在或不在素材根内：{asset_root / image_id}")
@@ -296,9 +336,33 @@ def check_path(page: Dict[str, Any], el, loc, boxes, rep: Report) -> None:
                      f"锚点指向旋转组 {sorted(stray)} 内的 {target_id}：锚点按未旋转几何解析，"
                      f"连线会错位；把连线放进同一个组，或改用显式坐标")
 
-def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -> None:
+def check_legend(plan: Dict[str, Any], page: Dict[str, Any], el: Dict[str, Any], loc: str, rep: Report) -> None:
+    """自定义图例：条目来自被引用图表的颜色映射，这里只查引用与装载，不查配色（配色由映射保证）。"""
+    ref = str(el.get("for_chart") or "")
+    target = next((e for e in page.get("elements") or [] if str(e.get("id")) == ref), None)
+    if target is None or target.get("type") != "chart":
+        rep.hard("E-REF", loc, f"for_chart「{ref}」不是本页顶层的 chart 元素")
+        return
+    spec = target["chart"]
+    if spec.get("kind") == "table":
+        rep.hard("E-CHART", loc, "表格没有图例；用表头与细线分组表达结构")
+        return
+    if spec.get("legend") is True:
+        rep.soft("W-CHART", loc, f"{ref} 已开原生图例，再放自定义图例会重复表达同一批类别")
+    items = chart_items(spec)
+    if spec.get("kind") in ("pie", "donut") and not items:
+        rep.hard("E-CHART", loc, "被引用的饼/环没有类别，图例无从生成")
+    box = explicit_box(el)
+    if box and items:
+        vertical = str(el.get("direction") or "vertical") != "horizontal"
+        pitch = (box[3] / len(items)) if vertical else (box[2] / len(items))
+        need = (float(el.get("font_size") or 18) * 1.45 + 4) / 72.0
+        if pitch < need:
+            rep.soft("W-FIT", loc, f"图例每{'行' if vertical else '列'} {pitch:.2f} in < 文字所需 {need:.2f} in"
+                                  f"（{len(items)} 条）：加高/加宽图例框，或减少条目")
+
+def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], rep: Report) -> None:
     chart = el["chart"]
-    palette = [c.upper() for c in chart.get("palette") or []] or palette
     kind = chart["kind"]
     data = chart["data"]
     if kind == "table":
@@ -408,13 +472,28 @@ def check_chart(loc: str, el: Dict[str, Any], palette: List[str], rep: Report) -
         if not chart.get("combo_line_labels"):
             rep.soft("W-CHART", loc, "折线层没有直标：折线的量只能对着柱的轴目测；要读数就开 combo_line_labels")
 
-    need = len(data.get("categories") or []) if kind in ("pie", "donut") else len(series)
-    if len(palette) < need:
-        rep.soft("W-CHART", loc, f"palette 只有 {len(palette)} 色，需要 {need}；将循环取色")
+    # 颜色映射：与编译器、核验器、自定义图例读同一份 model.chart_color_map。
+    items = chart_items(chart)
+    colors = chart_color_map(plan, chart)
+    base = chart_palette(plan, chart)
+    unknown = [k for k in (chart.get("color_map") or {}) if k not in items]
+    if unknown:
+        rep.hard("E-CHART", loc, f"color_map 里有对不上的{'类别' if kind in ('pie', 'donut') else '系列'} {unknown}："
+                                 f"指派会静默失效、颜色退回序列取色，这正是扇区与图例错色的根因")
+    if kind in ("pie", "donut"):
+        seen: Dict[str, str] = {}
+        for name, color in zip(items, colors):
+            first = seen.setdefault(color, name)
+            if first != name:
+                rep.hard("E-CHART", loc, f"「{first}」与「{name}」分到同色 {color}：扇区同色即数据失真，"
+                                         f"补足 palette/color_map，或合并类别")
+                break
+    if len(base) < len(items) and kind not in ("pie", "donut", "table"):
+        rep.soft("W-CHART", loc, f"palette 只有 {len(base)} 色，需要 {len(items)}；将循环取色")
     # 灰度自检：系列只靠颜色区分时，转成灰度后明度要拉得开（投影与黑白打印都会丢掉色相）。
     if kind not in ("pie", "donut", "table") and len(series) >= 2:
         floor = LIMITS["chart"].get("min_series_luminance_ratio", 1.4)
-        shades = [palette[i % len(palette)] for i in range(len(series))] if palette else []
+        shades = colors
         for i in range(len(shades) - 1):
             if contrast_ratio(shades[i], shades[i + 1]) < floor:
                 rep.soft("W-GRAY", loc, f"系列 {i + 1} 与 {i + 2} 的颜色转灰度后明度几乎相同（{shades[i]} / {shades[i + 1]}）："

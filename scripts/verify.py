@@ -129,6 +129,8 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: M.Repo
                 verify_image(plan, el, shape, name, facts, asset_root, f)
             elif kind == "chart":
                 verify_chart(plan, page, el, shape, name, f)
+            elif kind == "legend":
+                verify_legend(plan, page, el, shape, name, f)
             elif kind == "group":
                 kids = book["order"].get(name, [])
                 want_kids = [f"{pid}.{c['id']}" for c in el["elements"]]
@@ -649,14 +651,59 @@ def _ser_name(ser) -> str:
     return node.text if node is not None and node.text else ""
 
 
+def verify_legend(plan, page, el, shape, name: str, f: M.Report) -> None:
+    """自定义图例逐块核对：色块必须等于颜色映射，标签必须等于类别/系列名。
+
+    这是"环形图与图例颜色不匹配"的收口检查：手绘色块一旦与扇区取色脱节，这里直接阻断。
+    """
+    if getattr(shape, "shapes", None) is None:
+        f.add("HARD", "V-OBJ", name, "图例不是组合对象")
+        return
+    ref = str(el.get("for_chart") or "")
+    target = next((e for e in (page.get("elements") or []) if str(e.get("id")) == ref), None)
+    if target is None or target.get("type") != "chart":
+        f.add("HARD", "V-OBJ", name, f"for_chart「{ref}」在本页找不到 chart 元素")
+        return
+    spec = target["chart"]
+    items = M.chart_items(spec)
+    colors = M.chart_color_map(plan, spec)
+    values = list(((spec.get("data") or {}).get("series") or [{}])[0].get("values") or [])
+    show_value = bool(el.get("show_value")) and spec.get("kind") in ("pie", "donut")
+    kids = {c.name: c for c in shape.shapes}
+    for i, (item, color) in enumerate(zip(items, colors)):
+        sw = kids.get(f"{name}#sw{i}")
+        if sw is None:
+            f.add("HARD", "V-OBJ", name, f"缺少第 {i + 1} 个色块「{item}」")
+            continue
+        try:
+            got = f"#{sw.fill.fore_color.rgb}".upper()
+        except (AttributeError, TypeError, ValueError):
+            got = None
+        if got != color.upper():
+            f.add("HARD", "V-CHART", name, f"色块「{item}」{got} ≠ 颜色映射 {color.upper()}：图例与图形错色")
+        tx = kids.get(f"{name}#tx{i}")
+        if tx is None:
+            f.add("HARD", "V-OBJ", name, f"缺少第 {i + 1} 个标签「{item}」")
+            continue
+        want = H._legend_label(spec, str(item), values, i, show_value)
+        got_text = tx.text_frame.text
+        if _norm_key(got_text) != _norm_key(want):
+            f.add("HARD", "V-TEXT", name, f"图例标签「{got_text}」≠「{want}」")
+    expected = {f"{name}#sw{i}" for i in range(len(items))} | {f"{name}#tx{i}" for i in range(len(items))}
+    extra = sorted(n for n in kids if n not in expected)
+    if extra:
+        f.add("SOFT", "V-OBJ", name, f"图例里有计划外的成员 {extra}：多出来的色块没有数据对应")
+
+
 def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
     """着色、柱宽、轴开关与轴名：这些决定读者能不能读出数，且全部来自 plan。"""
 
     spec = el["chart"]
     kind = spec["kind"]
     obj = shape.chart
-    palette = M.chart_palette(plan, spec)
-    order = {str(s["name"]): i for i, s in enumerate(spec["data"]["series"])}
+    # 与 compile 同一份映射：颜色对不上就是 HARD，不给"两边一起错"留通道。
+    palette = M.chart_color_map(plan, spec)
+    order = {name: i for i, name in enumerate(M.chart_items(spec))}
 
     if kind in ("pie", "donut"):
         cats = spec["data"]["categories"]
@@ -665,8 +712,8 @@ def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
             f.add("HARD", "V-CHART", name, f"逐点着色 {len(points)} 个 ≠ 类别 {len(cats)} 个")
         for j, dpt in enumerate(points[: len(cats)]):
             srgb = dpt.find(".//" + qn("a:srgbClr"))
-            want = palette[j % len(palette)]
-            if srgb is None or f"#{srgb.get('val').upper()}" != want:
+            want = palette[j] if j < len(palette) else None
+            if want is None or srgb is None or f"#{srgb.get('val').upper()}" != want:
                 f.add("HARD", "V-CHART", name, f"第 {j + 1} 个扇区颜色 ≠ 调色板 {want}")
     elif kind != "scatter":
         for ser in obj._chartSpace.iter(qn("c:ser")):
@@ -677,8 +724,8 @@ def verify_chart_style(plan, el, shape, name, f: M.Report) -> None:
             srgb = spPr.find(".//" + qn("a:srgbClr")) if spPr is not None else None
             if srgb is None:
                 continue
-            want = palette[order[sname] % len(palette)]
-            if f"#{srgb.get('val').upper()}" != want:
+            want = palette[order[sname]] if order[sname] < len(palette) else None
+            if want is None or f"#{srgb.get('val').upper()}" != want:
                 f.add("HARD", "V-CHART", name, f"系列「{sname}」颜色 #{srgb.get('val')} ≠ 调色板 {want}")
 
     hi = spec.get("highlight_category")
@@ -948,7 +995,7 @@ def _declared_families(plan, page) -> set:
             for run in el.get("runs") or []:
                 if run.get("font"):
                     families.add(str(run["font"]))
-        elif el.get("type") == "chart":
+        elif el.get("type") in ("chart", "legend"):
             families.add(el.get("font") or (plan.get("fonts") or {}).get("body") or M.LIMITS["defaults"]["fonts"]["body"])
     if page["id"] not in M.page_numbers(plan)["hide"]:
         families.add((plan.get("fonts") or {}).get("body") or M.LIMITS["defaults"]["fonts"]["body"])
@@ -1011,7 +1058,7 @@ def _inside(box: Tuple[float, float, float, float], bbox, tol: float) -> bool:
             and box[1] - tol <= cy <= box[1] + box[3] + tol)
 
 
-def expected_text(el: Dict[str, Any]) -> List[str]:
+def expected_text(el: Dict[str, Any], page: Optional[Dict[str, Any]] = None) -> List[str]:
     """成品上应该读到的字，按"块"返回。
 
     文字元素是整段：段内换行由渲染决定，去掉空白后仍是同一串字。
@@ -1021,6 +1068,19 @@ def expected_text(el: Dict[str, Any]) -> List[str]:
     kind = el.get("type")
     if kind in TEXT_TYPES:
         return [str(el.get("content") or "")]
+    if kind == "legend":
+        # 图例文字在组合里：逐条比标签，缺一条就是错色或漏条目。
+        target = None
+        if page is not None:
+            target = next((e for e in page.get("elements") or []
+                           if str(e.get("id")) == str(el.get("for_chart"))), None)
+        if target is None or target.get("type") != "chart":
+            return []
+        spec = target["chart"]
+        values = list(((spec.get("data") or {}).get("series") or [{}])[0].get("values") or [])
+        show_value = bool(el.get("show_value")) and spec.get("kind") in ("pie", "donut")
+        return [H._legend_label(spec, str(item), values, i, show_value)
+                for i, item in enumerate(M.chart_items(spec))]
     chart = el.get("chart") or {}
     if kind != "chart":
         return []
@@ -1029,7 +1089,14 @@ def expected_text(el: Dict[str, Any]) -> List[str]:
     if chart.get("kind") != "table" and chart.get("show_title", True) and chart.get("title"):
         out.append(str(chart["title"]))
     data = chart.get("data") or {}
-    out.extend(str(c) for c in data.get("categories") or [])
+    # 类别只在真的会画出来时才算预期文字：轴关了、环图没图例，类别就不会出现在渲染里，
+    # 一律要求会让核对永远误报（旧版对环图 + 手绘图例报 V-TEXT-RENDER 就是这么来的）。
+    kind_c = chart.get("kind")
+    if kind_c in ("pie", "donut"):
+        if chart.get("legend", False) or (kind_c == "pie" and chart.get("data_labels")):
+            out.extend(str(c) for c in data.get("categories") or [])
+    elif chart.get("axis_labels", True):
+        out.extend(str(c) for c in data.get("categories") or [])
     out.extend(str(v) for v in data.get("headers") or [])
     for row in data.get("rows") or []:
         out.extend(str(v) for v in row)
@@ -1086,7 +1153,7 @@ def _check_render_text(page, lines, boxes, page_key: str, pid: str, f: M.Report)
     checks = 0
     owned = _owners(lines, boxes)
     for el in M.all_elements(page):
-        pieces = [p for p in expected_text(el) if _norm_key(p)]
+        pieces = [p for p in expected_text(el, page) if _norm_key(p)]
         if not pieces:
             continue
         pool = _norm_key("".join(ln["text"] for ln in owned.get(str(el.get("id")), [])))
@@ -1196,7 +1263,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         # 用原框做归属会把它判成"不在任何元素范围内"——那是量错了，不是设计错了。
         boxes: Dict[str, Tuple[float, float, float, float]] = {}
         for el in M.all_elements(spec_page):
-            if el.get("type") in TEXT_TYPES + ("chart",) and "x" in el:
+            if el.get("type") in TEXT_TYPES + ("chart", "legend") and "x" in el:
                 boxes[str(el.get("id"))] = M.rot_box(
                     (float(el["x"]), float(el["y"]), float(el["w"]), float(el["h"])), el.get("rotation"))
         page_w = round(pdf_page.rect.width / 72, 3)

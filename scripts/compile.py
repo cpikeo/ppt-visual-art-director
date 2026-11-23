@@ -27,9 +27,9 @@ from typing import Any, Dict, List, Optional
 
 from lxml import etree
 
-from charts import add_chart
+from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import EMU, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, deck_palette, default_asset_root, explicit_box, load_plan, package_problems, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import EMU, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -209,7 +209,9 @@ def build_element(slide, plan, page, el, boxes, asset_root: Path, top_level: boo
     elif kind == "image":
         obj = add_image(slide, page, el, asset_root)
     elif kind == "chart":
-        obj = add_chart(slide, plan, page, el, deck_palette(plan))
+        obj = add_chart(slide, plan, page, el)
+    elif kind == "legend":
+        obj = add_legend(slide, plan, page, el)
     elif kind == "group":
         children = [build_element(slide, plan, page, child, boxes, asset_root, False) for child in el["elements"]]
         obj = slide.shapes.add_group_shape([c for c in children if c is not None])

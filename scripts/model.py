@@ -237,8 +237,37 @@ def deck_palette(plan: Dict[str, Any]) -> List[str]:
     return [c.upper() for c in (plan.get("palette") or LIMITS["defaults"]["palette"])]
 
 def chart_palette(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
-    """图表取色：图自带 palette 优先，否则用整稿 palette。compile、checks、verify 共用这一处。"""
+    """图表取色序列：图自带 palette 优先，否则用整稿 palette。compile、checks、verify 共用这一处。"""
     return [c.upper() for c in (chart.get("palette") or [])] or deck_palette(plan)
+
+def chart_items(chart: Dict[str, Any]) -> List[str]:
+    """这张图按什么顺序消费颜色：饼/环按**类别**（扇区），其余按**系列**。着色与图例共用这一份顺序。"""
+    kind = chart.get("kind")
+    data = chart.get("data") or {}
+    if kind == "table":
+        return []
+    if kind in ("pie", "donut"):
+        return [str(c) for c in (data.get("categories") or [])]
+    return [str(s.get("name")) for s in (data.get("series") or [])]
+
+def chart_color_map(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
+    """类别/系列 → 颜色的**唯一**映射。编译、校验、核验与自定义图例都读这里，不存在第二份实现。
+
+    优先级（高到低）：
+      1. `chart.color_map`  按名称显式指派：改了类别/系列名就对不上，编译期报 E-CHART；
+      2. `chart.palette`    本图专用序列（整稿强调色只属于某类数据时用它隔离）；
+      3. `plan.palette`     整稿数据色序列，按 chart_items 的顺序循环取用；
+      4. `limits.json` 的 defaults.palette。
+
+    主题强调色（accent1）不参与数据着色：主题只服务使用者在 PowerPoint 里新建的对象，
+    把它注入图表会让"主题色覆盖数据色"这类错色无从追查。
+    """
+    items = chart_items(chart)
+    if not items:
+        return []
+    explicit = {str(k): str(v).upper() for k, v in (chart.get("color_map") or {}).items()}
+    base = chart_palette(plan, chart) or LIMITS["defaults"]["palette"]
+    return [explicit.get(name, base[i % len(base)]) for i, name in enumerate(items)]
 
 def page_numbers(plan: Dict[str, Any]) -> Dict[str, Any]:
     cfg = dict(plan.get("page_numbers") or {})

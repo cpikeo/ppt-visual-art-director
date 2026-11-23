@@ -785,6 +785,12 @@ def apply_chart(shape, op: Dict[str, Any]) -> None:
     existing = [s.name for s in chart.plots[0].series]
     if len(series) != len(existing):
         raise M.BadOp(f"系列数 {len(series)} ≠ 原图 {len(existing)}；加减系列会破坏配色与格式，请重建")
+    # 类别顺序与名称决定颜色↔类别的绑定（扇区按 idx 着色、图例按 idx 取色）。
+    # 只改数值是安全的；改类别会让同一份颜色落到别的类别上，扇区与图例从此对不上。
+    existing_cats = [str(c) for c in chart.plots[0].categories]
+    if [str(c) for c in cats] != existing_cats:
+        raise M.BadOp(f"chart_data 只改数值：类别 {cats} ≠ 原图 {existing_cats}；"
+                      f"改类别顺序或名称会改变颜色↔类别的绑定，扇区与图例将错色，需要改类别请整稿重建")
     for i, s in enumerate(series):
         if len(s.get("values") or []) != len(cats):
             raise M.BadOp(f"系列「{s.get('name')}」值数 {len(s.get('values') or [])} ≠ 类别数 {len(cats)}")

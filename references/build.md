@@ -20,7 +20,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 ## 坐标与元素
 
 - `x y w h` 为英寸，原点左上，y 向下；`font_size` 为 pt。16:9 = 13.333 × 7.5；4:3 = 10 × 7.5。
-- 元素类型：`title` `body` `text` `number` `caption` `footer`（文字），`image` `chart` `shape` `divider` `path` `group`。
+- 元素类型：`title` `body` `text` `number` `caption` `footer`（文字），`image` `chart` `legend` `shape` `divider` `path` `group`。
 - **页标题**：页内第一个顶层 `title` 元素编译为版式（Title Only）的原生标题占位符，位置与样式显式写出，不继承母版；其余 `title`、组内 `title` 与其它文字是普通文本框。页内没有 `title` 时不留空占位符。要让大纲、读屏、幻灯片导航读到页标题，每页写一个 `title`。
 - `path` 与 `group` 不写 `x y w h`（由点集或子元素推出）。元素 `id` 页内唯一；成品对象名为 `<页 id>.<元素 id>`，页码对象为 `_page_number`。
 - 允许出血；文字与图表伸出画布会被裁（编译期提示）；完全在画布外的元素阻断。
@@ -48,7 +48,11 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 素材从素材根解析（`compile` `verify` `revise` 共用同一规则；`--assets` 优先，其次 plan 同级 `assets/`，再次 plan 所在目录）：先按 `image_id` 精确找，再补 `.png` `.jpg` `.jpeg` `.webp`，不做同名不同扩展名的兜底。**结果必须留在素材根内**：绝对路径、含 `..`、经符号链接指向根外的文件一律视为找不到（`E-IMG`）。图片按 `cover` 裁切，`crop_focus` 为裁窗中心。
 
-`image_role`：`background` `texture`（承载层，可声明 `overlap_allowed`）、`hero`（主视觉）、`subject`（人物或产品）、`illustration`、`icon`、`detail`、`evidence`。`evidence` 不能指向生成图（`E-ASSET`）。各角色的艺术指导见 `imagery.md`。
+**三个维度各归各的字段，互不替代**（详见 `imagery.md` 〇）：
+
+- **素材来源**：`assets.<id>.source`、`generated`／`generation`、`rights`、`used_as_evidence`。
+- **资产角色** `image_role`：`background` `texture`（承载层，可声明 `overlap_allowed`）、`hero`（主视觉）、`subject`（人物或产品）、`illustration`、`icon`、`detail`；旧写法 `evidence` 仍接受，等价于 `info_duty: evidence`。
+- **信息职责** `info_duty`（元素级，仅 `image`）：`evidence` `structure` `identity` `atmosphere` `mood` `material` `none`。只有 `evidence` 带来源约束——不能指向生成图（`E-ASSET`）；不声明给 `W-ASSET`；`none`（纯装饰）也给 `W-ASSET`，须说明留下的理由。
 
 每个素材都登记在 `assets`。**生成与否只由 `generation` 决定**：
 
@@ -87,7 +91,17 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 | `scatter` | — | `series[].points = [[x, y], …]` |
 | `table` | `column_weights`、`column_align` | 原生表格；数据写 `data: {"headers": [...], "rows": [[...], ...]}`，不是 series |
 
-- `palette`（图级，可选）覆盖整稿 `palette`，用于整稿强调色只属于某类数据、别的图需要中性色阶的场合；compile、checks、verify 共用同一取色规则。
+- **颜色映射只有一处**：`model.chart_color_map(plan, chart)` 按下表优先级解析出「类别/系列 → 颜色」，compile、checks、verify、自定义图例全部读它，没有第二份实现。
+
+  | 优先级 | 字段 | 语义 |
+  | --- | --- | --- |
+  | 1 | `chart.color_map` | 按**名称**显式指派；名称对不上报 `E-CHART`（指派静默失效就是错色根因） |
+  | 2 | `chart.palette` | 本图专用色序列，覆盖整稿序列 |
+  | 3 | 根 `palette` | 整稿数据色序列，按类别/系列顺序取用 |
+  | 4 | `limits.json` → `defaults.palette` | 兜底 |
+
+  主题强调色（accent1）**不参与数据着色**：主题只服务使用者在 PowerPoint 里新建的对象。饼/环分到同色即 `E-CHART`（数据失真），非饼环循环取色给 `W-CHART`。
+- **自定义图例用 `legend` 元素，不要手绘色块**：`{"type":"legend","for_chart":"<本页 chart 的 id>","x":…,"y":…,"w":…,"h":…}`，可选 `direction`（`vertical` 缺省／`horizontal`）、`swatch_in`（缺省 0.16）、`show_value`（仅饼/环附读数）、`font_size`、`color`。色块与标签由被引用图表的**同一份映射**生成，编译成可编辑的组合对象；核验器逐块比对色值与标签，错色即 `V-CHART` 阻断。手绘色块会收到 `W-CHART`（疑似手绘图例）。
 - 组合图共用一根数值轴（`combo_line_series` 指定系列改画折线）。**没有双数值轴**。
 - 直标：`data_labels` 作用于柱、线、面积、饼、环与组合图的柱层；组合折线的直标需 `combo_line_labels: true`。
 - 硬检查：同图单位一致；期间与口径不一致阻断；`axis_labels: false` 须同时 `data_labels: true`；百分比堆叠每列合计 100；截轴（`min > 0`）须在 `value_axis.note` 写明起点，且该起点要落在页面可见的 caption、轴名或图题上（否则 `W-NOTE`）；饼与环既无直标也无图例即阻断。
@@ -130,7 +144,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | --- | --- | --- |
 | `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录、简报不一致；生成图作证据 | 补齐记录，或改用真实素材 |
 | `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
-| `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明 | 改措辞或拆图，没有放行开关 |
+| `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块） | 改措辞、拆图、补颜色映射；错色没有放行开关 |
 | `W-GRAY` | 相邻系列颜色转灰度后明度比低于 `chart.min_series_luminance_ratio` | 拉开明度，或直标系列名、换线型与标记 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
@@ -198,6 +212,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 文本、形状、折线路径、组、图片裁切 | 完整 | 对象核对覆盖几何、旋转、逐 run 样式、字节 |
 | 原生图表：柱、条、堆叠、百分比堆叠、组合、线、面积、饼、环、散点；原生表格 | 完整 | 无双数值轴、瀑布、桑基、甘特、气泡、雷达、趋势线 |
 | 按数据点着色（柱/条/折线里只把一条标成强调色） | 不支持 | 着色按系列取色，只有饼/环按类别取色；强调单条只能靠数据直标、右侧旁注或拆成两张图 |
+| 颜色映射与图例一致性 | 完整 | 类别/系列→颜色唯一映射（`color_map`＞图级 `palette`＞整稿 `palette`）；`legend` 元素按同一映射生成并逐块核验 |
 | 演讲者备注、替代文字、页码、页标题 | 完整 | 页标题是原生标题占位符；阅读顺序仍按声明顺序，未做逐页阅读顺序审查 |
 | 既有稿定点编辑 | 完整（限白名单操作） | 不新增页、不改页序、不改系列数、不动母版与版式 |
 | 渐变、`duotone` | 有限 | PowerPoint 生效；LibreOffice 只做去饱和或近似 |
@@ -213,17 +228,16 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 ## 模块与依赖
 
 ```
-model.py    共用：诊断、plan 载入、度量、颜色、几何、成品包校验、alt_text（不依赖 python-pptx）
+model.py    共用：诊断、plan 载入、度量、颜色映射(chart_color_map)、几何、成品包校验、alt_text（不依赖 python-pptx）
 ooxml.py    低层写入：填充、渐变、描边、圆角、duotone、run 属性        ← model
-charts.py   原生图表与表格                                           ← model, ooxml
+charts.py   原生图表、表格与 legend 图例                               ← model, ooxml
 checks.py   plan 校验与整稿模式信号                                   ← model
 compile.py  元素构建、build、CLI                                      ← model, checks, ooxml, charts
 verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       ← model, checks, charts
 revise.py    inspect 与定点编辑 + 保留核对                              ← model, ooxml
-
-tests/test_regressions.py  反向构造回归（装载模型、空格分级、字面核验）
-                            python scripts/tests/test_regressions.py
 ```
+
+反向构造回归与评测样本**不在本包内**（开发与评测材料单独存放）：新增检查必须故意破坏一次、确认它会响，记录写进交付说明。
 
 `limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
 

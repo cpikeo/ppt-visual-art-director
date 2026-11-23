@@ -8,14 +8,10 @@ from typing import Any, Dict, List, Optional
 
 from lxml import etree
 
-from model import LIMITS, PT_EMU, contrast_ratio, explicit_box, is_dark, mix_toward, page_bg, qn
-from ooxml import _ensure_family, _set_run_font
+from model import (LIMITS, PT_EMU, chart_color_map, chart_items, contrast_ratio,
+                   explicit_box, is_dark, mix_toward, page_bg, qn)
+from ooxml import _ensure_family, _set_run_font, _strip_style
 
-
-def _series_colors(palette: List[str], count: int) -> List[str]:
-    if not palette:
-        palette = LIMITS["defaults"]["palette"]
-    return [palette[i % len(palette)] for i in range(count)]
 
 def _deemphasize(bg: str, kind: str) -> str:
     """退隐色仍要读得出来：往远离底色的方向走，够对比就停。往底色里混只会更低。"""
@@ -76,7 +72,7 @@ def _chart_type(chart: Dict[str, Any]):
         return XL.DOUGHNUT
     return XL.XY_SCATTER
 
-def add_chart(slide, plan, page, el, palette: List[str]):
+def add_chart(slide, plan, page, el):
     from pptx.util import Inches, Pt
     from pptx.dml.color import RGBColor
     from pptx.chart.data import CategoryChartData, XyChartData
@@ -115,7 +111,9 @@ def add_chart(slide, plan, page, el, palette: List[str]):
 
     series = chart["data"]["series"]
     names = [str(s["name"]) for s in series]
-    colors = _series_colors([c.upper() for c in chart.get("palette") or []] or palette, len(data.categories) if kind in ("pie", "donut") else len(series))
+    # 颜色只有一处来源：model.chart_color_map。扇区、系列、自定义图例与核验器读同一份映射，
+    # 手绘色块与扇区对不上这类错色从根上不可能发生。
+    colors = chart_color_map(plan, chart)
     plot = obj.plots[0]
     combo = set(chart.get("combo_line_series") or [])
     stacked = bool(chart.get("stacked"))
@@ -526,6 +524,109 @@ def _add_line_marker(ser, colors: List[str]) -> None:
         anchor.addprevious(marker)
     else:
         ser.append(marker)
+
+def _legend_value(spec: Dict[str, Any], value: Any) -> str:
+    """图例标签里的读数：与直标同源的单位写法，只在饼/环上启用（柱线图的图例只列系列名）。"""
+    unit = str(spec.get("unit") or "").strip()
+    if spec.get("stacked") == "percent":
+        return f"{float(value):g}%"
+    return f"{float(value):g}" + unit
+
+def add_legend(slide, plan, page, el):
+    """自定义图例：色块与标签由被引用图表的**同一份**颜色映射生成。
+
+    手绘图例各抄各的色（有的抄整稿 palette、有的照记忆挑、有的按叙述顺序排），
+    与扇区对不上就是这么来的。现在图例只是 chart_color_map 的一个视图：
+    改 palette 或 color_map，扇区与色块同时变；核验器按同一份映射逐块比对。
+    """
+    from pptx.util import Inches, Pt
+
+    ref = str(el.get("for_chart") or "")
+    target = next((e for e in page.get("elements") or [] if str(e.get("id")) == ref), None)
+    if target is None or target.get("type") != "chart":
+        raise ValueError(f"legend「{el.get('id')}」引用的 chart「{ref}」不在本页顶层")
+    spec = target["chart"]
+    if spec.get("kind") == "table":
+        raise ValueError(f"legend「{el.get('id')}」引用的是表格：表格没有图例，用表头与细线分组")
+    items, colors = chart_items(spec), chart_color_map(plan, spec)
+    if not items:
+        raise ValueError(f"legend「{el.get('id')}」引用的图表没有可图例化的类别或系列")
+
+    box = explicit_box(el)
+    style = LIMITS["chart"]["style"]["dark" if is_dark(page_bg(page)) else "light"]
+    ink = str(el.get("color") or style["body"]).upper()
+    family = str(el.get("font") or (plan.get("fonts") or {}).get("body")
+                 or LIMITS["defaults"]["fonts"]["body"])
+    size = float(el.get("font_size") or 18)
+    swatch = min(float(el.get("swatch_in") or 0.16), box[2], box[3])
+    gap = 0.14
+    show_value = bool(el.get("show_value")) and spec.get("kind") in ("pie", "donut")
+    values = list(((spec.get("data") or {}).get("series") or [{}])[0].get("values") or [])
+    children = []
+    name = f"{page['id']}.{el['id']}"
+
+    if str(el.get("direction") or "vertical") == "horizontal":
+        col = box[2] / len(items)
+        for i, item in enumerate(items):
+            cx = box[0] + i * col
+            children.append(_swatch(slide, name, i, cx, box[1] + box[3] / 2 - swatch / 2, swatch, colors[i]))
+            children.append(_swatch_label(slide, family, name, i, _legend_label(spec, item, values, i, show_value),
+                                          cx + swatch + gap, box[1], col - swatch - gap, box[3], size, ink,
+                                          str(el.get("align") or "left")))
+    else:
+        row = box[3] / len(items)
+        for i, item in enumerate(items):
+            top = box[1] + i * row
+            sy = top + max((row - swatch) / 2, 0)
+            children.append(_swatch(slide, name, i, box[0], sy, swatch, colors[i]))
+            children.append(_swatch_label(slide, family, name, i, _legend_label(spec, item, values, i, show_value),
+                                          box[0] + swatch + gap, top, box[2] - swatch - gap, row, size, ink,
+                                          str(el.get("align") or "left")))
+    group = slide.shapes.add_group_shape([c for c in children if c is not None])
+    group.name = name
+    return group
+
+def _legend_label(spec: Dict[str, Any], item: str, values: List[Any], i: int, show_value: bool) -> str:
+    if show_value and i < len(values):
+        return f"{item} · {_legend_value(spec, values[i])}"
+    return str(item)
+
+def _swatch(slide, name: str, idx: int, x: float, y: float, size: float, color: str):
+    from pptx.util import Inches
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+
+    shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(size), Inches(size))
+    shape.name = f"{name}#sw{idx}"
+    _strip_style(shape)
+    shape.shadow.inherit = False
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = RGBColor.from_string(str(color).lstrip("#").upper())
+    shape.line.fill.background()
+    if shape.has_text_frame:
+        shape.text_frame.text = ""
+    return shape
+
+def _swatch_label(slide, family: str, name: str, idx: int, text: str, x: float, y: float, w: float, h: float,
+                  size: float, ink: str, align: str):
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
+
+    frame = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(max(w, 0.3)), Inches(h))
+    frame.name = f"{name}#tx{idx}"
+    tf = frame.text_frame
+    tf.word_wrap = True
+    tf.auto_size = MSO_AUTO_SIZE.NONE
+    tf.margin_left = tf.margin_right = 0
+    tf.margin_top = tf.margin_bottom = 0
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    para = tf.paragraphs[0]
+    para.alignment = {"center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}.get(align, PP_ALIGN.LEFT)
+    para.line_spacing = 1.1
+    run = para.add_run()
+    run.text = text
+    _set_run_font(run, family, size, ink, False)
+    return frame
 
 def add_table(slide, plan, page, el, style, family):
     from pptx.util import Inches

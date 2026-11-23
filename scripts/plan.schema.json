@@ -406,7 +406,8 @@
             "path",
             "group",
             "caption",
-            "footer"
+            "footer",
+            "legend"
           ]
         },
         "x": {
@@ -602,6 +603,39 @@
         "chart": {
           "$ref": "#/$defs/chart"
         },
+        "info_duty": {
+          "enum": [
+            "evidence",
+            "structure",
+            "identity",
+            "atmosphere",
+            "mood",
+            "material",
+            "none"
+          ],
+          "description": "信息职责：这张图承担什么信息（证据/结构解释/语义识别/空间氛围/情绪表达/材质表现），none 为纯装饰。与素材来源、image_role 三个维度互不替代。"
+        },
+        "for_chart": {
+          "$ref": "#/$defs/str",
+          "description": "仅 legend：本页某个 chart 元素的 id。图例的色块与标签由那张图的颜色映射生成，不单独给色。"
+        },
+        "direction": {
+          "enum": [
+            "vertical",
+            "horizontal"
+          ],
+          "description": "仅 legend：条目排列方向，缺省 vertical。"
+        },
+        "swatch_in": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "仅 legend：色块边长（英寸），缺省 0.16。"
+        },
+        "show_value": {
+          "type": "boolean",
+          "description": "仅 legend：标签后附读数（仅饼/环；柱线图的图例只列系列名）。"
+        },
         "alt": {
           "type": "string",
           "description": "替代文字（无障碍）。image 缺省取 asset_reason，chart 缺省取图题；纯装饰元素不写。"
@@ -777,6 +811,41 @@
                 "const": "chart"
               }
             }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "info_duty"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "image"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "const": "legend"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "for_chart",
+              "x",
+              "y",
+              "w",
+              "h"
+            ]
           }
         },
         {
@@ -1150,7 +1219,19 @@
           "items": {
             "$ref": "#/$defs/color"
           },
-          "description": "本图专用的系列色，覆盖整稿 palette。用于整稿强调色只属于某类数据、而别的图需要中性色阶的场合。"
+          "description": "本图专用的系列/类别色序列，覆盖整稿 palette。用于整稿强调色只属于某类数据、而别的图需要中性色阶的场合。"
+        },
+        "color_map": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/str"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/color"
+          },
+          "description": "按类别/系列名显式指派颜色，优先级最高。原生扇区、系列与自定义图例都读它；名称对不上会报 E-CHART。"
         }
       }
     },
