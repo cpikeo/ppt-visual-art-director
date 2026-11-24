@@ -29,7 +29,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import EMU, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -45,6 +45,22 @@ def _claim_title_placeholder(slide, page, el, top_level):
     if holder is None or holder.name.startswith(f"{page['id']}."):
         return None
     return holder
+
+def _apply_list(para, kind: str, color: str) -> None:
+    """原生列表：悬挂缩进 + 项目符号/自动编号。符号与第一段文字同色，随文字走。"""
+    pPr = para._p.get_or_add_pPr()
+    emu = int(round(LIST_INDENT_IN * EMU))
+    pPr.set("marL", str(emu))
+    pPr.set("indent", str(-emu))
+    clr = etree.SubElement(etree.SubElement(pPr, qn("a:buClr")), qn("a:srgbClr"))
+    clr.set("val", color.lstrip("#").upper())
+    if kind == "number":
+        etree.SubElement(pPr, qn("a:buFont")).set("typeface", "+mj-lt")
+        etree.SubElement(pPr, qn("a:buAutoNum")).set("type", "arabicPeriod")
+    else:
+        etree.SubElement(pPr, qn("a:buFont")).set("typeface", "Arial")
+        etree.SubElement(pPr, qn("a:buChar")).set("char", "•" if kind == "bullet" else "–")
+
 
 def add_text(slide, plan, page, el, top_level=True):
     from pptx.util import Inches, Pt
@@ -74,6 +90,8 @@ def add_text(slide, plan, page, el, top_level=True):
         para.line_spacing = st["line_spacing"]
         if el.get("space_after_pt"):
             para.space_after = Pt(float(el["space_after_pt"]))
+        if el.get("list"):
+            _apply_list(para, str(el["list"]), str((pieces[0].get("color") if pieces else None) or st["color"]))
         for piece in pieces:
             run = para.add_run()
             run.text = piece.get("text", "")
@@ -276,6 +294,102 @@ def _set_theme_fonts(prs, plan: Dict[str, Any]) -> None:
     theme_part._blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def _set_theme_colors(prs, plan: Dict[str, Any]) -> None:
+    """主题色跟随 plan：用户在 PowerPoint 里新建的形状、图表、SmartArt 取到的是本稿的墨色与数据色，
+    而不是 Office 默认的蓝与红。dk2 取主墨，lt2 取最浅底，accent1–6 取数据色序列（不足时用兜底序列补齐）。"""
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    theme_part = prs.slide_master.part.part_related_by(RT.THEME)
+    root = parse_xml(theme_part.blob)
+    ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+    scheme = root.find(".//a:clrScheme", ns)
+    if scheme is None:
+        return
+    pal = list(deck_palette(plan))
+    for extra in LIMITS["defaults"]["palette"]:
+        if len(pal) >= 6:
+            break
+        if extra.upper() not in [c.upper() for c in pal]:
+            pal.append(extra)
+    pages = plan.get("pages") or []
+    bgs = [page_bg(p).upper() for p in pages] or [LIMITS["defaults"]["background"].upper()]
+    light = [b for b in bgs if not is_dark(b)]
+    values = {"dk2": LIMITS["defaults"]["ink"], "lt2": (light[0] if light else "#F3F4F6"),
+              "hlink": pal[0], "folHlink": pal[min(3, len(pal) - 1)]}
+    for i in range(6):
+        values[f"accent{i + 1}"] = pal[i]
+    for name, hex_color in values.items():
+        node = scheme.find(f"a:{name}", ns)
+        if node is None:
+            continue
+        for child in list(node):
+            node.remove(child)
+        etree.SubElement(node, qn("a:srgbClr")).set("val", str(hex_color).lstrip("#").upper())
+    scheme.set("name", "PPT Visual Art Director")
+    theme_part._blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _style_master(prs, plan: Dict[str, Any]) -> None:
+    """母版底色取全稿多数页的底色；母版标题改为左对齐、与默认标题同字号同粗细。
+    之后用户在 PowerPoint 里新建的页不会落回白底、居中 44pt。"""
+    from collections import Counter
+    master = prs.slide_master._element
+    bgs = [page_bg(p).upper() for p in plan.get("pages") or []]
+    base = Counter(bgs).most_common(1)[0][0] if bgs else LIMITS["defaults"]["background"].upper()
+    cSld = master.find(qn("p:cSld"))
+    old = cSld.find(qn("p:bg"))
+    bg = etree.Element(qn("p:bg"))
+    bgPr = etree.SubElement(bg, qn("p:bgPr"))
+    etree.SubElement(etree.SubElement(bgPr, qn("a:solidFill")), qn("a:srgbClr")).set("val", base.lstrip("#"))
+    etree.SubElement(bgPr, qn("a:effectLst"))
+    if old is not None:
+        cSld.replace(old, bg)
+    else:
+        cSld.insert(0, bg)
+    ink = LIMITS["defaults"]["ink_on_dark"] if is_dark(base) else LIMITS["defaults"]["ink"]
+    for tag, size, bold in (("p:titleStyle", LIMITS["type"]["default_pt"]["title"], True), ("p:bodyStyle", None, False)):
+        style = master.find(f".//{qn('p:txStyles')}/{qn(tag)}")
+        if style is None:
+            continue
+        for lvl in style:
+            if not etree.QName(lvl).localname.startswith("lvl"):
+                continue
+            lvl.set("algn", "l")
+            rpr = lvl.find(qn("a:defRPr"))
+            if rpr is None:
+                continue
+            if size:
+                rpr.set("sz", str(int(size * 100)))
+                rpr.set("b", "1" if bold else "0")
+            fill = rpr.find(qn("a:solidFill"))
+            if fill is not None:
+                for child in list(fill):
+                    fill.remove(child)
+                etree.SubElement(fill, qn("a:srgbClr")).set("val", ink.lstrip("#").upper())
+
+
+def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
+    """python-pptx 自带的 docProps/app.xml 是模板遗留：写着 4:3、0 页、Macintosh PowerPoint。
+    重写成与成品一致的最小件；不声称由任何 Office 产品生成。"""
+    import zipfile
+    pages = plan.get("pages") or []
+    notes = sum(1 for p in pages if p.get("speaker_notes"))
+    fmt = "Widescreen" if (plan.get("aspect_ratio") or "16:9") == "16:9" else "On-screen Show (4:3)"
+    xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+           '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" '
+           'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+           f'<TotalTime>0</TotalTime><Application>ppt-visual-art-director</Application>'
+           f'<PresentationFormat>{fmt}</PresentationFormat><Slides>{len(pages)}</Slides>'
+           f'<Notes>{notes}</Notes><HiddenSlides>0</HiddenSlides></Properties>')
+    tmp = path.with_name(path.name + ".app")
+    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "docProps/app.xml":
+                data = xml.encode("utf-8")
+            zout.writestr(item, data)
+    os.replace(tmp, path)
+
+
 def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     from pptx import Presentation
     from pptx.util import Inches
@@ -288,6 +402,8 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     prs.slide_height = Inches(h)
     _fit_master_to_canvas(prs, old_w)
     _set_theme_fonts(prs, plan)
+    _set_theme_colors(prs, plan)
+    _style_master(prs, plan)
     # “Title Only” 版式提供标题占位符；没有 title 元素的页会删掉空占位符，不留“单击添加标题”。
     layout = next((l for l in prs.slide_layouts if l.name == "Title Only"), prs.slide_layouts[5])
 
@@ -314,6 +430,7 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
     try:
         prs.save(str(tmp))
+        _normalize_app_props(tmp, plan)
         os.replace(tmp, out)
     finally:
         if tmp.exists():

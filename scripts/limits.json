@@ -50,7 +50,7 @@
   "chart": {
     "min_contrast": {"bar": 2.0, "line": 3.0, "area": 2.0, "pie": 2.0, "donut": 2.0, "scatter": 3.0},
     "deemphasis": {"light": "#AEB3B8", "dark": "#50565E"},
-    "font_pt": {"title": 15, "legend": 14, "axis": 14, "label": 14, "table": 16},
+    "font_pt": {"title": 15, "legend": 14, "axis": 14, "label": 14, "table": 18},
     "min_series_delta_lstar": 9,
     "gap_width": 60,
     "stacked_overlap": 100,

@@ -15,7 +15,39 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 | `element` | `id` `type` | `additionalProperties: false`：拼错的键直接被拒；`x y w h` 除 `path`／`group` 外都要写 |
 | `chart` | `kind` `data` | `table` 的数据是 `data: {headers, rows}`，不是 `series`；`scatter` 用 `series[].points = [[x,y],…]` |
 
-六种 `role` 的重量分配见 `design.md` 五（节奏）；写不出对应叙事动作，说明页序还没定。
+六种 `role` 的叙事动作与重量见 `design.md` 三（叙事）；写不出对应叙事动作，说明页序还没定。
+
+## 用 scaffold 起稿（默认路线）
+
+`scripts/scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，保证正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25，左轴固定）、**框高**（直接调用 `model.fit_height_in`，折行按 94% 宽度估，留余量）。
+
+```bash
+python scripts/scaffold.py system --seed "#B4421E" --mood warm --scene meeting   # 看色彩系统
+python scripts/scaffold.py init outline.json plan.json                           # 生成 plan 初稿
+```
+
+outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `brief` `assets`…原样带入）＋`design`＋`pages`：
+
+```json
+{"design": {"seed": "#B4421E", "mood": "warm", "scene": "meeting",
+            "fonts": {"heading": "Noto Serif CJK SC", "body": "Noto Sans CJK SC"}},
+ "pages": [{"recipe": "big_number", "title": "…", "number": "41", "unit": "个百分点", "unit_scale": 0.26,
+            "body": "…", "note": "口径：…", "evidence": ["…"], "beat": "这页做什么、多重"}]}
+```
+
+| `recipe` | 默认 `role` | 必填 | 可选 | 讲法 |
+| --- | --- | --- | --- | --- |
+| `cover` | open | `title` | `sub` `kicker` `image` `dark` | 标题底边落在 62% 水平线，上方留整块安静区 |
+| `statement` | hold | `title` | `sub` `dark` | 一句话居中偏上，其余全空 |
+| `big_number` | build | `title` `number` `body` | `unit` `unit_scale` `note` | 数字压住页面，正文只写结论与限定 |
+| `chart` | build | `title` `chart` | `aside` `note` | 图承担读数，旁注写意义；图色取本系统数据色 |
+| `compare` | turn | `title` `left` `right`（各 `label` `number` `body`） | `note` | 两数同基线同尺度，整块垂直居中 |
+| `list` | build | `title` `items` | `list`（number/bullet/dash）`note` | 标题在左固定，原生列表在右 |
+| `table` | build | `title` `table`（headers/rows） | `note` | 原生表格 |
+| `split_image` | build | `title` `image` | `body` `side` | 半幅图，标题压顶、正文压底 |
+| `close` | close | `title` | `items` `dark` | 暗场收束到决定与下一步 |
+
+每页可覆盖 `role` `claim` `focus` `rationale` `beat` `speaker_notes` `evidence` `open_questions` `dark`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
 
 ## 坐标与元素
 
@@ -32,6 +64,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 - 默认：`title` 40pt 粗、`number` 72pt 粗、`body` `text` 20pt、`caption` `footer` 13pt；行距 1.12（标题、数字）、1.32（正文）、1.25（注释）。深底（亮度 < 0.18）未声明颜色时用浅墨。
 - 字族三分：`fonts.heading`、`fonts.body`（正文、图表、页码）、`fonts.number`（缺省同 heading）。
 - `rotation` 对所有对象生效，按 360 取模。
+- **原生列表**：`list: "bullet"|"dash"|"number"`，每个 `\n` 分段是一项，写成真正的项目符号/自动编号（`buChar`／`buAutoNum`）与 0.32 in 悬挂缩进，符号与第一段文字同色；不要手敲“1.”“•”。估宽按缩进后的版心算；`verify.py` 逐项比对渲染文字（渲染器会在每项前插入符号）。
 - 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
 - `W-FIT` 的行高按字体取值（`limits.json` 的 `type.line_pitch_em.by_font`）：Noto/思源 CJK 1.448、雅黑 1.32、宋体/黑体 1.15，未知字体 1.25。用别的字体且估不准，在 `by_font` 里补一行。
 - 图表与表格内的字号由 `limits.json` 统一给出（表 16、图内标注/轴/图例 14）；要改，改阈值，不逐图改。
@@ -256,7 +289,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 渲染核验 | 外部依赖 | LibreOffice + PyMuPDF（`requirements-render.txt`，可选）；缺失给 `PARTIAL`。Noto CJK 的 `.ttc` 在 PDF 里只能按家族匹配，分不出 SC 与 JP 字面 |
 | PowerPoint 实机验证 | 外部依赖 | 本包从未做过；结论由人在真实 PowerPoint 中签收，未做即 `NOT VERIFIED` |
 | 字体 | 外部依赖 | 只写字体名，不嵌入；目标机缺失会被静默替换。主题字体（拉丁与东亚）取 `fonts`，新建 run 带 `lang`（含中文为 zh-CN） |
-| 母版与版式 | 有限 | 默认模板的 4:3 占位符几何按画布宽度横向缩放；只有一套母版，不做自定义版式库 |
+| 母版与版式 | 有限 | 默认模板的 4:3 占位符几何按画布宽度横向缩放；**主题色（dk2/lt2/accent1–6、超链接色）取 plan 的数据色与墨色，母版底色取多数页底色，母版标题左对齐、与默认标题同字号**，新增页与图形不会回到 Office 默认外观；`docProps/app.xml` 按成品重写（页数、画布、不声称由 Office 生成）。仍只有一套母版，不做自定义版式库；未使用的 11 个默认版式保留 |
 | 动画、切换、嵌入字体、新建 SmartArt、宏 | 不支持 | `.pptm` 一律拒绝 |
 
 ## 模块与依赖

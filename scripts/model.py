@@ -147,21 +147,44 @@ def _em_width(ch: str) -> float:
         return 1.0
     return 0.6
 
+def _is_cjk(ch: str) -> bool:
+    return ord(ch) >= 0x2E80 and ch not in "，。、；：？！（）【】《》「」『』“”‘’—…·～"
+
+
+def _boundary_em(text: str) -> float:
+    """中文与数字/西文相接处，渲染器（LibreOffice 必然、PowerPoint 视设置）会自动加约 0.1 em 的间距。
+    估宽不计它，“估 1 行、实 2 行”会成批出现（渲染实测：「84%，只比一店低4个点」多出一行）。"""
+    n = 0
+    for a, b in zip(text, text[1:]):
+        if (_is_cjk(a) and b.isascii() and (b.isalnum() or b == "%")) or \
+           (_is_cjk(b) and a.isascii() and (a.isalnum() or a == "%")):
+            n += 1
+    return 0.1 * n
+
+
 def _para_width_em(seg: str, pieces: List[Dict[str, Any]], pt: float) -> float:
     """一段的宽度，以"基准字号 1 em"计。逐 run 按各自字号折算：
     标题里放一个 96pt 数字加 24pt 单位，按整段取同一个字号估高会差出好几行。"""
     if not pieces:
-        return sum(_em_width(c) for c in seg)
+        return sum(_em_width(c) for c in seg) + _boundary_em(seg)
     total = 0.0
     for piece in pieces:
         size = float(piece.get("font_size") or pt)
-        total += sum(_em_width(c) for c in str(piece.get("text", ""))) * size / pt
+        text = str(piece.get("text", ""))
+        total += (sum(_em_width(c) for c in text) + _boundary_em(text)) * size / pt
     return total
+
+LIST_INDENT_IN = 0.32  # 原生列表的悬挂缩进（英寸）；估宽与 compile 共用这一个数
+
+
+def list_indent(el: Dict[str, Any]) -> float:
+    return LIST_INDENT_IN if el.get("list") else 0.0
+
 
 def fit_lines(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> List[int]:
     """逐段行数。按每段最大字号与逐 run 折算的宽度算，不用元素级字号一刀切。"""
     inset = st["pad"][0]
-    usable = max(box_w - 2 * inset, 0.05)
+    usable = max(box_w - 2 * inset - list_indent(el), 0.05)
     paras = paragraph_runs(el)
     if paras is None:
         paras = [(str(el.get("content", "")), [])]
@@ -197,9 +220,17 @@ def fit_height_in(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> float
     paras = paragraph_runs(el) or [(str(el.get("content", "")), [])]
     lines = fit_lines(el, st, box_w)
     total = 2.0 * float(st["pad"][1])
+    # 只有整个文本框的第一行按字形高度计；其后每一行（含后续段落的首行）都按整条行盒推进。
+    # 旧版把每一段的首行都当"第一行"，\n 分段的文字（标题两行、要点列表）被系统性低估。
+    first = True
     for (seg, pieces), count in zip(paras, lines):
         base = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
-        total += base * ls / 72.0 + max(count - 1, 0) * base * pitch * ls / 72.0
+        step = base * pitch * ls / 72.0
+        if first:
+            total += base * ls / 72.0 + max(count - 1, 0) * step
+            first = False
+        else:
+            total += count * step
     space_after = float(el.get("space_after_pt") or 0)
     if space_after:
         total += space_after * max(len(paras) - 1, 1) / 72.0

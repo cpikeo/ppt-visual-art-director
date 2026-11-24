@@ -452,6 +452,10 @@
           "minimum": 0,
           "maximum": 72
         },
+        "list": {
+          "enum": ["bullet", "dash", "number"],
+          "description": "原生列表：每个换行分段是一项，写成真正的项目符号/自动编号并带悬挂缩进；不要手敲「1.」「•」。仅文字元素。"
+        },
         "valign": {
           "enum": [
             "top",

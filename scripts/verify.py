@@ -1101,6 +1101,9 @@ def expected_text(el: Dict[str, Any], page: Optional[Dict[str, Any]] = None) -> 
     """
     kind = el.get("type")
     if kind in TEXT_TYPES:
+        if el.get("list"):
+            # 原生列表：渲染器会在每项前插入符号/编号，整段拼接比不上；逐项比。
+            return [part for part in str(el.get("content") or "").split("\n") if part.strip()]
         return [str(el.get("content") or "")]
     if kind == "legend":
         # 图例文字在组合里：逐条比标签，缺一条就是错色或漏条目。
@@ -1400,7 +1403,15 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         # 直、骨、门、者一类字形会按日文字形渲染——家族级"OK"不能读成"简体字形已核验"。
         want_script = _declared_script(declared)
         got_scripts = sorted({s for fam in fonts_here for s in _render_scripts(fam)} - {None})
-        if want_script and got_scripts and want_script not in got_scripts:
+        collection_only = _collection_suffix_only(fonts_here) and got_scripts == ["jp"]
+        if want_script and got_scripts and want_script not in got_scripts and collection_only:
+            if ("collection", want_script) not in face_seen:
+                face_seen.add(("collection", want_script))
+                f.add("SOFT", "W-FONT-FACE", pid,
+                      f"声明 {SCRIPT_LABEL.get(want_script, want_script)}，渲染用的是 Noto/思源 CJK 的 .ttc 集合，"
+                      f"PDF 字体名里的 jp 只是集合首面的固定后缀，无法判定实际字面——字面 NOT VERIFIED；"
+                      f"需在目标机或装有独立 SC 字体文件的环境人工复核（直/骨/门/者）")
+        elif want_script and got_scripts and want_script not in got_scripts:
             key = (want_script, tuple(got_scripts))
             if key not in face_seen:
                 face_seen.add(key)
@@ -1419,8 +1430,10 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         if page_cjk:
             if want_script and got_scripts and want_script in got_scripts:
                 face_states.add("VERIFIED")
-            elif want_script and got_scripts:
+            elif want_script and got_scripts and not collection_only:
                 face_states.add("MISMATCH")
+            elif want_script and got_scripts:
+                face_states.add("UNVERIFIED")
             else:
                 face_states.add("UNVERIFIED")
                 if ("unverified", declared and tuple(sorted(declared))) not in face_seen:
@@ -1465,6 +1478,14 @@ def _script_of(name: str) -> Optional[str]:
         if key.endswith(tail):
             return code
     return None
+
+
+def _collection_suffix_only(fonts_here) -> bool:
+    """渲染字体全是 Noto/思源 CJK 的 .ttc 集合：LibreOffice 导出 PDF 时字体名固定带首个字面（jp），
+    这个后缀不代表实际取到的字面——无法据此判"不一致"，只能判"无法确认"。"""
+    keys = ["".join(ch for ch in str(f).lower() if ch.isalnum()) for f in fonts_here]
+    return bool(keys) and all(any(t in k for t in ("notosanscjk", "notoserifcjk", "sourcehansans", "sourcehanserif"))
+                              for k in keys)
 
 
 def _declared_script(declared) -> Optional[str]:
