@@ -15,6 +15,8 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 | `element` | `id` `type` | `additionalProperties: false`：拼错的键直接被拒；`x y w h` 除 `path`／`group` 外都要写 |
 | `chart` | `kind` `data` | `table` 的数据是 `data: {headers, rows}`，不是 `series`；`scatter` 用 `series[].points = [[x,y],…]` |
 
+`brief.editorial`（`amplify` `recede` `cut`）与 `brief.system`（`typography` `color` `space`）是可选的决策记录，schema 只校验形状；页 `depth`（`background` `midground` `foreground`，元素 id 数组）有引用与顺序校验。
+
 六种 `role` 的叙事动作与重量见 `design.md` 三（叙事）；写不出对应叙事动作，说明页序还没定。
 
 ## 用 scaffold 起稿（默认路线）
@@ -48,10 +50,15 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 | `steps` | build | `title` `steps`（2–5 项，各 `label`，可加 `when` `body`） | `note` `eyebrow` | 只表达先后，不画箭头（箭头暗示因果与时长） |
 | `split_image` | build | `title` `image` | `body` `side` `eyebrow` | 半幅图，标题压顶、正文压底 |
 | `close` | close | `title` | `items` `dark` | 暗场收束到决定与下一步 |
+| `free` | build | `title`（页题记录）`els` | `dark` `bg` `focus_element` `depth` | **自由构图**：逐个写元素，系统只供网格、色值与字号档（见下） |
+
+**`design` 的判断出口**（默认推导只是起点）：`ground.light/dark` 页底色（纸色、墨绿、近黑；明度不对会 `E-OUTLINE`）、`accent.light/dark` 唯一强调色、`data` / `data_dark` 数据色序列、`motif: "none"` 关闭每页短横线（单页用 `motif: false`）。覆盖后文字墨阶按新底色重新推导，仍保证 ≥ 7:1 / 4.8:1。
+
+**`free` 的元素速记**（都可选，写了才换算，其余键原样交给 schema）：`cols:[起列,跨列]`→`x w`；`size`＝档位名（`title body number caption hero`）或 pt；`fit:[最大pt,最小pt]`＝取不折行的最大字号；`ink`/`color`/`fill` 可写调色名（`ink ink2 muted quiet accent rule bg bg_alt`）；`bottom:y` 以该 y 为文字底边；`after:元素id`+`gap` 紧接上一元素下方；文字缺 `h` 由 `fit_height_in` 估出。要出血或错网格，直接写 `x w`。页级 `bg` 可写调色名或 `#hex`（如整页强调色场）。
 
 每页的 `eyebrow` 是眉题（小号、位于母题横线右侧）。outline 缺字段或 `recipe` 写错时，`scaffold.py init` 以 `E-OUTLINE` 逐条说明并退出 2，不写文件。
 
-每页可覆盖 `role` `claim` `focus` `rationale` `beat` `speaker_notes` `evidence` `open_questions` `dark`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
+每页可覆盖 `role` `claim` `focus` `rationale` `beat` `speaker_notes` `evidence` `open_questions` `dark` `focus_element` `depth`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
 
 ## 坐标与元素
 
@@ -197,7 +204,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
 - `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积）。
 - `--assets` 缺省取 plan 同级 `assets/`，否则取 plan 所在目录。`verify.py` 的渲染目录缺省为 `render/<pptx 名>/`。
-- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 0 无阻断、1 有阻断或格式不合格；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
+- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
 
 ## 诊断码
 
@@ -207,6 +214,8 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | --- | --- | --- |
 | `E-OUTLINE` | `scaffold.py init` 的 outline 缺字段、recipe 不存在、steps 项数不对 | 按提示逐条补，未写出文件 |
 | `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录、简报不一致；生成图作证据 | 补齐记录，或改用真实素材 |
+| `E-LAYER` `E-REF`（depth） | `depth` 声明的前/中/背景与叠放（声明）顺序矛盾，或引用了不存在的元素 | 把背景元素写在前景之前，或改声明 |
+| `W-DOMINANT` | `focus_element` 的粗估视觉重量（文字＝字号²×字数，图/图表/色块＝面积；承载层不计）没有明显超过同页配角 | 放大主角、缩小或灰化配角，或删掉 focus_element。只比尺度，不判断好不好看 |
 | `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
 | `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块）、系列色沉进承载面、图例与强调柱对不上 | 改措辞、拆图、补颜色映射；错色没有放行开关 |
 | `V-LABEL-INK` `V-LABEL-POS` | 成品图表里：直标/轴/图例墨色落在其真实表面上 < 4.5:1（`chart_audit.py` 只读 XML）；或 `dLblPos` 对该图表类型非法；或墨色与决策表不一致 | 重新编译；手改成品会再次被拦 |
@@ -269,7 +278,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 ## 报告字段
 
 - `compile.py`：`blocked`、`output`、`pages`、`sha256`、`issues`。
-- `verify.py`：`status`、`sha256`、`render`（PDF、PNG、`font_substituted`、`text_checks`）、`structure`、`layers`（`objects`／`render`／`fonts`／`human`）、`findings`。`render` 非 `PASS` 时 `status` 只能是 `PARTIAL`；`fonts` 为 `SUBSTITUTED`、`FACE MISMATCH`、`FACE UNVERIFIED` 时不能是 `READY`（`render.font_face`：`VERIFIED` `MISMATCH` `UNVERIFIED` `NOT_APPLICABLE`）；`layers.powerpoint` 恒为 `NOT VERIFIED`。判定只在 `verify.decide_status` 一处。
+- `verify.py`：`status`、`exit_code`、`sha256`、`render`（PDF、PNG、`font_substituted`、`text_checks`）、`structure`、`layers`（`objects`／`render`／`fonts`／`human`）、`findings`。`render` 非 `PASS` 时 `status` 只能是 `PARTIAL`；`fonts` 为 `SUBSTITUTED`、`FACE MISMATCH`、`FACE UNVERIFIED` 时不能是 `READY`（`render.font_face`：`VERIFIED` `MISMATCH` `UNVERIFIED` `NOT_APPLICABLE`）；`layers.powerpoint` 恒为 `NOT VERIFIED`。判定只在 `verify.decide_status` 一处。
 - `revise.py`：`status`、`output`、`sha256`（失败为 null）、`ops`、`preservation`（`parts.changed` 为越界，`parts.moved` 为声明过的改写；`rejected` 为证据路径）、`issues`。
 
 `sha256` 用于确认“这份文件是不是我验的那一份”，不是复现凭据。
@@ -310,7 +319,7 @@ verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       
 revise.py    inspect 与定点编辑 + 保留核对                              ← model, ooxml
 ```
 
-回归测试在 `tests/test_smoke.py`（不依赖 LibreOffice），完整样本在 `examples/retention/`。新增检查必须故意破坏一次、确认它会响：测试里既有“应通过”也有“应被拦”的用例。
+回归测试与真实作品样本不随 Skill 安装，位于仓库 `qa/`：`python -m unittest discover -s qa/tests -v`（不依赖 LibreOffice），`python qa/run_cases.py`（四份真实作品 + 一份既有稿改稿，结果写入 `qa/results/`）。新增检查必须故意破坏一次、确认它会响：测试里既有“应通过”也有“应被拦”的用例。
 
 `limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
 

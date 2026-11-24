@@ -30,7 +30,7 @@ from lxml import etree
 from charts import add_chart, add_legend
 from checks import design_signals, validate
 from model import EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
-from ooxml import _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
+from ooxml import stable_xlsx as _stable_xlsx, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
 # ---------------------------------------------------------------- 建对象
@@ -386,7 +386,12 @@ def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
             data = zin.read(item.filename)
             if item.filename == "docProps/app.xml":
                 data = xml.encode("utf-8")
-            zout.writestr(item, data)
+            elif item.filename.startswith("ppt/embeddings/") and item.filename.endswith(".xlsx"):
+                data = _stable_xlsx(data)
+            info = zipfile.ZipInfo(item.filename, (2000, 1, 1, 0, 0, 0))   # 固定条目时间：相同输入 → 相同字节
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = item.external_attr
+            zout.writestr(info, data)
     os.replace(tmp, path)
 
 

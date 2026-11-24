@@ -173,3 +173,43 @@ def _set_run_font(run, family: str, size: float, color: str, bold: bool, spacing
     set_run_attrs(run, font=family, font_ea=family, size=size, color=color, bold=bold, spacing=spacing)
     has_cjk = any("\u3400" <= ch <= "\u9fff" for ch in (run.text or ""))
     run._r.get_or_add_rPr().set("lang", "zh-CN" if has_cjk else "en-US")
+
+
+def stable_xlsx(blob: bytes) -> bytes:
+    """内嵌工作簿由 xlsxwriter 写出，zip 条目时间与 docProps/core.xml 的 created/modified 都是“此刻”，
+    导致同一 plan 每次编译得到不同字节。把它们钉成固定值：相同输入 → 相同 PPTX（可复现）。"""
+    import io
+    import re
+    import zipfile
+    fixed = (2000, 1, 1, 0, 0, 0)
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(blob)) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "docProps/core.xml":
+                data = re.sub(rb"(<dcterms:(?:created|modified)[^>]*>)[^<]*", rb"\g<1>2000-01-01T00:00:00Z", data)
+            info = zipfile.ZipInfo(item.filename, fixed)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = item.external_attr
+            zout.writestr(info, data)
+    return out.getvalue()
+
+
+def stabilize_package(path) -> None:
+    """把整个包里的 zip 条目时间钉成固定值，内嵌工作簿同样处理：相同输入 → 相同字节。
+    只动 zip 元数据与工作簿时间戳，不改任何部件的 XML。"""
+    import os
+    import zipfile
+    from pathlib import Path
+    path = Path(path)
+    tmp = path.with_name(path.name + ".stable")
+    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename.startswith("ppt/embeddings/") and item.filename.endswith(".xlsx"):
+                data = stable_xlsx(data)
+            info = zipfile.ZipInfo(item.filename, (2000, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = item.external_attr
+            zout.writestr(info, data)
+    os.replace(tmp, path)

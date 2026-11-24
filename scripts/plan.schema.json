@@ -174,6 +174,53 @@
             "$ref": "#/$defs/str"
           },
           "description": "一到两个跨页复现的装置；多了就不成母题。"
+        },
+        "editorial": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "amplify": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              },
+              "description": "放大什么：被尺度、位置或明度推到前景的东西。"
+            },
+            "recede": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              },
+              "description": "退隐什么：保留但降到灰阶、小字号或边缘的东西。"
+            },
+            "cut": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              },
+              "description": "删除什么：为了让主张成立而主动拿掉的内容。"
+            }
+          },
+          "description": "编辑判断：放大、退隐、删除各是什么。三类都写不出东西，说明还没做取舍。"
+        },
+        "system": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "typography": {
+              "$ref": "#/$defs/str",
+              "description": "字体系统与理由：中西文搭配、谁大声谁解释、字重与字距逻辑。"
+            },
+            "color": {
+              "$ref": "#/$defs/str",
+              "description": "色彩职责：底色、结构色、唯一强调色、数据色各指向什么，及冷暖与明度逻辑。"
+            },
+            "space": {
+              "$ref": "#/$defs/str",
+              "description": "空间逻辑：重心偏向、留白与密度的分配、前中后景。"
+            }
+          },
+          "description": "三套系统的一句话理由；是写给人与下一轮 AI 的决策记录，脚本不判断内容。"
         }
       }
     },
@@ -379,6 +426,31 @@
         "speaker_notes": {
           "type": "string",
           "description": "演讲者备注，写入成品的备注页；与 notes（设计备注，不进成品）不同。"
+        },
+        "depth": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "background": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              }
+            },
+            "midground": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              }
+            },
+            "foreground": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              }
+            }
+          },
+          "description": "前中后景分别由哪些元素承担（元素 id）。引用与叠放顺序由 checks 核对（E-REF / E-LAYER）。"
         }
       }
     },
@@ -453,7 +525,11 @@
           "maximum": 72
         },
         "list": {
-          "enum": ["bullet", "dash", "number"],
+          "enum": [
+            "bullet",
+            "dash",
+            "number"
+          ],
           "description": "原生列表：每个换行分段是一项，写成真正的项目符号/自动编号并带悬挂缩进；不要手敲「1.」「•」。仅文字元素。"
         },
         "valign": {

@@ -100,7 +100,13 @@ HUE_OFFSETS = [0, 190, 40, 240, 90, 320]        # 首色=种子；其余在冷�
 CHROMA_TAIL = [22, 28, 20, 26, 22]
 
 
-def design_system(seed: str, mood: str = "auto", scene: str = "meeting") -> Dict[str, Any]:
+def design_system(seed: str, mood: str = "auto", scene: str = "meeting",
+                  overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """种子色 → 色彩系统。`overrides` 让判断凌驾于推导：
+    ground.light/dark（页底色，如纸色、墨绿、近黑蓝）、accent.light/dark（唯一强调色）、data/data_dark（数据色序列）。
+    给了覆盖，文字墨阶与结构色仍按新底色重新推导并保证对比度；底色不够浅/深会抛 ValueError。"""
+    ov = overrides or {}
+    ground = ov.get("ground") or {}
     seed_l, seed_c, seed_h = hex_to_lch(seed)
     tint_h = MOOD_HUE.get(mood, seed_h)
     tint_c = 3.0 if mood in MOOD_HUE else 2.0
@@ -108,30 +114,49 @@ def design_system(seed: str, mood: str = "auto", scene: str = "meeting") -> Dict
     def neutral(lab_l: float, c_mul: float = 1.0) -> str:
         return lch_to_hex(lab_l, tint_c * c_mul, tint_h)
 
-    light_bg = neutral(97.5)
-    dark_bg = neutral(12.0, 1.5)
+    light_bg = ground.get("light") or neutral(97.5)
+    dark_bg = ground.get("dark") or neutral(12.0, 1.5)
+    if ground.get("light") and hex_to_lch(light_bg)[0] < 70:
+        raise ValueError(f"ground.light {light_bg} 明度 L*<70，不是浅底；深底请写 ground.dark")
+    if ground.get("dark") and hex_to_lch(dark_bg)[0] > 35:
+        raise ValueError(f"ground.dark {dark_bg} 明度 L*>35，不是深底；浅底请写 ground.light")
+    lbg_l, lbg_c, lbg_h = hex_to_lch(light_bg)
+    dbg_l, dbg_c, dbg_h = hex_to_lch(dark_bg)
+    if ground.get("light"):
+        tint_h, tint_c = lbg_h, min(max(lbg_c, 1.5), 8.0)
     light = {
-        "bg": light_bg, "bg_alt": neutral(93.5),
+        "bg": light_bg, "bg_alt": lch_to_hex(max(lbg_l - 4.0, 0), tint_c, tint_h) if ground.get("light") else neutral(93.5),
         "ink": _until(light_bg, 12.0, 14, tint_c, tint_h, -1),
         "ink2": _until(light_bg, 7.0, 36, tint_c, tint_h, -1),
         "muted": _until(light_bg, 4.8, 52, tint_c, tint_h, -1),
-        "rule": neutral(84),
+        "rule": lch_to_hex(max(lbg_l - 13.5, 0), tint_c, tint_h) if ground.get("light") else neutral(84),
         "quiet": _until(light_bg, 3.0, 72, tint_c, tint_h, -1),   # 大字配角：≥24pt 够 3:1，又与主角拉开明度
         "accent": _until(light_bg, 4.5, min(seed_l, 55), max(seed_c, 30), seed_h, -1),
     }
+    if ground.get("dark"):
+        tint_h, tint_c = dbg_h, min(max(dbg_c, 1.5), 8.0)
     dark = {
-        "bg": dark_bg, "bg_alt": neutral(18.0, 1.5),
+        "bg": dark_bg, "bg_alt": lch_to_hex(dbg_l + 6.0, tint_c * 1.5, tint_h) if ground.get("dark") else neutral(18.0, 1.5),
         "ink": _until(dark_bg, 12.0, 95, tint_c, tint_h, 1),
         "ink2": _until(dark_bg, 7.0, 78, tint_c, tint_h, 1),
         "muted": _until(dark_bg, 4.8, 62, tint_c, tint_h, 1),
-        "rule": neutral(30, 1.5),
+        "rule": lch_to_hex(dbg_l + 18.0, tint_c * 1.5, tint_h) if ground.get("dark") else neutral(30, 1.5),
         "quiet": _until(dark_bg, 3.0, 40, tint_c, tint_h, 1),
         "accent": _until(dark_bg, 4.5, max(seed_l, 62), max(seed_c, 30), seed_h, 1),
     }
+    acc = ov.get("accent") or {}
+    if acc.get("light"):
+        al, ac_, ah = hex_to_lch(acc["light"])
+        light["accent"] = _until(light_bg, 4.5, al, ac_, ah, -1)
+    if acc.get("dark"):
+        al, ac_, ah = hex_to_lch(acc["dark"])
+        dark["accent"] = _until(dark_bg, 4.5, al, ac_, ah, 1)
     hues = [seed_h + o for o in HUE_OFFSETS]
     chroma = [max(min(seed_c, 70), 35)] + CHROMA_TAIL  # 只有首色是饱和的，其余收彩度，整套才耐看
     data = [lch_to_hex(L_STEPS[i], chroma[i], hues[i] % 360) for i in range(6)]
     data_dark = [lch_to_hex(L_STEPS_DARK[i], chroma[i], hues[i] % 360) for i in range(6)]
+    data = list(ov.get("data") or data)
+    data_dark = list(ov.get("data_dark") or data_dark)
     return {
         "scene": scene, "sizes": SCENES[scene], "light": light, "dark": dark,
         "data": data, "data_dark": data_dark,
@@ -168,8 +193,10 @@ def col(start: int, span: int) -> Tuple[float, float]:
 class Ctx:
     def __init__(self, outline: Dict[str, Any]):
         design = outline.get("design") or {}
+        overrides = {k: design[k] for k in ("ground", "accent", "data", "data_dark") if design.get(k)}
         self.system = design_system(design.get("seed", "#1F3A5F"), design.get("mood", "auto"),
-                                    design.get("scene", "meeting"))
+                                    design.get("scene", "meeting"), overrides)
+        self.motif = design.get("motif", "bar")   # "bar"：每页一道短横线母题；"none"：不画，母题由内容自己长出来
         self.sz = self.system["sizes"]
         self.fonts = design.get("fonts") or {"heading": "微软雅黑", "body": "微软雅黑"}
         self.stub = {"fonts": self.fonts}
@@ -507,6 +534,65 @@ def r_close(c: Ctx, p: Dict[str, Any]):
     return els, dark
 
 
+
+TEXT_KINDS = ("title", "body", "text", "number", "caption", "footer")
+
+
+def r_free(c: Ctx, p: Dict[str, Any]):
+    """自由构图：作者逐个写元素，系统只负责把“设计语言”翻成几何。不是配方，是配方之外的出口。
+
+    每个元素是普通 plan 元素，外加这些**可选**速记（写了才换算，其余键原样交给 schema）：
+      cols:[起列, 跨列]       → x, w（12 栏网格）；要出血或错网格就直接写 x, w
+      size: 档位名|pt          → 档位取 title/body/number/caption/hero；  fit:[最大pt, 最小pt] → 取不折行的最大字号
+      ink / color / fill 写调色名（ink ink2 muted quiet accent rule bg bg_alt）→ 换成当前明暗场的色值
+      bottom: y                → 以该 y 为文字底边（valign=bottom），不依赖框高估算
+      y 缺省且给了 after:元素id → 紧接该元素下方，gap 缺省 0.2 in
+      h 缺省（文字）            → 由 model.fit_height_in 估出
+    页级：dark 明暗场；bg 页底色（调色名或 #hex，如 accent 整页色场）。"""
+    dark = bool(p.get("dark", False))
+    pal = c.pal(dark)
+    bg = pal.get(p.get("bg", ""), p.get("bg")) or pal["bg"]
+    def tok(v: Any) -> Any:
+        return pal[v] if isinstance(v, str) and v in pal else v
+    out: List[Dict[str, Any]] = []
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for i, spec in enumerate(p["els"], 1):
+        el = {k: v for k, v in spec.items() if k not in ("cols", "size", "fit", "ink", "bottom", "after", "gap")}
+        el.setdefault("id", f"e{i}")
+        kind = el.setdefault("type", "text")
+        for key in ("color", "fill"):
+            if key in el:
+                el[key] = tok(el[key])
+        if "ink" in spec:
+            el["color"] = tok(spec["ink"])
+        if "cols" in spec:
+            el["x"], el["w"] = (round(v, 3) for v in col(*spec["cols"]))
+        if kind in TEXT_KINDS:
+            el.setdefault("pad_in", 0)
+            if "size" in spec:
+                sz = spec["size"]
+                el["font_size"] = c.sz.get(sz, c.sz["body"]) if isinstance(sz, str) else sz
+            if "fit" in spec:
+                hi, lo = spec["fit"]
+                el["font_size"] = c.fit_pt(kind, el["content"], el["w"], bg, hi, lo,
+                                           line_spacing=el.get("line_spacing"),
+                                           letter_spacing_pt=el.get("letter_spacing_pt"))
+            if "h" not in el:
+                el["h"] = c.need(dict(el, x=0, y=0), el["w"], bg)
+            if "bottom" in spec:
+                el["y"] = round(spec["bottom"] - el["h"], 3)
+                el.setdefault("valign", "bottom")
+        if "y" not in el and "after" in spec:
+            ref = by_id[spec["after"]]
+            el["y"] = round(ref["y"] + ref["h"] + spec.get("gap", 0.2), 3)
+        for k in ("x", "y", "w", "h"):
+            if k in el:
+                el[k] = round(el[k], 3)
+        by_id[el["id"]] = el
+        out.append(el)
+    return out, dark, p.get("bg")
+
+
 # recipe → (函数, 默认 role, 讲法, 必填字段)
 RECIPES = {
     "cover": (r_cover, "open", "标题底边锚在 64% 线，上方整块安静区", ("title",)),
@@ -520,6 +606,7 @@ RECIPES = {
     "steps": (r_steps, "build", "只表达先后，不画箭头", ("title", "steps")),
     "split_image": (r_split_image, "build", "半幅图承载空间，文字留在另一侧", ("title", "image")),
     "close": (r_close, "close", "收在决定与下一步", ("title",)),
+    "free": (r_free, "build", "自由构图：关系决定几何，系统只供网格、色值与字号档", ("title", "els")),
 }
 ROOT_REQUIRED = ("deck_id", "title", "audience", "goal", "core_claim", "brief", "pages")
 
@@ -542,6 +629,17 @@ def validate_outline(outline: Dict[str, Any]) -> List[str]:
         for k in RECIPES[r][3]:
             if p.get(k) in (None, "", []):
                 errs.append(f"第 {i} 页（{r}）缺少 {k}")
+        if r == "free":
+            for j, e in enumerate(p.get("els") or [], 1):
+                if not isinstance(e, dict):
+                    errs.append(f"第 {i} 页（free）第 {j} 个元素必须是对象")
+                elif e.get("type", "text") in TEXT_KINDS and not e.get("content"):
+                    errs.append(f"第 {i} 页（free）第 {j} 个文字元素缺少 content")
+                elif "cols" in e and not (isinstance(e["cols"], list) and len(e["cols"]) == 2
+                                          and 1 <= e["cols"][0] <= COLS and 1 <= e["cols"][1] <= COLS - e["cols"][0] + 1):
+                    errs.append(f"第 {i} 页（free）第 {j} 个元素 cols 须是 [起列, 跨列]，且不超出 {COLS} 栏")
+                elif "after" in e and e["after"] not in [x.get("id") for x in p["els"][:j - 1]]:
+                    errs.append(f"第 {i} 页（free）第 {j} 个元素 after 必须指向它之前的元素 id")
         if r == "compare":
             for side in ("left", "right"):
                 for k in ("label", "number", "body"):
@@ -564,14 +662,18 @@ def build_plan(outline: Dict[str, Any]) -> Dict[str, Any]:
     pages, rhythm = [], []
     for i, p in enumerate(outline["pages"], 1):
         fn, role, grammar, _req = RECIPES[p["recipe"]]
-        elements, dark = fn(ctx, p)
+        res = fn(ctx, p)
+        elements, dark = res[0], res[1]
+        if ctx.motif == "none" or p.get("motif") is False:
+            elements = [e for e in elements if e.get("id") != "bar"]
         page: Dict[str, Any] = {
             "id": p.get("id", f"p{i}"), "role": p.get("role", role), "claim": p.get("claim", p["title"]),
             "focus": p.get("focus", p["title"].split("\n")[0]), "elements": elements,
             "composition_rationale": p.get("rationale", grammar),
-            "background": ctx.pal(dark)["bg"],
+            "background": (res[2] if len(res) > 2 and res[2] else None) and ctx.pal(dark).get(res[2], res[2])
+            or ctx.pal(dark)["bg"],
         }
-        for key in ("evidence", "open_questions", "speaker_notes", "page_number_tone"):
+        for key in ("evidence", "open_questions", "speaker_notes", "page_number_tone", "focus_element", "depth"):
             if p.get(key):
                 page[key] = p[key]
         pages.append(page)
@@ -612,7 +714,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"[HARD] E-OUTLINE {e}")
         print(f"\n阻断：{len(errs)} 个 outline 问题，未写出文件。")
         return 2
-    plan = build_plan(outline)
+    try:
+        plan = build_plan(outline)
+    except ValueError as exc:
+        print(f"[HARD] E-OUTLINE design：{exc}")
+        return 2
     out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"已写出 {out}（{len(plan['pages'])} 页）。下一步：compile.py → verify.py → 看图，再手改文案与几何。")
     return 0

@@ -56,8 +56,11 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
         focus = page.get("focus_element")
         if focus and focus not in ids:
             rep.hard("E-REF", pid, f"focus_element「{focus}」不是本页元素 id")
+        _check_depth(rep, pid, page, ids)
 
         boxes = page_geometry(page)
+        if focus and focus in ids:
+            _check_dominance(rep, pid, page, focus, boxes)
 
         for item in flatten(page):
             el = item["el"]
@@ -555,6 +558,74 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
 INVISIBLE_RATIO = 1.5   # 系列色对承载面低于此值：肉眼几乎看不见，直接阻断
 
 CAPS_LABEL = re.compile(r"^[A-Z][A-Z0-9 &/·.\-–—]{2,23}$")
+
+def _check_depth(rep: Report, pid: str, page: Dict[str, Any], ids: set) -> None:
+    """`depth` 声明前/中/背景各是哪些元素；叠放顺序就是声明顺序，所以意图必须与顺序一致。"""
+    depth = page.get("depth")
+    if not depth:
+        return
+    order = [e.get("id") for e in page.get("elements") or []]
+    rank = {"background": 0, "midground": 1, "foreground": 2}
+    seen: Dict[str, str] = {}
+    pos: Dict[str, int] = {}
+    for layer in rank:
+        for eid in depth.get(layer) or []:
+            if eid not in ids:
+                rep.hard("E-REF", pid, f"depth.{layer} 里的「{eid}」不是本页元素 id")
+            elif eid in seen:
+                rep.hard("E-LAYER", f"{pid}/{eid}", f"同一元素同时声明为 {seen[eid]} 与 {layer}")
+            else:
+                seen[eid] = layer
+                if eid in order:
+                    pos[eid] = order.index(eid)
+    # 只比顶层元素；组内顺序不参与
+    ranked = sorted(pos.items(), key=lambda kv: kv[1])
+    for (a, ia), (b, ib) in zip(ranked, ranked[1:]):
+        if rank[seen[a]] > rank[seen[b]]:
+            rep.hard("E-LAYER", f"{pid}/{a}",
+                     f"「{a}」声明为 {seen[a]}，却叠在 {seen[b]} 的「{b}」之下：叠放就是声明顺序，把它写到「{b}」之后")
+            break
+
+
+def _visual_weight(el: Dict[str, Any], box: Tuple[float, float, float, float]) -> float:
+    """视觉重量的粗估（平方英寸）：文字取字面“墨量”（字号² × 字数），其余取占面积。
+    只用于比较同页元素的尺度反差，不是美学评分。"""
+    kind = el.get("type")
+    _x, _y, w, h = box
+    if kind in ("title", "body", "text", "number", "caption", "footer"):
+        pt = float(el.get("font_size") or 0) or 20.0
+        chars = len(str(el.get("content") or "").replace("\n", "")) or 1
+        return min(pt * pt * chars * 0.9 / 5184.0, w * h)
+    if kind in ("image", "chart"):
+        return w * h
+    if kind == "shape":
+        return w * h * (1.0 if el.get("color") else 0.0)
+    return 0.0
+
+
+def _check_dominance(rep: Report, pid: str, page: Dict[str, Any], focus: str, boxes: Dict[str, Any]) -> None:
+    """focus_element 说它是主角，那尺度上它要真的压得住：与同页最重的非承载元素比较。"""
+    items = flatten(page)
+    weights: Dict[str, float] = {}
+    for it in items:
+        el = it["el"]
+        eid = el.get("id")
+        if el.get("overlap_allowed") and el.get("type") in ("image", "shape"):
+            continue   # 承载层（底图、色场）不与主角争主次
+        if eid in boxes and eid != "bar":
+            weights[eid] = _visual_weight(el, boxes[eid])
+    if focus not in weights or len(weights) < 2:
+        return
+    others = {k: v for k, v in weights.items() if k != focus and v > 0}
+    if not others:
+        return
+    top_id, top_w = max(others.items(), key=lambda kv: kv[1])
+    mine = weights[focus]
+    if mine < top_w * 1.15:
+        rep.soft("W-DOMINANT", f"{pid}/{focus}",
+                 f"声明的主角「{focus}」视觉重量（≈{mine:.2f} in²）没有明显超过「{top_id}」（≈{top_w:.2f} in²）："
+                 f"放大主角、缩小或灰化配角，或改 focus_element；若本页确为并列，删掉 focus_element")
+
 
 def design_signals(plan: Dict[str, Any]) -> Report:
     """整稿层面的模式信号：指出"这一处该由你看一眼"，不是评分，也不下审美结论。

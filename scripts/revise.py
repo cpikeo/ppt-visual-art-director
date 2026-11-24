@@ -1571,6 +1571,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
     try:
         prs.save(str(tmp))
+        X.stabilize_package(tmp)
         after = inspect_deck(tmp)
         after_parts = structure(tmp)
         after_slides = slide_part_names(tmp)

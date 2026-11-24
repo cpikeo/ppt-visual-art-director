@@ -1547,6 +1547,11 @@ def make_contact_sheet(pngs: List[Path], render_dir: Path) -> List[str]:
 # ---------------------------------------------------------------- 主流程
 
 
+# 状态 ↔ 进程退出码：唯一映射。自动化只看退出码即可区分“可交付核验”“需补环境/人工”“有硬问题”。
+# 2 保留给输入/契约错误（找不到文件、plan 不合契约、路径守卫），不是核验结论。
+EXIT_BY_STATUS = {"READY": 0, "BLOCK": 1, "PARTIAL": 4}
+
+
 def decide_status(blocked: bool, render_state: str, render_facts: Dict[str, Any]) -> Tuple[str, str]:
     """BLOCK / PARTIAL / READY 的唯一判定点，返回 (status, fonts_state)。
 
@@ -1667,10 +1672,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         print("未渲染：视觉相关判断一律没有依据。不要声称「已预览」「版面无溢出」「断行正常」。")
 
+    code = EXIT_BY_STATUS[status]
+    print(f"退出码：{code}（READY=0｜BLOCK=1｜PARTIAL=4｜输入或契约错误=2）")
     if args.report:
-        Path(args.report).write_text(json.dumps({"status": status, **facts, "findings": f.to_dict()},
-                                                ensure_ascii=False, indent=2), encoding="utf-8")
-    return 0 if not f.blocked else 1
+        Path(args.report).write_text(json.dumps({"status": status, "exit_code": code, **facts,
+                                                 "findings": f.to_dict()}, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+    return code
 
 
 if __name__ == "__main__":
