@@ -758,6 +758,10 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
         got = getattr(va, attr, None)
         if got is None or abs(float(got) - float(cfg[key])) > 1e-6:
             f.add("HARD", "V-CHART", name, f"数值轴 {key} {got} ≠ plan {cfg[key]}")
+    if cfg.get("min") is None and spec.get("kind") in ("bar", "area") and H._all_non_negative(spec):
+        got = getattr(va, "minimum_scale", None)
+        if got is None or abs(float(got)) > 1e-9:
+            f.add("HARD", "V-CHART", name, f"柱/面积图数值轴起点 {got}：未声明截轴时必须从 0 起，否则差异被无声放大")
 
     titles = spec.get("axis_titles") or {}
     for key, axis in (("y", va), ("x", getattr(obj, "category_axis", None))):
@@ -779,7 +783,6 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
             f.add("HARD", "V-CHART", name, f"折线层系列 {got} ≠ plan {combo}")
 
     _verify_labels(plan, page, el, obj, name, f)
-    series_spec = spec["data"].get("series") or []
     want_legend = M.chart_flags(spec)["legend"]
     if bool(obj.has_legend) != want_legend:
         f.add("SOFT", "V-CHART", name, f"图例 {bool(obj.has_legend)} ≠ plan {want_legend}")
@@ -1071,10 +1074,6 @@ def _render_text(pdf_page) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     return lines, spans
 
 
-def _render_lines(pdf_page) -> List[Dict[str, Any]]:
-    return _render_text(pdf_page)[0]
-
-
 def _inside(box: Tuple[float, float, float, float], bbox, tol: float) -> bool:
     cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
     return (box[0] - tol <= cx <= box[0] + box[2] + tol
@@ -1145,7 +1144,11 @@ def _label_pieces(chart: Dict[str, Any]) -> List[str]:
         return []
     unit = M.chart_unit(chart)
     out: List[str] = []
+    # 组合折线层只有声明 combo_line_labels 才有直标（compile 同一规则）。
+    skip = set() if chart.get("combo_line_labels") else set(chart.get("combo_line_series") or [])
     for series in (chart.get("data") or {}).get("series") or []:
+        if series.get("name") in skip:
+            continue
         for value in series.get("values") or []:
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 out.append(f"{float(value):,.3f}".rstrip("0").rstrip(".") + unit)

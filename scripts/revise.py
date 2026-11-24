@@ -44,7 +44,6 @@ import ooxml as X  # noqa: E402
 
 qn = M.qn
 P_NS = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
-A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 REL_ID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
 
 EMU = 914400.0
@@ -653,15 +652,6 @@ def paragraph_styles(shape) -> List[Dict[str, Any]]:
     return out
 
 
-def base_style(shape) -> Dict[str, Any]:
-    """兼容旧调用：第一段第一个 run 的样式与段落属性。"""
-    paras = paragraph_styles(shape)
-    if not paras:
-        return {}
-    first = paras[0]["runs"][0] if paras[0]["runs"] else {}
-    return {**first, "align": paras[0]["align"], "line_spacing": paras[0]["line_spacing"]}
-
-
 def _first(*values: Any) -> Any:
     """第一个非 None 的值。False 与 0 都是合法值，不能用 or 链代替。"""
     for value in values:
@@ -778,7 +768,7 @@ def apply_image(shape, path: Path) -> None:
 
     if not path.is_file():
         raise M.BadOp(f"素材不存在：{path}")
-    image_part, rId = shape.part.get_or_add_image_part(str(path))
+    _, rId = shape.part.get_or_add_image_part(str(path))
     blip = shape._element.blipFill.find(qn("a:blip"))
     if blip is None:
         raise M.BadOp("目标不是图片对象")

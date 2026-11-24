@@ -181,7 +181,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
 # （Noto CJK 空格约 0.22–0.26 em；LibreOffice 还会叠加中西文自动间距，实测明显偏松；宋体空格 0.5 em）。
 _CJK_SPACE = re.compile(r"[\u3400-\u9fff][ \u00a0]+[A-Za-z0-9]|[A-Za-z0-9%][ \u00a0]+[\u3400-\u9fff]")
 
-# 12.0.0 分级：单个普通 ASCII 空格是中文排版的常规做法（中西文之间加空格是通行排法，
+# 分级：单个普通 ASCII 空格是中文排版的常规做法（中西文之间加空格是通行排法，
 # PowerPoint 里也不显松），只在 LibreOffice 渲染中叠加自动间距才显松——这是渲染器相关的
 # 风格取舍，不是缺陷，降为 I-SPACE 提示；连续两个及以上空格、不断行空格（ ）
 # 与全角空格（　）宽度不可控，在任何渲染器里都不稳，仍是必须处置的 W-SPACE。

@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：先读懂受众与证据，提炼洞察，定原创视觉概念，再组织叙事、构图、排印、色彩、图像与图表；把判断写成 brief 与 plan，确定性产出原生可编辑 PPTX，看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 13.2.0
+version: 13.3.0
 ---
 
 # PPT 视觉艺术指导
@@ -36,7 +36,7 @@ version: 13.2.0
 | 主张与证据 | 离场要记住或决定什么；证据是什么，还缺什么 | `core_claim` 页 `claim` `evidence` `open_questions` |
 | 洞察 | 观众原以为什么，证据说明什么，张力在哪 | `brief.insight` |
 | 概念与否决 | 用什么视觉关系让洞察被看见；据此否掉哪些具体的图、色、版式 | `brief.concept` `brief.veto` |
-| 艺术指导 | 图像世界：光、视角、材质、色域、颗粒 | `brief.art` |
+| 艺术指导 | 图像世界：光、视角、材质、色域、颗粒；色彩方向（主导场、唯一强调色、中性色温、图片色域如何并入） | `brief.art`（`gamut` 承载色彩方向）`palette`（仅数据色） |
 | 叙事 | 哪页建立世界，哪里转折，哪里最重，哪里停顿 | `rhythm` 页 `role` |
 | 构成 | 这页的职责，先看到什么，重心如何成立，放弃了什么 | `focus` `composition_rationale` |
 
@@ -123,7 +123,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定�
 | --- | --- |
 | 想概念、定艺术指导、排叙事、判断整稿 | `references/design.md` 〇至三 |
 | 定构图、选版式、选图表、做数据视觉 | `references/design.md` 四、五 |
-| 排版、中文字体体系、配色 | `references/design.md` 六、七 |
+| 排版、中文字体体系、色彩方向 | `references/design.md` 六、七 |
 | 规划图片、写出图简报与提示词、验收生成图 | `references/imagery.md` |
 | 诊断症状、给评审结论 | `references/design.md` 八至九 |
 | 第一次写 plan、字段被 schema 拒绝 | `references/build.md` 开头的必填与枚举速查 |

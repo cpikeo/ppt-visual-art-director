@@ -153,7 +153,6 @@ def add_chart(slide, plan, page, el):
             if names[i] in combo:
                 s.format.line.color.rgb = color
                 s.format.line.width = Pt(2.5)
-                s.smooth = False
                 s.format.fill.solid()
                 s.format.fill.fore_color.rgb = color
                 continue
@@ -189,6 +188,9 @@ def add_chart(slide, plan, page, el):
 
     if flags["data_labels"]:
         _write_labels(plot, chart_label_plan(plan, chart, bg), chart, style, family, _label_format(chart))
+
+    if kind == "pie" and flags["data_labels"]:
+        _inset_pie_plot(obj)
 
     if combo:
         line_plot = _split_combo(obj, combo, names, colors)
@@ -249,6 +251,15 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
         va.tick_labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
         if axis_cfg.get("min") is not None:
             va.minimum_scale = float(axis_cfg["min"])
+        elif kind in ("bar", "area") and _all_non_negative(chart):
+            # 柱/面积的长度即数值：自动轴会在数据挤在高位时把起点抬离 0（PowerPoint 的 5/6 规则），
+            # 差异被放大而页面上没有任何说明。要截轴必须显式写 value_axis.min 与 note。
+            va.minimum_scale = 0.0
+        elif kind == "bar" and not chart.get("stacked") and chart.get("data_labels") is not False:
+            low = _min_value(chart)
+            if low is not None and low < 0 and axis_on:
+                # 负柱的直标落在柱端之下，类别标签贴着绘图区底边：自动轴常只留半格，二者相撞。
+                va.minimum_scale = _nice_floor(low * 1.25)
         if axis_cfg.get("max") is not None:
             va.maximum_scale = float(axis_cfg["max"])
         if axis_cfg.get("major_unit") is not None:
@@ -285,6 +296,45 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
             for run in para.runs:
                 _set_run_font(run, family, LIMITS["chart"]["font_pt"]["legend"], style["body"], False)
 
+def _inset_pie_plot(obj) -> None:
+    """饼图带类别名的外侧直标需要环绕空间：自动布局会把饼撑满，标签被挤成竖排（实测 LibreOffice）。
+    给绘图区一个内缩的手动布局，两侧与上下都留出标签带。"""
+    plot_area = obj._chartSpace.find(qn("c:chart")).find(qn("c:plotArea"))
+    layout = plot_area.find(qn("c:layout"))
+    if layout is None:
+        layout = etree.Element(qn("c:layout"))
+        plot_area.insert(0, layout)
+    for child in list(layout):
+        layout.remove(child)
+    manual = etree.SubElement(layout, qn("c:manualLayout"))
+    for tag, val in (("layoutTarget", "inner"), ("xMode", "edge"), ("yMode", "edge"),
+                     ("x", "0.24"), ("y", "0.2"), ("w", "0.52"), ("h", "0.66")):
+        etree.SubElement(manual, qn("c:" + tag)).set("val", val)
+
+
+def _min_value(chart: Dict[str, Any]) -> Optional[float]:
+    values = [v for s in (chart.get("data") or {}).get("series") or [] for v in s.get("values") or []
+              if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return min(values) if values else None
+
+
+def _nice_floor(v: float) -> float:
+    """不大于 v（负数）的整齐刻度：1、2、2.5、5、10 × 10^n。"""
+    import math
+    m = abs(v)
+    mag = 10 ** math.floor(math.log10(m))
+    for k in (1, 2, 2.5, 5, 10):
+        if k * mag >= m:
+            return -k * mag
+    return -10 * mag
+
+
+def _all_non_negative(chart: Dict[str, Any]) -> bool:
+    values = [v for s in (chart.get("data") or {}).get("series") or [] for v in s.get("values") or []
+              if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return bool(values) and min(values) >= 0
+
+
 def _split_combo(obj, combo: set, names: List[str], colors: List[str]):
     """把指定系列从柱图移到折线图：两条 plot 共用同一数值轴。返回折线层元素，供直标使用。"""
 
@@ -308,6 +358,8 @@ def _split_combo(obj, combo: set, names: List[str], colors: List[str]):
     etree.SubElement(line, qn("c:marker")).set("val", "1")
     for ser in line.findall(qn("c:ser")):
         _add_line_marker(ser, colors)
+        # 缺省 smooth 在 PowerPoint/LibreOffice 里按“平滑”处理，会画出数据里没有的曲线：显式写 0。
+        etree.SubElement(ser, qn("c:smooth")).set("val", "0")
     for ax in bar.findall(qn("c:axId")):
         etree.SubElement(line, qn("c:axId")).set("val", ax.get("val"))
     bar.addnext(line)
@@ -329,7 +381,9 @@ def _label_format(chart: Dict[str, Any]) -> str:
         return base
     if unit == "%":
         return base + '"%"'
-    return base + '" ' + unit + '"'  # 长单位也要写进直标；不再静默丢弃
+    # 中文单位紧贴数字（12万），西文单位按排印惯例留一个空格（12 ms）。
+    sep = "" if ord(unit[0]) >= 0x2E80 else " "
+    return base + '"' + sep + unit + '"'  # 长单位也要写进直标；不再静默丢弃
 
 def _ser_label(ser) -> str:
     node = ser.find(qn("c:tx")).find(".//" + qn("c:v")) if ser.find(qn("c:tx")) is not None else None

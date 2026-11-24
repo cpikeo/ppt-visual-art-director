@@ -184,7 +184,7 @@ def line_pitch_em(family: Optional[str]) -> float:
 def fit_height_in(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> float:
     """框高需求（英寸）。估不准时以真实渲染为准。
 
-    12.0.0 校准（依据：dev/evals/01-tidal 五个元素的 LibreOffice 实测）：
+    按 LibreOffice 渲染实测校准：
     首行只有字形本身占可见高度，行盒里超出字形的部分是字体的 ascent/descent 余量，
     不会把墨迹推出框外；只有首行之后的每一行才按整条行盒推进。旧模型把首行也按
     pitch 计入，等于多算一整行的行距余量——11.0.0 在该样本上 5 条 W-FIT 告警里
