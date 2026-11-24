@@ -7,9 +7,12 @@ compile / verify / revise 共用这一份实现；这里不依赖 python-pptx，
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -1096,6 +1099,11 @@ def guard_paths(rep: "Report", inputs: Dict[str, Optional[Path]], outputs: List[
         seen.append((label, target))
         if suffix and target.suffix.lower() != suffix:
             rep.hard("E-FORMAT", str(target), f"{label}只能是 {suffix} 文件；收到 {target.name!r}")
+        try:
+            if target.is_file() and target.stat().st_nlink > 1:
+                rep.hard("E-EXIST", str(target), f"{label}是硬链接（链接数 {target.stat().st_nlink}），拒绝覆盖：它可能同时是别处的输入")
+        except OSError:
+            pass
         if target.is_dir():
             rep.hard("E-EXIST", str(target), f"{label}路径是目录")
         elif not target.parent.is_dir():
@@ -1112,6 +1120,83 @@ def guard_paths(rep: "Report", inputs: Dict[str, Optional[Path]], outputs: List[
             if in_path.parent == target:
                 rep.hard("E-EXIST", str(target), f"{label}是输入（{in_label}）所在的目录；产物须写进专用子目录，不碰工作目录")
                 break
+
+
+def write_atomic(path: Path, data: bytes, force: bool = False, verify: Any = None) -> None:
+    """所有 CLI 共用的落盘：同目录临时文件 → 写后回读校验 → 原子放入。
+
+    默认不覆盖：用 os.link 放入（目标已存在则失败，关闭“检查后、写入前”被抢占的窗口）；force 才 os.replace。
+    任何一步失败都清掉临时文件，已有目标一个字节不动。verify(bytes) 返回错误串或 None，写后对回读内容再验一遍。
+    """
+    path = Path(path)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        back = tmp.read_bytes()
+        if hashlib.sha256(back).digest() != hashlib.sha256(data).digest():
+            raise OSError("写后回读哈希不一致")
+        err = verify(back) if verify else None
+        if err:
+            raise ValueError(f"写后校验失败：{err}")
+        if force:
+            os.replace(tmp, path)
+        else:
+            os.link(tmp, path)   # 已存在 → FileExistsError，不覆盖
+            tmp.unlink()
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+PENDING = "【待判断】"          # scaffold 起稿时的占位：设计判断还没做，不是理由
+SCHEMA_VERSION = 2
+
+
+def pending_fields(page: Dict[str, Any]) -> List[str]:
+    """页面里仍处于“待判断”的关键设计字段（占位符、draft、缺失的构图理由）。"""
+    out = []
+    if page.get("design_state") == "draft":
+        out.append("design_state=draft")
+    for k in ("claim", "focus", "composition_rationale"):
+        if PENDING in str(page.get(k) or ""):
+            out.append(k)
+    if not str(page.get("composition_rationale") or "").strip():
+        out.append("composition_rationale（缺失）")
+    return out
+
+
+# 15.2 及以前 scaffold 会把配方说明原样写进 composition_rationale；迁移时识别并摘掉，免得被当成真实理由。
+LEGACY_GRAMMARS = (
+    "标题底边锚在 64% 线，上方整块安静区", "一句话占满视野，竖线是唯一装饰，让人停下来", "巨型序号压暗场，换气与分章",
+    "关键数字压住页面，正文只写结论与限定", "图承担读数，旁注只写意义", "两个数字同基线同尺度，落差就是论点",
+    "标题与条目同一顶线，竖线钉住两栏", "表格承担精确读数", "只表达先后，不画箭头", "半幅图承载空间，文字留在另一侧",
+    "收在决定与下一步", "自由构图：关系决定几何，系统只供网格、色值与字号档",
+)
+
+
+def migrate_plan(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
+    """旧版 plan → 当前版本，返回 (新 plan, 变更说明)。只做可证的事：不凭标题臆造 focus，不删用户写的理由。"""
+    import copy
+    new, notes = copy.deepcopy(plan), []
+    ver = new.get("schema_version", 1)
+    if ver > SCHEMA_VERSION:
+        raise ValueError(f"schema_version={ver} 比本工具（{SCHEMA_VERSION}）新，拒绝降级迁移")
+    for page in new.get("pages") or []:
+        pid = page.get("id", "?")
+        if page.get("composition_rationale") in LEGACY_GRAMMARS:
+            del page["composition_rationale"]
+            page["design_state"] = "draft"
+            notes.append(f"{pid}: composition_rationale 是配方默认说明，已移除并标 design_state=draft（待 AI 补真实构图理由）")
+        if page.get("focus") and page.get("claim") and str(page["focus"]) == str(page["claim"]).split("\n")[0]:
+            notes.append(f"{pid}: focus 与 claim 首行相同，疑为标题推断值；未改动，请复核")
+    if ver != SCHEMA_VERSION:
+        new["schema_version"] = SCHEMA_VERSION
+        notes.append(f"schema_version {ver} → {SCHEMA_VERSION}")
+    return new, notes
 
 
 def utf8_stdio() -> None:

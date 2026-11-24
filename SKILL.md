@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：读懂受众与证据，提炼洞察，定原创视觉概念，再决定构图、排印、色彩、图像、图表与整稿节奏；由 Plan 契约确定性编译为原生可编辑 PPTX（原生标题占位符、列表、图表、表格，主题色与母版跟随本稿），看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 15.2.0
+version: 15.3.0
 ---
 
 # PPT 视觉艺术指导
@@ -61,8 +61,9 @@ version: 15.2.0
 ```bash
 pip install -r requirements.txt                                       # 对象层；渲染核验另见 requirements-render.txt
 python scripts/scaffold.py system --seed "#B4421E" --mood warm       # 色彩系统 + 字号阶梯（只读）
-python scripts/scaffold.py init outline.json plan.json               # outline → plan 初稿（含 free 自由构图）
-python scripts/compile.py plan.json out.pptx [--assets DIR]          # 校验 + 编译（相同输入 → 相同字节）
+python scripts/scaffold.py init outline.json plan.json               # outline → plan 初稿；focus/构图理由未写的页标 draft（待判断，不替你判断）
+python scripts/scaffold.py migrate old-plan.json new-plan.json       # 15.2 及以前的 plan → schema_version 2（不就地改写）
+python scripts/compile.py plan.json out.pptx [--assets DIR] [--production]   # 校验 + 编译；--production：设计判断仍是 draft/待判断即阻断；同环境相同输入 → 相同字节
 python scripts/verify.py plan.json out.pptx [--assets DIR]           # 对象核对 + 渲染核对
 python scripts/revise.py inspect 原稿.pptx                            # 改稿：只读解析
 python scripts/revise.py 原稿.pptx edit.json out.pptx                 # 改稿：定点编辑 + 保留核对
@@ -72,7 +73,9 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx                 # 改稿
 
 成品原生性：页内第一个顶层 `title` 是原生标题占位符；`list` 是真正的项目符号/自动编号；图表与表格是原生对象；主题色、母版底色与标题样式跟随本稿；文字带语言标记；不整页栅格化。不自动缩字、换色、补数据、联网取图。
 
-边界：只产出 `.pptx`；已有输出与报告不覆盖（`--force` 才替换）；原稿永不就地改写；素材只从素材根内读取。
+设计判断状态：`design_state`＝`draft`（scaffold 起稿默认，待判断）／`judged`（AI 已判断）／`confirmed`（人已确认）；`composition` 记录构图语法、网格、对齐轴、阅读路径、焦点策略（single/dual/multi/none 都合法）与破格理由。这是过程记录，不是质量结论；交付前须无 draft（`compile.py --production`）。
+
+边界：只产出 `.pptx`；所有 CLI 的输出走同一套路径守卫（不覆盖输入、不经符号链接/硬链接写出、临时文件→回读校验→原子放入）；已有输出与报告不覆盖（`--force` 才替换）；原稿永不就地改写；素材只从素材根内读取。
 
 ## 五、验收：看真实成稿
 

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Tuple
 from model import non_finite_series, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
-def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
+def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -> Report:
     rep = Report()
     w, h = canvas(plan)
     tol = LIMITS["canvas"]["bound_tolerance_in"]
@@ -57,6 +57,7 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
         if focus and focus not in ids:
             rep.hard("E-REF", pid, f"focus_element「{focus}」不是本页元素 id")
         _check_depth(rep, pid, page, ids)
+        _check_design_intent(rep, pid, page, ids, production)
 
         boxes = page_geometry(page)
         if focus and focus in ids:
@@ -393,6 +394,13 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
         rep.hard("E-CHART", loc, f"类别名重复 {dup_c}：类别是饼/环取色与 color_map 的键")
     for name in non_finite_series(series):
         rep.hard("E-CHART", loc, f"系列「{name}」含非有限数值（NaN / Infinity / 非数字）")
+    if kind in ("pie", "donut"):
+        # 机器能回算的口径：以 % 表示的构成，合计应为 100；不是 100 要么数据漏项、要么需要“其他”扇区
+        for s in series:
+            unit = str(chart.get("unit") or s.get("unit") or "")
+            vals = [v for v in s.get("values", []) if isinstance(v, (int, float)) and not isinstance(v, bool)]
+            if unit.strip() in ("%", "％", "百分比") and vals and abs(sum(vals) - 100) > 0.5:
+                rep.soft("W-SUM", loc, f"系列「{s.get('name')}」各扇区合计 {sum(vals):g}%，不是 100%：补“其他”或核对口径；不要让读者自己发现缺口")
     if kind == "scatter":
         if "points" not in (series[0] if series else {}):
             rep.hard("E-CHART", loc, "scatter 的 data 需为 series[].points=[[x,y],…]")
@@ -601,6 +609,38 @@ def _visual_weight(el: Dict[str, Any], box: Tuple[float, float, float, float]) -
     if kind == "shape":
         return w * h * (1.0 if el.get("color") else 0.0)
     return 0.0
+
+
+def _check_design_intent(rep: Report, pid: str, page: Dict[str, Any], ids: set, production: bool) -> None:
+    """设计意图的“记录一致性”：判断是否已做、声明与元素是否自相矛盾。不评价构图好不好。
+    草稿模式：待判断只给 W-PENDING；生产模式（--production）：待判断即阻断 E-PENDING。"""
+    pending = M_pending(page)
+    if pending:
+        msg = f"设计判断未完成：{'、'.join(pending)}。先由 AI 按真实渲染补 focus 与 composition_rationale（并把 design_state 改为 judged）"
+        if production:
+            rep.hard("E-PENDING", pid, msg)
+        else:
+            rep.soft("W-PENDING", pid, msg + "（草稿可继续；--production 会阻断）")
+    comp = page.get("composition") or {}
+    for ref in comp.get("reading_path") or []:
+        if ref not in ids:
+            rep.hard("E-REF", pid, f"composition.reading_path 里的「{ref}」不是本页元素 id")
+    mode, focus = comp.get("focus_mode"), page.get("focus_element")
+    if mode == "none" and focus:
+        rep.hard("E-REF", pid, f"composition.focus_mode=none 与 focus_element「{focus}」自相矛盾：二者留一个")
+    if mode == "single" and not focus:
+        rep.soft("W-FOCUS", pid, "focus_mode=single 但没有 focus_element：写出主角元素 id，或改成 dual / multi / none")
+    if focus and focus in ids:
+        kind = next((e.get("type") for e in all_elements(page) if e.get("id") == focus), None)
+        if kind in ("shape", "divider", "path", "legend"):
+            rep.soft("W-FOCUS", f"{pid}/{focus}", f"focus_element 指向装饰性元素（{kind}）：主角通常是文字、数字、图像或图表；确认这是有意的")
+    if comp.get("exception") is None and mode in (None, "single") and comp.get("grid") == "none":
+        rep.info("I-GRID", pid, "本页声明不用网格（grid=none）但没有写 composition.exception：说明秩序由什么建立")
+
+
+def M_pending(page: Dict[str, Any]) -> List[str]:
+    from model import pending_fields
+    return pending_fields(page)
 
 
 def _check_dominance(rep: Report, pid: str, page: Dict[str, Any], focus: str, boxes: Dict[str, Any]) -> None:

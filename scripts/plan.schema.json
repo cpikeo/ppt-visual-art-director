@@ -88,6 +88,13 @@
       "items": {
         "$ref": "#/$defs/page"
       }
+    },
+    "schema_version": {
+      "enum": [
+        1,
+        2
+      ],
+      "description": "Plan 契约版本。缺省视为 1（15.2 及以前）；2 起页面可带 design_state 与 composition。旧稿用 scaffold.py migrate 升级。"
     }
   },
   "$defs": {
@@ -451,6 +458,78 @@
             }
           },
           "description": "前中后景分别由哪些元素承担（元素 id）。引用与叠放顺序由 checks 核对（E-REF / E-LAYER）。"
+        },
+        "design_state": {
+          "enum": [
+            "draft",
+            "judged",
+            "confirmed"
+          ],
+          "description": "设计判断状态。draft=待判断（scaffold 起稿默认，生产模式阻断）；judged=AI 已做判断；confirmed=人已确认。缺省视为 judged（旧稿）。这是过程记录，不是质量结论。"
+        },
+        "composition": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "构图意图（可选）。机器只校验 reading_path / focus_mode 与元素的一致性；strategy、axes、exception 是给后续修订与复核看的语义记录。",
+          "properties": {
+            "strategy": {
+              "enum": [
+                "grid",
+                "editorial",
+                "asymmetric",
+                "type_led",
+                "image_led",
+                "data_led",
+                "diagram_led",
+                "modular",
+                "free"
+              ],
+              "description": "构图语法。"
+            },
+            "focus_mode": {
+              "enum": [
+                "single",
+                "dual",
+                "multi",
+                "none"
+              ],
+              "description": "视觉焦点策略；dual/multi/none 都是合法页面，none 时不应写 focus_element。"
+            },
+            "grid": {
+              "type": "string",
+              "description": "本页网格规格，如 12x6、8col、none；破格时与 exception 对读。"
+            },
+            "axes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              },
+              "description": "关键对齐轴，如 x=0.80in 左轴。"
+            },
+            "reading_path": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/str"
+              },
+              "description": "阅读顺序，元素 id 列表（机器校验引用）。"
+            },
+            "exception": {
+              "$ref": "#/$defs/str",
+              "description": "破格说明：破了哪条、换来什么、谁承担代价。"
+            },
+            "source": {
+              "enum": [
+                "recipe",
+                "author",
+                "user"
+              ],
+              "description": "构图的来源：scaffold 配方建议 / 作者（AI）判断 / 用户指定。"
+            },
+            "recipe": {
+              "$ref": "#/$defs/str",
+              "description": "起稿所用配方名；仅记录来源，不是设计理由。"
+            }
+          }
         }
       }
     },

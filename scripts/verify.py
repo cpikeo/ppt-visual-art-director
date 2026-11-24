@@ -1675,9 +1675,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     code = EXIT_BY_STATUS[status]
     print(f"退出码：{code}（READY=0｜BLOCK=1｜PARTIAL=4｜输入或契约错误=2）")
     if args.report:
-        Path(args.report).write_text(json.dumps({"status": status, "exit_code": code, **facts,
-                                                 "findings": f.to_dict()}, ensure_ascii=False, indent=2),
-                                     encoding="utf-8")
+        M.write_atomic(Path(args.report), json.dumps({"status": status, "exit_code": code, **facts,
+                                                      "findings": f.to_dict()}, ensure_ascii=False, indent=2).encode("utf-8"),
+                       args.force)
     return code
 
 

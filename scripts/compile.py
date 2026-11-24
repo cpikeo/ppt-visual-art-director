@@ -29,7 +29,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import write_atomic, EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import stable_xlsx as _stable_xlsx, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -495,6 +495,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--assets", default=None, help="素材目录；缺省为 plan 同级 assets/ 或 plan 所在目录")
     parser.add_argument("--report", default=None, help="把诊断写成 JSON")
     parser.add_argument("--force", action="store_true", help="允许替换已存在的输出文件")
+    parser.add_argument("--production", action="store_true", help="生产模式：设计判断仍是待判断（draft / 占位符 / 缺构图理由）即阻断；默认草稿模式只提示")
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan).resolve()
@@ -512,15 +513,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")
         return 2
 
-    rep.extend(validate(plan, asset_root))
+    rep.extend(validate(plan, asset_root, args.production))
     rep.extend(design_signals(plan))
     for issue in rep.items:
         print(issue)
     if rep.blocked:
         print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")
         if args.report:
-            Path(args.report).write_text(json.dumps({"blocked": True, "issues": rep.to_dict()},
-                                                    ensure_ascii=False, indent=2), encoding="utf-8")
+            write_atomic(Path(args.report), json.dumps({"blocked": True, "issues": rep.to_dict()},
+                                                       ensure_ascii=False, indent=2).encode("utf-8"), args.force)
         return 2
 
     try:
@@ -542,13 +543,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"\n已写出 {out_path}（{len(plan['pages'])} 页，{canvas(plan)[0]}×{canvas(plan)[1]} in）"
           f"  警告 {rep.count('SOFT')}，提示 {rep.count('INFO')}")
     if args.report:
-        Path(args.report).write_text(json.dumps({
+        write_atomic(Path(args.report), json.dumps({
             "blocked": False,
             "output": str(out_path),
             "pages": len(plan["pages"]),
             "sha256": hashlib.sha256(out_path.read_bytes()).hexdigest(),
             "issues": rep.to_dict(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        }, ensure_ascii=False, indent=2).encode("utf-8"), args.force)
     return 0
 
 if __name__ == "__main__":

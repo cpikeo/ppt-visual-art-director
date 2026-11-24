@@ -60,7 +60,18 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 每页的 `eyebrow` 是眉题（小号、位于母题横线右侧）。outline 缺字段或 `recipe` 写错时，`scaffold.py init` 以 `E-OUTLINE` 逐条说明并退出 2，不写文件。
 
-每页可覆盖 `role` `claim` `focus` `rationale` `beat` `speaker_notes` `evidence` `open_questions` `dark` `focus_element` `depth`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
+每页可覆盖 `role` `claim` `focus` `rationale` `composition` `design_state` `beat` `speaker_notes` `evidence` `open_questions` `dark` `focus_element` `depth`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
+
+## 设计意图字段与状态（schema_version 2）
+
+| 字段 | 位置 | 含义 | 谁来校验 |
+| --- | --- | --- | --- |
+| `schema_version` | 根 | 缺省=1（15.2 及以前）；当前 2。旧稿 `scaffold.py migrate` 升级，不就地改写 | schema 枚举 |
+| `design_state` | 页 | `draft` 待判断／`judged` AI 已判断／`confirmed` 人已确认；缺省按 judged（旧稿） | `W-PENDING`；`--production` 下 `E-PENDING` |
+| `composition.strategy / focus_mode / grid / axes / exception / source / recipe` | 页 | 构图语法、焦点策略（single dual multi none）、网格规格、对齐轴、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | 仅一致性：`W-FOCUS` |
+| `composition.reading_path` | 页 | 阅读顺序（元素 id） | `E-REF` 引用必须存在 |
+
+scaffold 不再把配方说明写进 `composition_rationale`、不再用标题推断 `focus`：作者没写，`focus` 为占位符 `【待判断】`、页标 `draft`；`focus` 与 `rationale` 都写了才标 `judged`。`focus_mode: none` 与 `focus_element` 同时出现 → `E-REF`；`single` 却没有 `focus_element` → `W-FOCUS`。`W-SUM`：以 % 表示的饼/环合计不是 100。`free` 页元素 id 不再与母题保留 id `bar` 冲突；调色名在 `runs`/`stroke`/`gradient` 里同样生效。`W-DOMINANT` 等仍是面积/字号的粗略线索，不是视觉质量判定。
 
 ## 坐标与元素
 

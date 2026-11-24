@@ -493,7 +493,8 @@ def r_table(c: Ctx, p: Dict[str, Any]):
     x, w = col(1, 12)
     rows = len(p["table"]["rows"]) + 1
     els.append({"id": "tb", "type": "chart", "x": round(x, 3), "y": round(top, 3), "w": round(w, 3),
-                "h": round(min(FOOT - 0.1 - top, rows * 0.8), 3), "chart": {"kind": "table", "data": p["table"]}})
+                "h": round(min(FOOT - 0.1 - top, rows * 0.8), 3), "chart": {"kind": "table", "data": {"headers": p["table"]["headers"], "rows": p["table"]["rows"]},
+                          **{k: p["table"][k] for k in ("column_align", "column_weights") if k in p["table"]}}})
     return els + _note(c, p, dark), dark
 
 
@@ -587,6 +588,13 @@ def r_free(c: Ctx, p: Dict[str, Any]):
         for key in ("color", "fill"):
             if key in el:
                 el[key] = tok(el[key])
+        # 调色名在所有会写颜色的地方一致生效：runs、描边、渐变（此前只认 color/fill/ink，写在别处会被 schema 拒绝）
+        if isinstance(el.get("runs"), list):
+            el["runs"] = [dict(r, color=tok(r["color"])) if isinstance(r, dict) and "color" in r else r for r in el["runs"]]
+        if isinstance(el.get("stroke"), dict) and "color" in el["stroke"]:
+            el["stroke"] = dict(el["stroke"], color=tok(el["stroke"]["color"]))
+        if isinstance(el.get("gradient"), dict):
+            el["gradient"] = {k: (tok(v) if k in ("from", "to") else v) for k, v in el["gradient"].items()}
         if kind == "chart" and isinstance(el.get("chart"), dict):
             # 暗场上的图表用暗场数据色序列（与 chart 配方同一来源），作者可用 chart.palette 覆盖
             el["chart"] = dict(el["chart"])
@@ -651,6 +659,8 @@ def _span_ok(v: Any, n: int) -> bool:
 def validate_outline(outline: Dict[str, Any]) -> List[str]:
     """把常见的写错变成一句人话，而不是 KeyError 堆栈。"""
     errs: List[str] = []
+    if not isinstance(outline, dict):
+        return ["outline 根必须是 JSON 对象"]
     for k in ROOT_REQUIRED:
         if k not in outline:
             errs.append(f"根字段缺少 {k}")
@@ -659,6 +669,9 @@ def validate_outline(outline: Dict[str, Any]) -> List[str]:
         errs.append("pages 必须是非空数组")
         return errs
     for i, p in enumerate(pages, 1):
+        if not isinstance(p, dict):
+            errs.append(f"第 {i} 页必须是对象")
+            continue
         r = p.get("recipe")
         if r not in RECIPES:
             errs.append(f"第 {i} 页 recipe={r!r} 不存在；可选：{'、'.join(RECIPES)}")
@@ -695,8 +708,11 @@ def validate_outline(outline: Dict[str, Any]) -> List[str]:
 
 
 def build_plan(outline: Dict[str, Any]) -> Dict[str, Any]:
+    """outline → plan。scaffold 只做几何与色值的算术：作者没写的设计判断（focus、构图理由、节奏）
+    一律留成 PENDING 并把页标成 draft，不拿配方说明或标题冒充判断；作者两者都写了才算 judged。"""
     ctx = Ctx(outline)
     plan: Dict[str, Any] = {k: v for k, v in outline.items() if k not in ("design", "pages")}
+    plan["schema_version"] = M.SCHEMA_VERSION
     plan["fonts"] = ctx.fonts
     plan["palette"] = ctx.system["data"]
     pages, rhythm = [], []
@@ -704,23 +720,55 @@ def build_plan(outline: Dict[str, Any]) -> Dict[str, Any]:
         fn, role, grammar, _req = RECIPES[p["recipe"]]
         res = fn(ctx, p)
         elements, dark = res[0], res[1]
-        if ctx.motif == "none" or p.get("motif") is False:
+        if p["recipe"] != "free" and (ctx.motif == "none" or p.get("motif") is False):   # free 页的元素 id 归作者，不与母题保留 id 撞车
             elements = [e for e in elements if e.get("id") != "bar"]
+        authored = bool(p.get("focus") and p.get("rationale"))
         page: Dict[str, Any] = {
-            "id": p.get("id", f"p{i}"), "role": p.get("role", role), "claim": p.get("claim", p["title"]),
-            "focus": p.get("focus", p["title"].split("\n")[0]), "elements": elements,
-            "composition_rationale": p.get("rationale", grammar),
+            "id": p.get("id", f"p{i}"), "role": p.get("role", role),
+            "focus": p.get("focus") or M.PENDING, "elements": elements,
+            "design_state": p.get("design_state") or ("judged" if authored else "draft"),
+            "composition": {**{"source": "author" if authored else "recipe", "recipe": p["recipe"]},
+                            **(p.get("composition") if isinstance(p.get("composition"), dict) else {})},
             "background": (res[2] if len(res) > 2 and res[2] else None) and ctx.pal(dark).get(res[2], res[2])
             or ctx.pal(dark)["bg"],
         }
+        if p.get("claim"):
+            page["claim"] = p["claim"]
+        if p.get("rationale"):
+            page["composition_rationale"] = p["rationale"]
         for key in ("evidence", "open_questions", "speaker_notes", "page_number_tone", "focus_element", "depth"):
             if p.get(key):
                 page[key] = p[key]
         pages.append(page)
-        rhythm.append(p.get("beat") or f"{page['role']}：{grammar}")
+        rhythm.append(p.get("beat") or f"{page['role']}：{M.PENDING}")
     plan["pages"] = pages
     plan["rhythm"] = rhythm
     return plan
+
+
+def _guard(rep: M.Report, inputs: Dict[str, Path], out: Path, force: bool) -> bool:
+    """init / migrate 共用：与 compile / verify / revise 同一套路径守卫（model.guard_paths）。"""
+    M.guard_paths(rep, inputs, [("输出文件", out, ".json")], force)
+    for issue in rep.items:
+        print(issue)
+    return not rep.blocked
+
+
+def _emit(out: Path, data: Dict[str, Any], force: bool) -> bool:
+    def check(b: bytes) -> Optional[str]:
+        try:
+            return None if isinstance(json.loads(b.decode("utf-8")), dict) else "根不是对象"
+        except ValueError as exc:
+            return str(exc)
+    try:
+        M.write_atomic(out, json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"), force, check)
+    except FileExistsError:
+        print(f"[HARD] E-EXIST {out} 在写入前被创建，未覆盖")
+        return False
+    except (OSError, ValueError) as exc:
+        print(f"[HARD] E-RUNTIME 写出失败，未留下半成品：{exc}")
+        return False
+    return True
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -731,36 +779,64 @@ def main(argv: Optional[List[str]] = None) -> int:
     s1.add_argument("--seed", required=True)
     s1.add_argument("--mood", default="auto", choices=["auto", "warm", "cool"])
     s1.add_argument("--scene", default="meeting", choices=list(SCENES))
-    s2 = sub.add_parser("init", help="outline.json → plan.json 初稿")
+    s2 = sub.add_parser("init", help="outline.json → plan.json 初稿（设计判断留 draft）")
     s2.add_argument("outline")
     s2.add_argument("out")
-    s2.add_argument("--force", action="store_true")
+    s2.add_argument("--force", action="store_true", help="允许替换已存在的输出（仍不得覆盖输入、不经符号链接）")
+    s3 = sub.add_parser("migrate", help="旧版 plan.json → 当前 schema_version，不就地改写")
+    s3.add_argument("plan")
+    s3.add_argument("out")
+    s3.add_argument("--force", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "system":
-        print(json.dumps(design_system(a.seed, a.mood, a.scene), ensure_ascii=False, indent=2))
+        try:
+            print(json.dumps(design_system(a.seed, a.mood, a.scene), ensure_ascii=False, indent=2))
+        except (ValueError, TypeError) as exc:
+            print(f"[HARD] E-OUTLINE seed：{exc}")
+            return 2
         return 0
-    out = Path(a.out)
-    if out.exists() and not a.force:
-        print(f"[HARD] E-EXIST {out} 已存在；确认要替换才加 --force")
+    src, out = Path(a.outline if a.cmd == "init" else a.plan), Path(a.out)
+    rep = M.Report()
+    if not _guard(rep, {"输入": src}, out, a.force):
+        print("\n阻断：路径不安全，未写出文件。")
         return 2
     try:
-        outline = json.loads(Path(a.outline).read_text(encoding="utf-8"))
+        data = json.loads(src.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
-        print(f"[HARD] E-OUTLINE 读不了 {a.outline}：{exc}")
+        print(f"[HARD] E-OUTLINE 读不了 {src}：{exc}")
         return 2
-    errs = validate_outline(outline)
+    if a.cmd == "migrate":
+        if not isinstance(data, dict):
+            print("[HARD] E-SCHEMA plan 根必须是 JSON 对象")
+            return 2
+        try:
+            new, notes = M.migrate_plan(data)
+        except ValueError as exc:
+            print(f"[HARD] E-SCHEMA {exc}")
+            return 2
+        if not _emit(out, new, a.force):
+            return 3
+        print("\n".join(f"  · {n}" for n in notes) or "  · 已是当前版本，无需变更")
+        print(f"已写出 {out}。迁移只做可证的变更；请再跑 compile.py 校验。")
+        return 0
+    errs = validate_outline(data)
     if errs:
         for e in errs:
             print(f"[HARD] E-OUTLINE {e}")
         print(f"\n阻断：{len(errs)} 个 outline 问题，未写出文件。")
         return 2
     try:
-        plan = build_plan(outline)
-    except ValueError as exc:
-        print(f"[HARD] E-OUTLINE design：{exc}")
+        plan = build_plan(data)
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        print(f"[HARD] E-OUTLINE 无法生成 plan：{type(exc).__name__}: {exc}")
         return 2
-    out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    if not _emit(out, plan, a.force):
+        return 3
+    draft = [p["id"] for p in plan["pages"] if p["design_state"] == "draft"]
     print(f"已写出 {out}（{len(plan['pages'])} 页）。下一步：compile.py → verify.py → 看图，再手改文案与几何。")
+    if draft:
+        print(f"[PENDING] {len(draft)} 页设计判断未完成（focus / composition_rationale 待写）：{', '.join(draft)}；"
+              f"草稿可继续编译，交付前用 compile.py --production 复核。")
     return 0
 
 

@@ -1539,7 +1539,7 @@ def inspect_cli(argv: List[str]) -> int:
     data = inspect_deck(src)
     print(to_markdown(data))
     if args.json:
-        Path(args.json).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        M.write_atomic(Path(args.json), json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"), args.force)
     return 0
 
 
@@ -1650,13 +1650,14 @@ def main(argv: Optional[List[str]] = None) -> int:
           f"｜包内 {facts['parts']['parts']} 部件（越界改动 {facts['parts']['changed']}／丢失 {facts['parts']['lost']}"
           f"／声明过的改写 {len(facts['parts']['moved'])}）")
     if report_path:
-        report_path.write_text(json.dumps({
+        M.write_atomic(report_path, json.dumps({
             "status": status,
-            "source": str(src), "output": str(out),
+            "source": str(src), "source_sha256": hashlib.sha256(src.read_bytes()).hexdigest(),
+            "output": str(out),
             "sha256": hashlib.sha256(out.read_bytes()).hexdigest() if out.is_file() and not rep.blocked else None,
             "ops": log, "preservation": facts,
             "issues": rep.to_dict(),
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        }, ensure_ascii=False, indent=2).encode("utf-8"), args.force)
     if not rep.blocked and not src.samefile(out):
         print("原稿未被改动；母版、动画、切换、SmartArt、备注按原样保留。")
     print("机器能证明的到此为止：改动后的版面是否更好看，仍需自己看渲染。")
