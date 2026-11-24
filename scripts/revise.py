@@ -783,10 +783,20 @@ def apply_chart(shape, op: Dict[str, Any]) -> None:
     chart = shape.chart
     if len(chart.plots) > 1:
         raise M.BadOp("该图有多个图层（组合图）：改数据会同时打乱两层格式，请整稿重建")
+    if chart._chartSpace.find(".//" + M.qn("c:scatterChart")) is not None:
+        raise M.BadOp("chart_data 只支持类别型图表；散点图的 (x, y) 点集请整稿重建")
     data = op.get("data") or {}
     cats, series = data.get("categories") or [], data.get("series") or []
     if not cats or not series:
         raise M.BadOp("chart_data 需要 data.categories 与 data.series")
+    # 与新建图表同一条数据契约（plan 校验 checks.py 用的也是 model.non_finite_series）。
+    bad = M.non_finite_series(series)
+    if bad:
+        raise M.BadOp(f"系列 {bad} 含非有限数值（NaN / Infinity / 布尔 / 非数字）；与新建图表的 E-CHART 规则一致，拒绝写入")
+    names = [str(s.get("name")) for s in series if s.get("name")]
+    dup = sorted({n for n in names if names.count(n) > 1})
+    if dup:
+        raise M.BadOp(f"系列名重复 {dup}：名称是颜色与图例的唯一键")
     existing = [s.name for s in chart.plots[0].series]
     if len(series) != len(existing):
         raise M.BadOp(f"系列数 {len(series)} ≠ 原图 {len(existing)}；加减系列会破坏配色与格式，请重建")
@@ -801,6 +811,17 @@ def apply_chart(shape, op: Dict[str, Any]) -> None:
             raise M.BadOp(f"系列「{s.get('name')}」值数 {len(s.get('values') or [])} ≠ 类别数 {len(cats)}")
         if s.get("name") and s["name"] != existing[i]:
             raise M.BadOp(f"第 {i + 1} 个系列名 {s['name']!r} ≠ 原图 {existing[i]!r}；改名会丢图例格式")
+    # 原图若固定了数值轴范围，新数值落在范围外会被无声裁掉：直接拒绝，改范围属于整稿重建。
+    va_min = va_max = None
+    try:
+        va_min, va_max = chart.value_axis.minimum_scale, chart.value_axis.maximum_scale
+    except (AttributeError, ValueError):
+        pass
+    flat = [float(v) for s in series for v in s["values"]]
+    if va_min is not None and min(flat) < va_min:
+        raise M.BadOp(f"新数值最小 {min(flat)} 低于原图固定的数值轴下限 {va_min}，会被裁掉；请整稿重建并重设轴范围")
+    if va_max is not None and max(flat) > va_max:
+        raise M.BadOp(f"新数值最大 {max(flat)} 高于原图固定的数值轴上限 {va_max}，会被裁掉；请整稿重建并重设轴范围")
     payload = CategoryChartData()
     payload.categories = cats
     for s in series:

@@ -63,18 +63,34 @@ def _ser_name(ser) -> str:
     return node.text if node is not None and node.text else ""
 
 
+def marker_of(ser) -> dict:
+    """成品里一个系列的 marker：symbol、size、填充色、边线色（只读 XML；缺省返回 None 值）。"""
+    m = ser.find(qn("c:marker"))
+    if m is None:
+        return {"symbol": None, "size": None, "fill": None, "line": None}
+    sp = m.find(qn("c:spPr"))
+    size = _val(m, "c:size")
+    return {"symbol": _val(m, "c:symbol"), "size": int(size) if size and size.isdigit() else None,
+            "fill": _srgb(sp), "line": _srgb(sp.find(qn("a:ln")) if sp is not None else None)}
+
+
 def _fill(ser, plot_tag: str, idx: Optional[int]) -> Optional[str]:
-    """点（或系列）实际的填充色：折线/散点取线色，其余取实心填充；逐点 dPt 优先。"""
+    """点（或系列）实际的填充色：折线取线色，散点取 marker 填充（线被关掉了），其余取实心填充；逐点 dPt 优先。"""
     if idx is not None:
         for dpt in ser.findall(qn("c:dPt")):
             if _val(dpt, "c:idx") == str(idx):
-                got = _srgb(dpt.find(qn("c:spPr")))
+                got = marker_of(dpt)["fill"] if plot_tag == "scatterChart" else _srgb(dpt.find(qn("c:spPr")))
                 if got:
                     return got
+    if plot_tag == "scatterChart":
+        mk = marker_of(ser)
+        if mk["symbol"] == "none":
+            return None
+        return mk["fill"] or mk["line"]
     sp = ser.find(qn("c:spPr"))
     if sp is None:
         return None
-    if plot_tag in ("lineChart", "scatterChart"):
+    if plot_tag == "lineChart":
         return _srgb(sp.find(qn("a:ln")))
     return _srgb(sp)
 
@@ -205,7 +221,7 @@ def audit_series_surface(chart_space, surface: str, kind: str) -> List[Finding]:
         tag = etree.QName(plot).localname
         for ser in plot.findall(qn("c:ser")):
             colors = [(_fill(ser, tag, None), _ser_name(ser))]
-            colors += [(_srgb(d.find(qn("c:spPr"))), f"{_ser_name(ser)}#{_val(d, 'c:idx')}") for d in ser.findall(qn("c:dPt"))]
+            colors += [(_fill(ser, tag, int(_val(d, "c:idx") or 0)), f"{_ser_name(ser)}#{_val(d, 'c:idx')}") for d in ser.findall(qn("c:dPt"))]
             for color, label in colors:
                 if not color or color in seen:
                     continue
@@ -265,6 +281,37 @@ def audit_readout(chart_space, kind: str, legend_element: bool = False, legend_s
     return out
 
 
+def audit_markers(chart_space, kind: str) -> List[Finding]:
+    """marker 的成品属性：散点的数据点就是 marker，看不见等于数据不存在；折线的 marker 须与线同色。
+
+    只读 XML。散点 marker 色对承载面的对比与灰度由 audit_series_surface / audit_gray 经 _fill 覆盖；
+    散点颜色等不等于 plan 的调色板由 verify 另核；这里回答“marker 在不在、够不够大、是否连了线”。
+    """
+    out: List[Finding] = []
+    for plot in _plots(chart_space):
+        tag = etree.QName(plot).localname
+        if tag not in ("scatterChart", "lineChart"):
+            continue
+        for ser in plot.findall(qn("c:ser")):
+            name, mk = _ser_name(ser), marker_of(ser)
+            if tag == "scatterChart":
+                color = mk["fill"] or mk["line"]
+                if mk["symbol"] == "none" or color is None:
+                    out.append(("HARD", "V-MARKER", f"散点系列「{name}」成品没有可见 marker（symbol={mk['symbol']}，填充={mk['fill']}）：数据点不会出现在图上"))
+                    continue
+                if mk["size"] is not None and mk["size"] < 5:
+                    out.append(("SOFT", "V-MARKER", f"散点系列「{name}」marker 仅 {mk['size']}pt，投影下点会读不到"))
+                ln = ser.find(qn("c:spPr") + "/" + qn("a:ln"))
+                if ln is None or ln.find(qn("a:noFill")) is None:
+                    out.append(("SOFT", "V-MARKER", f"散点系列「{name}」没有关闭连线：连线会暗示不存在的顺序"))
+            elif mk["symbol"] not in (None, "none"):
+                line = _srgb(ser.find(qn("c:spPr") + "/" + qn("a:ln")) if ser.find(qn("c:spPr")) is not None else None)
+                if mk["fill"] and line and mk["fill"] != line:
+                    out.append(("SOFT", "V-MARKER", f"折线「{name}」marker 色 {mk['fill']} ≠ 线色 {line}：读者会把点与线看成两个系列"))
+    return out
+
+
 def audit_chart(chart_space, surface: str, kind: str) -> List[Finding]:
     return (audit_labels(chart_space, surface) + audit_structure(chart_space, surface)
-            + audit_series_surface(chart_space, surface, kind) + audit_gray(chart_space, kind))
+            + audit_series_surface(chart_space, surface, kind) + audit_gray(chart_space, kind)
+            + audit_markers(chart_space, kind))

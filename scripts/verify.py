@@ -707,7 +707,19 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
             want = palette[j] if j < len(palette) else None
             if want is None or srgb is None or f"#{srgb.get('val').upper()}" != want:
                 f.add("HARD", "V-CHART", name, f"第 {j + 1} 个扇区颜色 ≠ 调色板 {want}")
-    elif kind != "scatter":
+    elif kind == "scatter":
+        # 散点的颜色在 marker 上，不在系列线上；读成品 marker，与调色板逐系列对账。
+        for ser in obj._chartSpace.iter(qn("c:ser")):
+            sname = _ser_name(ser)
+            if sname not in order:
+                continue
+            want = palette[order[sname]] if order[sname] < len(palette) else None
+            mk = A.marker_of(ser)
+            if want is None or mk["fill"] != want:
+                f.add("HARD", "V-CHART", name, f"散点系列「{sname}」marker 填充 {mk['fill']} ≠ 调色板 {want}")
+            if mk["line"] is not None and mk["line"] != want:
+                f.add("HARD", "V-CHART", name, f"散点系列「{sname}」marker 边线 {mk['line']} ≠ 调色板 {want}")
+    else:
         for ser in obj._chartSpace.iter(qn("c:ser")):
             sname = _ser_name(ser)
             if sname not in order:

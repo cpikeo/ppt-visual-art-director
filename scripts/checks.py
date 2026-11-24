@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-from model import LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import non_finite_series, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
 def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
@@ -385,10 +385,8 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
     dup_c = sorted({c for c in cats_all if cats_all.count(c) > 1})
     if dup_c:
         rep.hard("E-CHART", loc, f"类别名重复 {dup_c}：类别是饼/环取色与 color_map 的键")
-    for x in series:
-        flat = [v for v in (x.get("values") or [])] + [c for pt in (x.get("points") or []) for c in pt]
-        if any(v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or abs(v) == float("inf")) for v in flat):
-            rep.hard("E-CHART", loc, f"系列「{x.get('name')}」含非有限数值（NaN / Infinity / 非数字）")
+    for name in non_finite_series(series):
+        rep.hard("E-CHART", loc, f"系列「{name}」含非有限数值（NaN / Infinity / 非数字）")
     if kind == "scatter":
         if "points" not in (series[0] if series else {}):
             rep.hard("E-CHART", loc, "scatter 的 data 需为 series[].points=[[x,y],…]")

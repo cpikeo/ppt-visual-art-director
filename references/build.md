@@ -90,7 +90,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 | `line` | — | 等距类别折线（不按真实日期定位） |
 | `area` | `stacked` | 面积、堆叠面积 |
 | `pie` `donut` | — | 单系列、非负值。缺省 `data_labels` 开（饼带类别名，环只有读数）、`legend` 关；读数闭环见下 |
-| `scatter` | — | `series[].points = [[x, y], …]` |
+| `scatter` | — | `series[].points = [[x, y], …]`（单点系列允许：用来把一个主角从背景点群里单独标出） |
 | `table` | `column_weights`、`column_align` | 原生表格；数据写 `data: {"headers": [...], "rows": [[...], ...]}`，不是 series |
 
 - **颜色映射只有一处**：`model.chart_color_map(plan, chart)` 按下表优先级解析出「类别/系列 → 颜色」，compile、checks、verify、自定义图例全部读它，没有第二份实现。
@@ -130,6 +130,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 - **饼**带类别名直标时，绘图区内缩留出标签带；直标单位：中文单位紧贴数字（`12万`），西文单位留一个空格（`12 ms`）。
 - 直标：`data_labels` 作用于柱、线、面积、饼、环与组合图的柱层；组合折线的直标需 `combo_line_labels: true`。
 - 硬检查：系列名唯一、类别名唯一（它们是颜色映射与 `combo_line_series` 的键）、数值有限（非 NaN / Infinity）；同图单位一致；期间与口径不一致阻断；`axis_labels: false` 须同时 `data_labels: true`；百分比堆叠每列合计 100；截轴（`min > 0`）须在 `value_axis.note` 写明起点，且该起点要落在页面可见的 caption、轴名或图题上（否则 `W-NOTE`）；饼与环既无直标也无图例即阻断。
+- **改稿 `chart_data`** 与新建图表同一条数据契约：数值须为有限实数（`model.non_finite_series`，NaN / Infinity / 布尔 / 字符串一律拒绝）、系列名不重复；只改数值不改类别与系列数；原图固定了数值轴 `min`/`max` 而新数值越界会被无声裁掉，直接拒绝；组合图与散点图不接受 `chart_data`，请整稿重建。
 - 不支持气泡、雷达、树图、瀑布、桑基、甘特、趋势线、误差线。其余关系用形状与路径手工组合，不与数据绑定。
 
 ## 页码
@@ -159,7 +160,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
 - `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积）。
 - `--assets` 缺省取 plan 同级 `assets/`，否则取 plan 所在目录。`verify.py` 的渲染目录缺省为 `render/<pptx 名>/`。
-- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物）；`verify.py` 0 无阻断、1 有阻断或格式不合格；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
+- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 0 无阻断、1 有阻断或格式不合格；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
 
 ## 诊断码
 
@@ -171,6 +172,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
 | `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块）、系列色沉进承载面、图例与强调柱对不上 | 改措辞、拆图、补颜色映射；错色没有放行开关 |
 | `V-LABEL-INK` `V-LABEL-POS` | 成品图表里：直标/轴/图例墨色落在其真实表面上 < 4.5:1（`chart_audit.py` 只读 XML）；或 `dLblPos` 对该图表类型非法；或墨色与决策表不一致 | 重新编译；手改成品会再次被拦 |
+| `V-MARKER` | 成品图表里：散点 marker 不可见（symbol=none 或无填充）、小于 5pt、没有关闭连线；折线 marker 色 ≠ 线色。散点 marker 色与调色板对不上记 `V-CHART`；marker 对承载面的对比、灰度区分由 `chart_audit` 经 marker 填充计算（`V-CONTRAST` `V-GRAY`） | 重新编译；手改成品会再次被拦 |
 | `W-GRAY` | **任意两个**系列的颜色转灰度后明度差 ΔL* 低于 `chart.min_series_delta_lstar`（成品里同一判断为 `V-GRAY`） | 拉开明度，或直标系列名、换线型与标记 |
 | `E-CHART`（读数） | 饼/环没有任何类别来源：饼需直标、原生图例或 `legend` 元素之一；环内直标只有数值，需原生图例或 `legend` 元素 | 开 `legend`／加 `legend` 元素；纯图例无数值直标给 `W-CHART` |
 | `V-READOUT` | 成品饼/环里读不到类别（HARD）或数值（SOFT）：只读 XML 里的 `c:legend`、`showCatName`、`showVal` | 与 plan 无关，成品被改过或编译链有误 |

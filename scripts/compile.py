@@ -23,7 +23,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
@@ -319,7 +319,12 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
         if tmp.exists():
             tmp.unlink()
 
+def error_deck_path(out: Path) -> Path:
+    return out.with_name(out.stem + ".error.pptx")
+
+
 def write_error_deck(out: Path, message: str) -> None:
+    """诊断稿：同样先写临时文件再原子替换，写到一半失败不留半成品。"""
     from pptx import Presentation
     from pptx.util import Inches, Pt
     prs = Presentation()
@@ -328,11 +333,37 @@ def write_error_deck(out: Path, message: str) -> None:
     box = slide.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(11.7), Inches(5.9))
     tf = box.text_frame
     tf.word_wrap = True
-    tf.text = "编译失败，此文件不是交付物。\n\n" + message
+    tf.text = "编译失败，此文件不是交付物。\n\n" + message[:1500]
     for para in tf.paragraphs:
         for run in para.runs:
             run.font.size = Pt(14 if run.text.startswith("编译失败") else 11)
-    prs.save(str(out))
+    tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
+    try:
+        prs.save(str(tmp))
+        os.replace(tmp, out)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
+def diagnostic_target(plan_path: Path, out_path: Path, report_path: Optional[Path], force: bool) -> Tuple[Optional[Path], str]:
+    """诊断稿能不能写、写到哪：与交付物、plan、报告走同一套 guard_paths 判定。
+
+    返回 (路径或 None, 说明)。不得覆盖 plan / 交付物 / 报告，不得经符号链接或写进目录；
+    已存在且没有 --force 时不覆盖。
+    """
+    target = error_deck_path(out_path)
+    probe = Report()
+    inputs: Dict[str, Optional[Path]] = {"plan": plan_path, "输出文件": out_path}
+    if report_path is not None:
+        inputs["--report"] = report_path
+    guard_paths(probe, inputs, [("诊断文件", target, ".pptx")], force=True)
+    if probe.blocked:
+        return None, "诊断文件未写：" + "；".join(i.message for i in probe.items if i.level == "HARD")
+    if target.exists() and not force:
+        return None, f"诊断文件 {target} 已存在，未覆盖（加 --force 才写）"
+    return target, f"诊断文件：{target}（不是交付物）"
+
 
 def main(argv: Optional[List[str]] = None) -> int:
     utf8_stdio()
@@ -373,12 +404,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         build(plan, asset_root, out_path)
     except Exception as exc:  # 运行期异常：不覆盖正式输出
-        error_path = out_path.with_name(out_path.stem + ".error.pptx")
-        note = "诊断文件：" + str(error_path) + "（不是交付物）"
-        if error_path.exists() and not args.force:
-            note = f"诊断文件 {error_path} 已存在，未覆盖（加 --force 才写）"
-        else:
-            write_error_deck(error_path, f"{type(exc).__name__}: {exc}")
+        error_path, note = diagnostic_target(plan_path, out_path, report_path, args.force)
+        if error_path is not None:
+            try:
+                write_error_deck(error_path, f"{type(exc).__name__}: {exc}")
+            except Exception as diag_exc:  # 诊断稿本身写失败不能掩盖原始错误
+                note = f"诊断文件写入失败：{type(diag_exc).__name__}: {diag_exc}"
         print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {exc}\n{note}")
         return 3
 

@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：先读懂受众与证据，提炼洞察，定原创视觉概念，再组织叙事、构图、排印、色彩、图像与图表；把判断写成 brief 与 plan，确定性产出原生可编辑 PPTX，看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 13.3.0
+version: 13.4.0
 ---
 
 # PPT 视觉艺术指导

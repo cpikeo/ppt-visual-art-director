@@ -240,6 +240,24 @@ def chart_palette(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
     """图表取色序列：图自带 palette 优先，否则用整稿 palette。compile、checks、verify 共用这一处。"""
     return [c.upper() for c in (chart.get("palette") or [])] or deck_palette(plan)
 
+def is_finite_number(v: Any) -> bool:
+    """图表数值的唯一判定：真实有限数值。bool、字符串、None、NaN、±Infinity 一律不是。
+
+    plan 校验（checks）与定点改稿（revise chart_data）共用这一处，两条路径对同一份数据结论一致。
+    """
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def non_finite_series(series: List[Dict[str, Any]]) -> List[str]:
+    """返回含非有限数值（values 或 points 坐标）的系列名。"""
+    bad = []
+    for s in series or []:
+        flat = list(s.get("values") or []) + [c for pt in (s.get("points") or []) for c in pt]
+        if not all(is_finite_number(v) for v in flat):
+            bad.append(str(s.get("name")))
+    return bad
+
+
 def chart_items(chart: Dict[str, Any]) -> List[str]:
     """这张图按什么顺序消费颜色：饼/环按**类别**（扇区），其余按**系列**。着色与图例共用这一份顺序。"""
     kind = chart.get("kind")
