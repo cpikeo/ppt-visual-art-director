@@ -195,9 +195,10 @@ def stable_xlsx(blob: bytes) -> bytes:
     return out.getvalue()
 
 
-def stabilize_package(path) -> None:
+def stabilize_package(path, workbooks=None) -> None:
     """把整个包里的 zip 条目时间钉成固定值，内嵌工作簿同样处理：相同输入 → 相同字节。
-    只动 zip 元数据与工作簿时间戳，不改任何部件的 XML。"""
+    只动 zip 元数据与工作簿时间戳，不改任何部件的 XML。
+    `workbooks` 不为 None 时只重写其中列出的内嵌工作簿（改稿用：未点名图表的工作簿保持原字节）。"""
     import os
     import zipfile
     from pathlib import Path
@@ -206,7 +207,8 @@ def stabilize_package(path) -> None:
     with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
         for item in zin.infolist():
             data = zin.read(item.filename)
-            if item.filename.startswith("ppt/embeddings/") and item.filename.endswith(".xlsx"):
+            if (item.filename.startswith("ppt/embeddings/") and item.filename.endswith(".xlsx")
+                    and (workbooks is None or item.filename in workbooks)):
                 data = stable_xlsx(data)
             info = zipfile.ZipInfo(item.filename, (2000, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED

@@ -86,9 +86,9 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
 
             display_text = kind in ("number", "title")  # 巨型数字/标题可以是底层图形（字体即图像）
             if el.get("overlap_allowed") and kind not in CARRIERS and not display_text and not (
-                    kind == "image" and el.get("image_role") in ("background", "texture")):
+                    kind == "image" and el.get("image_role") in ("background", "texture", "hero")):
                 rep.hard("E-OVERLAP", eloc,
-                         "overlap_allowed 只能声明在承载层（背景图/蒙版/色块/闭合路径/做底的巨型数字或标题）上；正文、注释与图表被压时不能自我豁免")
+                         "overlap_allowed 只能声明在承载层（背景图、整幅主视觉/蒙版/色块/闭合路径/做底的巨型数字或标题）上；正文、注释与图表被压时不能自我豁免")
             if kind == "divider" and eh > 0.2:
                 rep.soft("W-GEOM", eloc, f"divider 高 {eh:.2f}in，已经是一块色块；用 shape 更清楚")
             if kind == "group":

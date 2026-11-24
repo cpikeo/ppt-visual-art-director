@@ -21,7 +21,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 ## 用 scaffold 起稿（默认路线）
 
-`scripts/scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，保证正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25，左轴固定）、**框高**（直接调用 `model.fit_height_in`，折行按 98% 宽度估）、**自适应大字号**（`fit_pt`：取按 86% 宽度估算也不折行的最大字号——渲染实测大字真实宽度比估算宽 10–15%）、**跨页母题**（每页 (0.8, 0.7) 处一道 0.6×0.07 in 强调色短横线）。
+`scripts/scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，保证正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25，左轴固定）、**框高**（直接调用 `model.fit_height_in`，折行按 98% 宽度估）、**自适应大字号**（`fit_pt`：取按 86% 宽度估算也不折行的最大字号——渲染实测大字真实宽度比估算宽 10–15%）、**跨页母题**（默认不画；`design.motif: "bar"` 恢复 15.1 的每页 (0.8, 0.7) 处 0.6×0.07 in 强调色短横线）。
 
 ```bash
 python scripts/scaffold.py system --seed "#B4421E" --mood warm --scene meeting   # 看色彩系统
@@ -50,11 +50,13 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 | `steps` | build | `title` `steps`（2–5 项，各 `label`，可加 `when` `body`） | `note` `eyebrow` | 只表达先后，不画箭头（箭头暗示因果与时长） |
 | `split_image` | build | `title` `image` | `body` `side` `eyebrow` | 半幅图，标题压顶、正文压底 |
 | `close` | close | `title` | `items` `dark` | 暗场收束到决定与下一步 |
-| `free` | build | `title`（页题记录）`els` | `dark` `bg` `focus_element` `depth` | **自由构图**：逐个写元素，系统只供网格、色值与字号档（见下） |
+| `free` | build | `title`（页题记录）`els` | `grid` `dark` `bg` `focus_element` `depth` | **自由构图**：逐个写元素，系统只供网格、色值与字号档（见下） |
 
 **`design` 的判断出口**（默认推导只是起点）：`ground.light/dark` 页底色（纸色、墨绿、近黑；明度不对会 `E-OUTLINE`）、`accent.light/dark` 唯一强调色、`data` / `data_dark` 数据色序列、`motif: "none"` 关闭每页短横线（单页用 `motif: false`）。覆盖后文字墨阶按新底色重新推导，仍保证 ≥ 7:1 / 4.8:1。
 
-**`free` 的元素速记**（都可选，写了才换算，其余键原样交给 schema）：`cols:[起列,跨列]`→`x w`；`size`＝档位名（`title body number caption hero`）或 pt；`fit:[最大pt,最小pt]`＝取不折行的最大字号；`ink`/`color`/`fill` 可写调色名（`ink ink2 muted quiet accent rule bg bg_alt`）；`bottom:y` 以该 y 为文字底边；`after:元素id`+`gap` 紧接上一元素下方；文字缺 `h` 由 `fit_height_in` 估出。要出血或错网格，直接写 `x w`。页级 `bg` 可写调色名或 `#hex`（如整页强调色场）。
+**`free` 的页级网格**：`grid` 缺省 12 栏 × 6 行（边距 x 0.8 / y 0.7，沟槽 0.25 / 0.2）；写整数 N 即 N 栏（如 5、8）；写对象 `{cols, rows, margin, margin_y, gutter, gutter_y}` 自定；写 `"none"` 则本页不用网格（再用 `cols`/`rows` 报 `E-OUTLINE`）。网格是选出来的构图工具，不同页可以不同。
+
+**`free` 的元素速记**（都可选，写了才换算，其余键原样交给 schema）：`cols:[起列,跨列]`→`x w`（按本页网格）；`rows:[起行,跨行]`→`y h`；`right:x`→以该 x 为右边；`size`＝档位名（`title body number caption hero`）或 pt；`fit:[最大pt,最小pt]`＝取不折行的最大字号；`ink`/`color`/`fill` 可写调色名（`ink ink2 muted quiet accent rule bg bg_alt`）；`bottom:y` 以该 y 为文字底边；`after:元素id`+`gap` 紧接上一元素下方；文字缺 `h` 由 `fit_height_in` 估出。要出血或错网格，直接写 `x w`。页级 `bg` 可写调色名或 `#hex`（如整页强调色场）。
 
 每页的 `eyebrow` 是眉题（小号、位于母题横线右侧）。outline 缺字段或 `recipe` 写错时，`scaffold.py init` 以 `E-OUTLINE` 逐条说明并退出 2，不写文件。
 
@@ -74,6 +76,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 - 文本自带内边距（左右 0.05、上下 0.03 in）。要贴住网格轴线（大标题、数字）写 `pad_in: 0`。
 - 默认：`title` 40pt 粗、`number` 72pt 粗、`body` `text` 20pt、`caption` `footer` 13pt；行距 1.12（标题、数字）、1.32（正文）、1.25（注释）。深底（亮度 < 0.18）未声明颜色时用浅墨。
 - 字族三分：`fonts.heading`、`fonts.body`（正文、图表、页码）、`fonts.number`（缺省同 heading）。
+- `letter_spacing_pt` 范围 −40…40：几百 pt 的巨型数字需要按字号比例收紧字距（约 −2%…−4% 字号），15.1 的 −4 上限会让它无法表达。
 - `rotation` 对所有对象生效，按 360 取模。
 - **原生列表**：`list: "bullet"|"dash"|"number"`，每个 `\n` 分段是一项，写成真正的项目符号/自动编号（`buChar`／`buAutoNum`）与 0.32 in 悬挂缩进，符号与第一段文字同色；不要手敲“1.”“•”。估宽按缩进后的版心算；`verify.py` 逐项比对渲染文字（渲染器会在每项前插入符号）。
 - 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
@@ -82,7 +85,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 ## 叠放、形状、路径、组
 
-- **叠放顺序就是声明顺序**，先写的在下。承载层（底图、蒙版、色块、做底的巨型数字或标题）要有东西压在上面，在自己身上声明 `overlap_allowed: true`；`number` 与 `title` 可以做承载层，`body`、`caption`、`footer` 与图表不能自我豁免。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
+- **叠放顺序就是声明顺序**，先写的在下。承载层（底图、整幅 `hero` 主视觉、蒙版、色块、做底的巨型数字或标题）要有东西压在上面；`hero` 作承载层时，文字必须落在简报声明的安静区，由 `W-CONTRAST` / `W-BUSY` 量测，`subject` / `illustration` / `icon` / `detail` 不能被压，在自己身上声明 `overlap_allowed: true`；`number` 与 `title` 可以做承载层，`body`、`caption`、`footer` 与图表不能自我豁免。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
 - `shape_kind`：`rect` `round_rect` `oval` `triangle` `diamond` `chevron` `arrow_right` `arrow_up`。`corner_in` 仅用于圆角矩形（半径，英寸）。`fill_alpha` 低于 0.15 基本不可见。
 - `gradient`：`{from, to, angle, from_alpha?, to_alpha?}`，`angle` 0 为左到右、90 为上到下；末端透明度应接近 0。`stroke`：`{color, width_pt, dash, cap}`。
 - 路径顶点为坐标 `[x, y]` 或锚点 `{"el": "n1", "anchor": "right", "at": 0.5}`。两点为直线，三点以上为折线；`closed: true` 加 `color` 为填充。锚点在编译期解析，改形状要重编译；旋转组内的锚点会错位，连线应同组或改用坐标。
@@ -269,7 +272,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `delete` | — |
 | `background` | `color`（按页） |
 
-- 名称重复即阻断，改用 `target_index`。未知键直接拒绝。
+- 名称重复即阻断，改用 `target_index`。目标在组合对象里时加 `in_group: "<组名>"`：被点名的子对象按操作授权改动，同组其余子对象逐个与原稿比对，任何变化即 `E-PRESERVE`；`order` / `delete` 对子对象同样走这条路径，但不改组本身。未知键直接拒绝。
 - **富文本保真**：段落属性与 run 属性整份沿用，超链接保留；原文含超链接而 run 结构对不上，拒绝写出（`E-OPS`）。含域或软回车（`a:fld` `a:br`）的文本框不做 `text` 改写。
 - **保留核对**（见 SKILL.md 第七节）：逐对象 XML（exclusive C14N）、标识与样式容器、超链接地址、页面非形状结构、关系、逐页特性、包内部件指纹。
 - **输出**只能是 `.pptx`；原稿含宏即拒绝（`E-FORMAT`）。
@@ -319,7 +322,7 @@ verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       
 revise.py    inspect 与定点编辑 + 保留核对                              ← model, ooxml
 ```
 
-回归测试与真实作品样本不随 Skill 安装，位于仓库 `qa/`：`python -m unittest discover -s qa/tests -v`（不依赖 LibreOffice），`python qa/run_cases.py`（四份真实作品 + 一份既有稿改稿，结果写入 `qa/results/`）。新增检查必须故意破坏一次、确认它会响：测试里既有“应通过”也有“应被拦”的用例。
+本包只含 Skill 正式文件，不含测试与案例。新增检查必须故意破坏一次、确认它会响（既要有“应通过”的输入，也要有“应被拦”的输入），并在包外的独立目录里完成。
 
 `limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
 

@@ -550,7 +550,7 @@ STYLE_KEYS = ("font", "font_ea", "font_size", "bold", "color", "letter_spacing_p
 EMU = M.EMU
 
 # 操作级属性白名单：每个操作只接受表中的键，拼错或不适用的键直接拒绝（不静默忽略）。
-COMMON_KEYS = {"op", "page", "target", "target_regex", "target_index", "note"}
+COMMON_KEYS = {"op", "page", "target", "target_regex", "target_index", "in_group", "note"}
 OP_KEYS = {
     "text": {"content", "runs", "space_after_pt"} | (set(STYLE_KEYS) - {"pad_in", "valign"}),
     "box": {"x", "y", "w", "h"},
@@ -582,6 +582,17 @@ def slide_at(prs, page: Any) -> Any:
     if not isinstance(page, int) or isinstance(page, bool) or not (1 <= page <= len(prs.slides)):
         raise M.BadOp(f"page 必须是 1..{len(prs.slides)} 的整数，收到 {page!r}")
     return prs.slides[page - 1]
+
+
+def group_children(slide: Any, op: Dict[str, Any]) -> Any:
+    """`in_group` 指向顶层组合对象的名称：目标在该组内按 target / target_regex / target_index 解析（只下探一层）。"""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    name = str(op["in_group"])
+    hits = [s for s in slide.shapes if s.name == name]
+    if len(hits) != 1 or hits[0].shape_type != MSO_SHAPE_TYPE.GROUP:
+        raise M.BadOp(f"in_group {name!r} 必须恰好命中一个顶层组合对象（命中 {len(hits)} 个）；"
+                      f"本页组合：{[s.name for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.GROUP]}")
+    return hits[0].shapes
 
 
 def resolve(shape_list, op: Dict[str, Any]) -> Any:
@@ -876,6 +887,13 @@ def empty_grant() -> Dict[str, Any]:
     return {"top": set(), "sig": set(), "frame": set(), "text": False}
 
 
+def grant_group(grants: Dict[Tuple[int, int], Dict[str, Any]], page: int, group_id: int, child_id: int) -> None:
+    """改组内子对象：组本身只授权「children」且逐个子对象比对——只有被点名的子对象可以按其授权改动，
+    同组其余子对象必须逐项一致。"""
+    g = grants.setdefault((page, group_id), empty_grant())
+    g.setdefault("kids", set()).add(child_id)
+
+
 def grant_for(kind: str, op: Dict[str, Any]) -> Dict[str, Any]:
     """一次操作授权改动的属性：顶层键、声明过的段落样式字段、声明过的文本框字段。"""
     declared = set(op) | {k for run in op.get("runs") or [] for k in run}
@@ -910,8 +928,11 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
             bg_touched.add(int(op["page"]))
             log.append({"op": n, "kind": kind, "page": op["page"]})
             continue
-        shape = resolve(slide.shapes, op)
+        shape = resolve(group_children(slide, op) if op.get("in_group") is not None else slide.shapes, op)
         key = (int(op["page"]), shape.shape_id)
+        if op.get("in_group") is not None:
+            gshape = [x for x in slide.shapes if x.name == str(op["in_group"])][0]
+            grant_group(grants, int(op["page"]), gshape.shape_id, shape.shape_id)
         merge_grant(grants.setdefault(key, empty_grant()), grant_for(kind, op))
         if kind == "text":
             if op.get("content") is None:
@@ -1078,10 +1099,21 @@ def _short(value: Any, n: int = 80) -> str:
 
 
 def _object_drift(obj: Dict[str, Any], twin: Dict[str, Any], grant: Optional[Dict[str, Any]],
-                  where: str, f: M.Report) -> None:
+                  where: str, f: M.Report, kid_grant: Any = None) -> None:
     """对象的改动是否都落在授权之内。未被点名的对象（grant 为 None）必须逐项一致。"""
     top = grant["top"] if grant else set()
-    for key in sorted((set(obj) | set(twin)) - {"styles", "frame"}):
+    kids = grant.get("kids") if grant else None
+    skip = {"styles", "frame"} | ({"children"} if kids is not None else set())
+    if kids is not None:
+        a, b = obj.get("children") or [], twin.get("children") or []
+        if len(a) != len(b):
+            f.hard("E-PRESERVE", where, f"组内子对象数量被改动：{len(a)} → {len(b)}")
+        for ca, cb in zip(a, b):
+            if ca.get("id") not in kids and ca != cb:
+                f.hard("E-PRESERVE", f"{where} / {ca.get('name')}", "组内未点名的子对象被改动")
+            elif ca.get("id") in kids:
+                _object_drift(ca, cb, kid_grant(ca.get("id")) if kid_grant else None, f"{where} / {ca.get('name')}", f)
+    for key in sorted((set(obj) | set(twin)) - skip):
         if key not in top and obj.get(key) != twin.get(key):
             f.hard("E-PRESERVE", where,
                    f"未授权的属性「{key}」被改动：{_short(obj.get(key))} → {_short(twin.get(key))}")
@@ -1155,7 +1187,8 @@ def compare(before: Dict[str, Any], after: Dict[str, Any], grants: Dict[Tuple[in
                 if (i + 1, oid) not in deleted:
                     f.hard("E-PRESERVE", where, "对象消失，但没有任何 delete 操作点名它")
                 continue
-            _object_drift(obj, a_objs[oid], grants.get((i + 1, oid)), where, f)
+            _object_drift(obj, a_objs[oid], grants.get((i + 1, oid)), where, f,
+                          kid_grant=lambda cid, _p=i + 1: grants.get((_p, cid)))
         for oid, obj in a_objs.items():
             if oid not in b_objs:
                 f.hard("E-PRESERVE", f"{where_page} {obj.get('name')}", "出现原稿没有的对象；定点编辑不新增任何对象")
@@ -1571,7 +1604,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
     try:
         prs.save(str(tmp))
-        X.stabilize_package(tmp)
+        X.stabilize_package(tmp, {str(n).lstrip("/") for n in movable})
         after = inspect_deck(tmp)
         after_parts = structure(tmp)
         after_slides = slide_part_names(tmp)

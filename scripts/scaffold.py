@@ -190,13 +190,34 @@ def col(start: int, span: int) -> Tuple[float, float]:
     return MX + (start - 1) * (COL_W + GUT), span * COL_W + (span - 1) * GUT
 
 
+def make_grid(spec: Any) -> Tuple[Any, Any, int, int]:
+    """页级网格：网格是选出来的构图工具，不是固定框架。
+    spec 缺省 → 12 栏 / 6 行；整数 N → N 栏；对象 {cols, rows, margin, margin_y, gutter, gutter_y}；
+    `"none"` 或 0 → 不用网格（元素自己写 x y w h）。返回 (col, row, 栏数, 行数)。"""
+    if spec in ("none", 0, False):
+        return None, None, 0, 0
+    g = {"cols": spec} if isinstance(spec, int) and not isinstance(spec, bool) else dict(spec or {})
+    n, rows = int(g.get("cols", COLS)), int(g.get("rows", 6))
+    mx, my = float(g.get("margin", MX)), float(g.get("margin_y", MY))
+    gx, gy = float(g.get("gutter", GUT)), float(g.get("gutter_y", 0.2))
+    cw, rh = (W - 2 * mx - gx * (n - 1)) / n, (H - 2 * my - gy * (rows - 1)) / rows
+
+    def gcol(start: int, span: int) -> Tuple[float, float]:
+        return mx + (start - 1) * (cw + gx), span * cw + (span - 1) * gx
+
+    def grow(start: int, span: int) -> Tuple[float, float]:
+        return my + (start - 1) * (rh + gy), span * rh + (span - 1) * gy
+
+    return gcol, grow, n, rows
+
+
 class Ctx:
     def __init__(self, outline: Dict[str, Any]):
         design = outline.get("design") or {}
         overrides = {k: design[k] for k in ("ground", "accent", "data", "data_dark") if design.get(k)}
         self.system = design_system(design.get("seed", "#1F3A5F"), design.get("mood", "auto"),
                                     design.get("scene", "meeting"), overrides)
-        self.motif = design.get("motif", "bar")   # "bar"：每页一道短横线母题；"none"：不画，母题由内容自己长出来
+        self.motif = design.get("motif", "none")  # 15.2 起默认不画；"bar" 恢复 15.1 的每页短横线。母题应从内容里长出来，不是固定位置的装饰
         self.sz = self.system["sizes"]
         self.fonts = design.get("fonts") or {"heading": "微软雅黑", "body": "微软雅黑"}
         self.stub = {"fonts": self.fonts}
@@ -548,25 +569,34 @@ def r_free(c: Ctx, p: Dict[str, Any]):
       bottom: y                → 以该 y 为文字底边（valign=bottom），不依赖框高估算
       y 缺省且给了 after:元素id → 紧接该元素下方，gap 缺省 0.2 in
       h 缺省（文字）            → 由 model.fit_height_in 估出
-    页级：dark 明暗场；bg 页底色（调色名或 #hex，如 accent 整页色场）。"""
+      rows:[起行, 跨行]        → y, h；right: x → 以该 x 为右边（右对齐锚点）
+    页级：grid 网格（缺省 12 栏 6 行；整数 N、{cols,rows,margin,margin_y,gutter,gutter_y}、"none"）；
+          dark 明暗场；bg 页底色（调色名或 #hex，如 accent 整页色场）。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
     bg = pal.get(p.get("bg", ""), p.get("bg")) or pal["bg"]
+    gcol, grow, _n, _r = make_grid(p.get("grid"))
     def tok(v: Any) -> Any:
         return pal[v] if isinstance(v, str) and v in pal else v
     out: List[Dict[str, Any]] = []
     by_id: Dict[str, Dict[str, Any]] = {}
     for i, spec in enumerate(p["els"], 1):
-        el = {k: v for k, v in spec.items() if k not in ("cols", "size", "fit", "ink", "bottom", "after", "gap")}
+        el = {k: v for k, v in spec.items() if k not in ("cols", "rows", "size", "fit", "ink", "bottom", "right", "after", "gap")}
         el.setdefault("id", f"e{i}")
         kind = el.setdefault("type", "text")
         for key in ("color", "fill"):
             if key in el:
                 el[key] = tok(el[key])
+        if kind == "chart" and isinstance(el.get("chart"), dict):
+            # 暗场上的图表用暗场数据色序列（与 chart 配方同一来源），作者可用 chart.palette 覆盖
+            el["chart"] = dict(el["chart"])
+            el["chart"].setdefault("palette", c.system["data_dark" if dark else "data"])
         if "ink" in spec:
             el["color"] = tok(spec["ink"])
         if "cols" in spec:
-            el["x"], el["w"] = (round(v, 3) for v in col(*spec["cols"]))
+            el["x"], el["w"] = (round(v, 3) for v in gcol(*spec["cols"]))
+        if "rows" in spec:
+            el["y"], el["h"] = (round(v, 3) for v in grow(*spec["rows"]))
         if kind in TEXT_KINDS:
             el.setdefault("pad_in", 0)
             if "size" in spec:
@@ -582,6 +612,8 @@ def r_free(c: Ctx, p: Dict[str, Any]):
             if "bottom" in spec:
                 el["y"] = round(spec["bottom"] - el["h"], 3)
                 el.setdefault("valign", "bottom")
+        if "right" in spec and "w" in el:
+            el["x"] = round(spec["right"] - el["w"], 3)
         if "y" not in el and "after" in spec:
             ref = by_id[spec["after"]]
             el["y"] = round(ref["y"] + ref["h"] + spec.get("gap", 0.2), 3)
@@ -611,6 +643,11 @@ RECIPES = {
 ROOT_REQUIRED = ("deck_id", "title", "audience", "goal", "core_claim", "brief", "pages")
 
 
+def _span_ok(v: Any, n: int) -> bool:
+    return (isinstance(v, list) and len(v) == 2 and all(isinstance(i, int) for i in v)
+            and 1 <= v[0] <= n and 1 <= v[1] <= n - v[0] + 1)
+
+
 def validate_outline(outline: Dict[str, Any]) -> List[str]:
     """把常见的写错变成一句人话，而不是 KeyError 堆栈。"""
     errs: List[str] = []
@@ -635,9 +672,12 @@ def validate_outline(outline: Dict[str, Any]) -> List[str]:
                     errs.append(f"第 {i} 页（free）第 {j} 个元素必须是对象")
                 elif e.get("type", "text") in TEXT_KINDS and not e.get("content"):
                     errs.append(f"第 {i} 页（free）第 {j} 个文字元素缺少 content")
-                elif "cols" in e and not (isinstance(e["cols"], list) and len(e["cols"]) == 2
-                                          and 1 <= e["cols"][0] <= COLS and 1 <= e["cols"][1] <= COLS - e["cols"][0] + 1):
-                    errs.append(f"第 {i} 页（free）第 {j} 个元素 cols 须是 [起列, 跨列]，且不超出 {COLS} 栏")
+                elif ("cols" in e or "rows" in e) and make_grid(p.get("grid"))[0] is None:
+                    errs.append(f"第 {i} 页（free）第 {j} 个元素用了 cols/rows，但本页 grid 为 none")
+                elif "cols" in e and not _span_ok(e["cols"], make_grid(p.get("grid"))[2]):
+                    errs.append(f"第 {i} 页（free）第 {j} 个元素 cols 须是 [起列, 跨列]，且不超出本页 {make_grid(p.get('grid'))[2]} 栏")
+                elif "rows" in e and not _span_ok(e["rows"], make_grid(p.get("grid"))[3]):
+                    errs.append(f"第 {i} 页（free）第 {j} 个元素 rows 须是 [起行, 跨行]，且不超出本页 {make_grid(p.get('grid'))[3]} 行")
                 elif "after" in e and e["after"] not in [x.get("id") for x in p["els"][:j - 1]]:
                     errs.append(f"第 {i} 页（free）第 {j} 个元素 after 必须指向它之前的元素 id")
         if r == "compare":
