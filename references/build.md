@@ -19,7 +19,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 ## 用 scaffold 起稿（默认路线）
 
-`scripts/scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，保证正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25，左轴固定）、**框高**（直接调用 `model.fit_height_in`，折行按 94% 宽度估，留余量）。
+`scripts/scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，保证正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25，左轴固定）、**框高**（直接调用 `model.fit_height_in`，折行按 98% 宽度估）、**自适应大字号**（`fit_pt`：取按 86% 宽度估算也不折行的最大字号——渲染实测大字真实宽度比估算宽 10–15%）、**跨页母题**（每页 (0.8, 0.7) 处一道 0.6×0.07 in 强调色短横线）。
 
 ```bash
 python scripts/scaffold.py system --seed "#B4421E" --mood warm --scene meeting   # 看色彩系统
@@ -37,15 +37,19 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 | `recipe` | 默认 `role` | 必填 | 可选 | 讲法 |
 | --- | --- | --- | --- | --- |
-| `cover` | open | `title` | `sub` `kicker` `image` `dark` | 标题底边落在 62% 水平线，上方留整块安静区 |
-| `statement` | hold | `title` | `sub` `dark` | 一句话居中偏上，其余全空 |
-| `big_number` | build | `title` `number` `body` | `unit` `unit_scale` `note` | 数字压住页面，正文只写结论与限定 |
-| `chart` | build | `title` `chart` | `aside` `note` | 图承担读数，旁注写意义；图色取本系统数据色 |
-| `compare` | turn | `title` `left` `right`（各 `label` `number` `body`） | `note` | 两数同基线同尺度，整块垂直居中 |
-| `list` | build | `title` `items` | `list`（number/bullet/dash）`note` | 标题在左固定，原生列表在右 |
-| `table` | build | `title` `table`（headers/rows） | `note` | 原生表格 |
-| `split_image` | build | `title` `image` | `body` `side` | 半幅图，标题压顶、正文压底 |
+| `cover` | open | `title` | `sub` `kicker` `meta` `image` `dark` | 标题底对齐锚在 64% 线，字号随标题长度取不折行最大值，上方整块安静区 |
+| `statement` | hold | `title` | `sub` `dark` | 一句话占满视野，左侧一道竖线是唯一装饰 |
+| `section` | breathe | `title` | `number` `dark` | 暗场 + 巨型序号，换气与分章 |
+| `big_number` | build | `title` `number` `body` | `unit` `unit_scale` `note` `eyebrow` | 数字取放得进 7 栏的最大字号，正文被细线隔在右栏 |
+| `chart` | build | `title` `chart` | `aside` `note` `highlight` `eyebrow` | 图承担读数；`highlight`=类别序号（单系列柱/条，其余退隐） |
+| `compare` | turn | `title` `left` `right`（各 `label` `number` `body`，可加 `value`） | `note` `eyebrow` | 两数同字号同基线；两侧都有 `value` 时再画自零起的比例条 |
+| `list` | build | `title` `items` | `list`（number/bullet/dash）`note` `eyebrow` | 标题与原生列表同一顶线，竖线钉住两栏 |
+| `table` | build | `title` `table`（headers/rows） | `note` `eyebrow` | 原生表格 |
+| `steps` | build | `title` `steps`（2–5 项，各 `label`，可加 `when` `body`） | `note` `eyebrow` | 只表达先后，不画箭头（箭头暗示因果与时长） |
+| `split_image` | build | `title` `image` | `body` `side` `eyebrow` | 半幅图，标题压顶、正文压底 |
 | `close` | close | `title` | `items` `dark` | 暗场收束到决定与下一步 |
+
+每页的 `eyebrow` 是眉题（小号、位于母题横线右侧）。outline 缺字段或 `recipe` 写错时，`scaffold.py init` 以 `E-OUTLINE` 逐条说明并退出 2，不写文件。
 
 每页可覆盖 `role` `claim` `focus` `rationale` `beat` `speaker_notes` `evidence` `open_questions` `dark`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
 
@@ -67,7 +71,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 - **原生列表**：`list: "bullet"|"dash"|"number"`，每个 `\n` 分段是一项，写成真正的项目符号/自动编号（`buChar`／`buAutoNum`）与 0.32 in 悬挂缩进，符号与第一段文字同色；不要手敲“1.”“•”。估宽按缩进后的版心算；`verify.py` 逐项比对渲染文字（渲染器会在每项前插入符号）。
 - 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
 - `W-FIT` 的行高按字体取值（`limits.json` 的 `type.line_pitch_em.by_font`）：Noto/思源 CJK 1.448、雅黑 1.32、宋体/黑体 1.15，未知字体 1.25。用别的字体且估不准，在 `by_font` 里补一行。
-- 图表与表格内的字号由 `limits.json` 统一给出（表 16、图内标注/轴/图例 14）；要改，改阈值，不逐图改。
+- 图表与表格内的字号由 `limits.json` 统一给出（表 18、图题 15、图内标注/轴/图例 14）；要改，改阈值，不逐图改。
 
 ## 叠放、形状、路径、组
 
@@ -172,7 +176,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 ## 网格与装载估算（算术，不用脚本）
 
-- 列宽 `col_w = (画布宽 − 2×边距 − 沟槽×(列数−1)) ÷ 列数`。默认 16:9、12 列、边距 x 0.7 / y 0.6、沟槽 0.25。第 i 列起点 `x = 边距 + (i−1)×(col_w+沟槽)`；跨 n 列宽 = n×col_w + (n−1)×沟槽。
+- 列宽 `col_w = (画布宽 − 2×边距 − 沟槽×(列数−1)) ÷ 列数`。scaffold 的 16:9 网格：12 列、边距 x 0.8 / y 0.7、沟槽 0.25。第 i 列起点 `x = 边距 + (i−1)×(col_w+沟槽)`；跨 n 列宽 = n×col_w + (n−1)×沟槽。
 - 比例切分：`free = 版心宽 − 沟槽×(栏数−1)`，第 i 栏宽 = `free × 比例ᵢ ÷ Σ比例`。
 - 参考线：三分 `W/3, 2W/3`、`H/3, 2H/3`；黄金位 `0.382W, 0.618W`、`0.382H, 0.618H`。
 - 装载估算：每行字数 ≈ `(w − 2×内边距) ÷ (字号÷72)`，中文一字一 em，西文数字约 0.55 em；高度 ≈ 行数 × 字号 × 1.2 × 行距 ÷ 72。估不准以渲染为准。
@@ -201,6 +205,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 
 | 码 | 含义 | 处置 |
 | --- | --- | --- |
+| `E-OUTLINE` | `scaffold.py init` 的 outline 缺字段、recipe 不存在、steps 项数不对 | 按提示逐条补，未写出文件 |
 | `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录、简报不一致；生成图作证据 | 补齐记录，或改用真实素材 |
 | `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
 | `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块）、系列色沉进承载面、图例与强调柱对不上 | 改措辞、拆图、补颜色映射；错色没有放行开关 |
@@ -213,7 +218,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
 | `W-FIT` | 装载估算溢出（行数按字宽折算；`%` `×` `@` 按近全角宽度计；高度按“首行可见高度＋后续行距推进”估，按渲染实测校准） | 先改文案，再加框，不压字号 |
 | `W-SPACE` | 中文与数字/西文之间手敲了**多于一个**的空格、不断行空格或全角空格 | 删掉，依赖字体原生字距 |
-| `I-SPACE` | 中西文之间只有**一个**普通空格：通行的中文排法，LibreOffice 会叠加自动间距显松、PowerPoint 里正常 | 是风格取舍不是缺陷；全稿统一取一种并写进交付说明 |
+| `I-SPACE` | （整稿汇总为一条，列出位置）中西文之间只有**一个**普通空格：通行的中文排法，LibreOffice 会叠加自动间距显松、PowerPoint 里正常 | 是风格取舍不是缺陷；全稿统一取一种并写进交付说明 |
 | `V-BLEED` | 文字落在声明为出血的元素里，被页边裁掉 | 确认被裁部分不含信息；没声明出血的文字出页仍是 `V-CLIP` 阻断 |
 | `W-CONTRAST` `V-CONTRAST` | 对比不足；文字压图时是对真实像素的量测（达标像素占比低于 `limits.json` 的 `image.zone.min_ok_share`） | 换墨色或落点、改 `crop_focus`、重做简报；不靠浓遮罩 |
 | `W-BUSY` | 图上文字对比够，但下方纹理过强（灰度标准差超限） | 换落字区或重做简报 |
@@ -305,7 +310,7 @@ verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       
 revise.py    inspect 与定点编辑 + 保留核对                              ← model, ooxml
 ```
 
-回归测试、作品样本与评测证据**不在分发包内**。新增检查必须故意破坏一次、确认它会响。
+回归测试在 `tests/test_smoke.py`（不依赖 LibreOffice），完整样本在 `examples/retention/`。新增检查必须故意破坏一次、确认它会响：测试里既有“应通过”也有“应被拦”的用例。
 
 `limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
 

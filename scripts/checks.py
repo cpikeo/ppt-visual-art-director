@@ -175,6 +175,11 @@ def validate(plan: Dict[str, Any], asset_root: Path) -> Report:
                     rep.hard("E-OVERLAP", f"{pid}/{upper['el'].get('id')}",
                              f"与先声明的 {lower['el'].get('id')} 实质重叠；若后者是承载层（背景图/蒙版/色块），"
                              f"在 {lower['el'].get('id')} 上声明 overlap_allowed，否则移开")
+    spaced = rep.__dict__.get("_ispace") or []
+    if spaced:  # 单个空格是整稿的风格取舍：每稿只报一条，列出位置，不逐元素刷屏
+        where = "、".join(l for l, _ in spaced[:8]) + (f" 等 {len(spaced)} 处" if len(spaced) > 8 else "")
+        rep.info("I-SPACE", "deck", f"{where}：中西文之间手敲了单个空格（如「{spaced[0][1]}」）。这是通行的中文排法，"
+                                    f"但 LibreOffice 会叠加自动间距显得更松、PowerPoint 里正常；全稿统一取一种并写进交付说明")
     return rep
 
 # 中西文间的手敲空格：字体自身的字距已够，空格宽度又因渲染器而异
@@ -228,9 +233,7 @@ def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> No
                                  f"多空格、不断行空格与全角空格的宽度随渲染器变，任何环境下都不稳；"
                                  f"删掉它们，需要时用 runs 调字距")
     elif soft_space:
-        rep.info("I-SPACE", loc, f"中西文之间手敲了单个空格（{'、'.join(soft_space[:3])}）："
-                                 f"这是通行的中文排法，但 LibreOffice 会叠加自动间距显得更松、"
-                                 f"PowerPoint 里则正常——全稿统一取一种，并写进交付说明")
+        rep.__dict__.setdefault("_ispace", []).append((loc, soft_space[0]))  # 汇总成一条，见 validate()
     minimum = LIMITS["type"]["min_pt"].get(el["type"], 0)
     if st["size"] < minimum:
         rep.soft("W-PT", loc, f"{el['type']} {st['size']:g}pt 低于 {minimum}pt 下限")

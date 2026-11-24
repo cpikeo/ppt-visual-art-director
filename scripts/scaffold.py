@@ -94,8 +94,10 @@ SCENES = {  # 论断标题 / 正文 / 关键数字 / 注释 / 封面大标题（
     "meeting": {"title": 36, "body": 20, "number": 120, "caption": 14, "hero": 60},
     "screen": {"title": 28, "body": 16, "number": 80, "caption": 13, "hero": 44},
 }
-L_STEPS = [44, 63, 25, 72.5, 53.5, 34.5]        # 浅底数据色明度：首色贴近强调色，两两 ≥ 9.5 L*，浅底对比 ≥ 2.2
-L_STEPS_DARK = [63, 82, 44, 72.5, 53.5, 91.5]   # 深底数据色明度：同样两两 ≥ 9.5 L*
+L_STEPS = [44, 63, 25, 72.5, 53.5, 34.5]        # 浅底数据色明度：首色贴近强调色，两两 ≥ 9.5 L*
+L_STEPS_DARK = [64, 84, 45, 74.5, 54.5, 35]     # 深底数据色明度：两两 ≥ 9.5 L*，且不用近白色（近白会抢过强调色）
+HUE_OFFSETS = [0, 190, 40, 240, 90, 320]        # 首色=种子；其余在冷暖两侧错开，彩度收低，避免与强调色“撞色”
+CHROMA_TAIL = [22, 28, 20, 26, 22]
 
 
 def design_system(seed: str, mood: str = "auto", scene: str = "meeting") -> Dict[str, Any]:
@@ -114,6 +116,7 @@ def design_system(seed: str, mood: str = "auto", scene: str = "meeting") -> Dict
         "ink2": _until(light_bg, 7.0, 36, tint_c, tint_h, -1),
         "muted": _until(light_bg, 4.8, 52, tint_c, tint_h, -1),
         "rule": neutral(84),
+        "quiet": _until(light_bg, 3.0, 72, tint_c, tint_h, -1),   # 大字配角：≥24pt 够 3:1，又与主角拉开明度
         "accent": _until(light_bg, 4.5, min(seed_l, 55), max(seed_c, 30), seed_h, -1),
     }
     dark = {
@@ -122,10 +125,11 @@ def design_system(seed: str, mood: str = "auto", scene: str = "meeting") -> Dict
         "ink2": _until(dark_bg, 7.0, 78, tint_c, tint_h, 1),
         "muted": _until(dark_bg, 4.8, 62, tint_c, tint_h, 1),
         "rule": neutral(30, 1.5),
+        "quiet": _until(dark_bg, 3.0, 40, tint_c, tint_h, 1),
         "accent": _until(dark_bg, 4.5, max(seed_l, 62), max(seed_c, 30), seed_h, 1),
     }
-    hues = [seed_h, seed_h + 180, seed_h + 35, seed_h + 215, seed_h + 70, seed_h + 300]
-    chroma = [max(min(seed_c, 70), 35)] + [32, 38, 30, 34, 28]  # 只有首色是饱和的，其余收彩度，整套才耐看
+    hues = [seed_h + o for o in HUE_OFFSETS]
+    chroma = [max(min(seed_c, 70), 35)] + CHROMA_TAIL  # 只有首色是饱和的，其余收彩度，整套才耐看
     data = [lch_to_hex(L_STEPS[i], chroma[i], hues[i] % 360) for i in range(6)]
     data_dark = [lch_to_hex(L_STEPS_DARK[i], chroma[i], hues[i] % 360) for i in range(6)]
     return {
@@ -137,8 +141,11 @@ def design_system(seed: str, mood: str = "auto", scene: str = "meeting") -> Dict
             "light_accent_on_bg": round(M.contrast_ratio(light["accent"], light["bg"]), 1),
             "dark_ink_on_bg": round(M.contrast_ratio(dark["ink"], dark["bg"]), 1),
             "dark_accent_on_bg": round(M.contrast_ratio(dark["accent"], dark["bg"]), 1),
+            "accent_vs_quiet_dL_light": round(abs(hex_to_lch(light["accent"])[0] - hex_to_lch(light["quiet"])[0]), 1),
             "data_gray_conflicts": len(M.gray_conflicts(data)),
             "data_dark_gray_conflicts": len(M.gray_conflicts(data_dark)),
+            "data_min_contrast_on_light": round(min(M.contrast_ratio(c, light["bg"]) for c in data), 1),
+            "data_min_contrast_on_dark": round(min(M.contrast_ratio(c, dark["bg"]) for c in data_dark), 1),
         },
     }
 
@@ -148,6 +155,9 @@ def design_system(seed: str, mood: str = "auto", scene: str = "meeting") -> Dict
 W, H = 13.333, 7.5
 MX, MY, GUT, COLS = 0.8, 0.7, 0.25, 12
 COL_W = (W - 2 * MX - GUT * (COLS - 1)) / COLS
+TOP = MY + 0.34          # 页内内容起点：母题短横线在 MY，页题从这里开始
+FOOT = H - 1.0           # 页脚上沿：note 与页码在它下面
+FIT_SAFETY = 0.86        # 自适应大字号时的宽度安全系数：渲染实测，大字（≥60pt）的真实宽度比估算宽 10–15%
 
 
 def col(start: int, span: int) -> Tuple[float, float]:
@@ -167,12 +177,33 @@ class Ctx:
     def pal(self, dark: bool) -> Dict[str, str]:
         return self.system["dark" if dark else "light"]
 
+    def _style(self, el: Dict[str, Any], bg: str) -> Dict[str, Any]:
+        return M.text_style(self.stub, {"background": bg}, el)
+
     def need(self, el: Dict[str, Any], w: float, bg: str) -> float:
-        """框高 = 估算需求 × 1.08 + 0.02，向上取 0.05。折行按 94% 的宽度估：
-        渲染器在中西文交界处加的间距各家不同，宁可框高一点，也不让文字落出框外。"""
+        """框高 = 估算需求 × 1.05 + 0.02，向上取 0.05。折行按 98% 的宽度估：
+        估宽留 2% 余量足以吸收中西文交界处的渲染差异；再收紧会把本来一行的标题估成两行，
+        框被撑高，底边锚点与上方元素随之错位（14.0 的封面碰撞就是这样来的）。"""
         el = dict(el, x=0, y=0, w=w, h=1)
-        st = M.text_style(self.stub, {"background": bg}, el)
-        return math.ceil((M.fit_height_in(el, st, w * 0.94) * 1.08 + 0.02) * 20) / 20
+        st = self._style(el, bg)
+        return math.ceil((M.fit_height_in(el, st, w * 0.98) * 1.05 + 0.02) * 20) / 20
+
+    def fit_pt(self, kind: str, content: str, w: float, bg: str, hi: float, lo: float,
+               runs_fn: Any = None, **kw: Any) -> int:
+        """取不使任何一段折行的最大字号（hi→lo，步长 2）。字号随内容长度走，而不是一刀切。"""
+        paras = max(1, len(str(content).split("\n")))
+        size = int(hi)
+        while size > lo:
+            el: Dict[str, Any] = {"id": "x", "type": kind, "content": content, "pad_in": 0,
+                                  "font_size": size, "x": 0, "y": 0, "w": w, "h": 1}
+            el.update(kw)
+            if runs_fn:
+                el["runs"] = runs_fn(size)
+            lines = M.fit_lines(el, self._style(el, bg), w * FIT_SAFETY)
+            if sum(lines) <= paras:
+                return size
+            size -= 2
+        return int(lo)
 
     def text(self, eid: str, kind: str, x: float, y: float, w: float, content: str, bg: str,
              h: Optional[float] = None, **kw: Any) -> Dict[str, Any]:
@@ -182,8 +213,43 @@ class Ctx:
         el.update(x=round(x, 3), y=round(y, 3), w=round(w, 3), h=round(height, 3))
         return el
 
+    def rect(self, eid: str, x: float, y: float, w: float, h: float, color: str, **kw: Any) -> Dict[str, Any]:
+        el = {"id": eid, "type": "shape", "shape_kind": kw.pop("shape_kind", "rect"), "x": round(x, 3),
+              "y": round(y, 3), "w": round(w, 3), "h": round(h, 3), "color": color}
+        el.update(kw)
+        return el
 
-# ---------------------------------------------------------------- 版式配方
+
+# ---------------------------------------------------------------- 母题与页头
+
+def _bar(c: Ctx, dark: bool, x: float = MX, y: float = MY) -> Dict[str, Any]:
+    """跨页母题：每页同一位置的一道强调色短横线。它是整稿的“锚”，缩略总览里靠它认出同一套。"""
+    return c.rect("bar", x, y, 0.6, 0.07, c.pal(dark)["accent"])
+
+
+def _head(c: Ctx, p: Dict[str, Any], dark: bool, span: int = 10, start: int = 1,
+          size: Optional[int] = None) -> List[Dict[str, Any]]:
+    """母题横线 + 可选眉题（eyebrow）+ 页题。页题是整页的论断。"""
+    pal = c.pal(dark)
+    x, w = col(start, span)
+    els = [_bar(c, dark, x)]
+    if p.get("eyebrow"):
+        els.append(c.text("eyebrow", "caption", x + 0.85, MY - 0.11, w - 0.85, p["eyebrow"], pal["bg"],
+                          font_size=c.sz["caption"], color=pal["muted"], letter_spacing_pt=1.2, h=0.3))
+    els.append(c.text("t", "title", x, TOP, w, p["title"], pal["bg"], font_size=size or c.sz["title"],
+                      color=pal["ink"], line_spacing=1.12))
+    return els
+
+
+def _note(c: Ctx, p: Dict[str, Any], dark: bool) -> List[Dict[str, Any]]:
+    if not p.get("note"):
+        return []
+    pal = c.pal(dark)
+    x, w = col(1, 9)
+    return [c.rect("foot_rule", MX, H - 0.98, W - 2 * MX, 0.012, pal["rule"]),
+            c.text("note", "caption", x, H - 0.85, w, p["note"], pal["bg"], font_size=c.sz["caption"],
+                   color=pal["muted"], h=0.3)]
+
 
 def _image_el(spec: Dict[str, Any], x: float, y: float, w: float, h: float) -> Dict[str, Any]:
     el = {"id": "img", "type": "image", "image_id": spec["id"], "x": round(x, 3), "y": round(y, 3),
@@ -198,141 +264,188 @@ def _image_el(spec: Dict[str, Any], x: float, y: float, w: float, h: float) -> D
     return el
 
 
-def _title(c: Ctx, p: Dict[str, Any], dark: bool, span: int = 10) -> Dict[str, Any]:
-    pal = c.pal(dark)
-    x, w = col(1, span)
-    return c.text("t", "title", x, MY, w, p["title"], pal["bg"], font_size=c.sz["title"], color=pal["ink"],
-                  line_spacing=1.12)
-
-
-def _note(c: Ctx, p: Dict[str, Any], dark: bool) -> List[Dict[str, Any]]:
-    if not p.get("note"):
-        return []
-    pal = c.pal(dark)
-    x, w = col(1, 9)
-    return [c.text("note", "caption", x, H - 0.85, w, p["note"], pal["bg"], font_size=c.sz["caption"],
-                   color=pal["muted"], h=0.3)]
-
+# ---------------------------------------------------------------- 版式配方
 
 def r_cover(c: Ctx, p: Dict[str, Any]):
+    """标题底边锚在 64% 水平线（valign 底对齐，框高估不准也不会漂），上方整块留给安静区。
+    字号按标题长度取“不折行的最大字号”，短标题就大，长标题自动收。"""
     dark = bool(p.get("dark", True))
     pal = c.pal(dark)
     els: List[Dict[str, Any]] = []
     if p.get("image"):
         els.append(_image_el(p["image"], 0, 0, W, H))
-    x, w = col(1, 8)
-    t = c.text("t", "title", x, 0, w, p["title"], pal["bg"], font_size=c.sz["hero"], color=pal["ink"],
-               line_spacing=1.08, letter_spacing_pt=-0.5)
-    t["y"] = round(H * 0.62 - t["h"], 3)  # 标题底边落在 62% 水平线，上方留出整块安静区
+    span = 8 if p.get("image") else 10
+    x, w = col(1, span)
+    size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["hero"] * 1.3, c.sz["hero"] * 0.8,
+                    line_spacing=1.08, letter_spacing_pt=-0.5)
+    t = c.text("t", "title", x, 0, w, p["title"], pal["bg"], font_size=size, color=pal["ink"],
+               line_spacing=1.08, letter_spacing_pt=-0.5, valign="bottom")
+    anchor = H * 0.64
+    t["y"] = round(anchor - t["h"], 3)
+    els.append(_bar(c, dark, x))
+    if p.get("kicker"):
+        els.append(c.text("kicker", "caption", x + 0.85, MY - 0.11, w - 0.85, p["kicker"], pal["bg"],
+                          font_size=c.sz["caption"], color=pal["accent"], letter_spacing_pt=1.5, bold=True, h=0.3))
     els.append(t)
     if p.get("sub"):
-        els.append(c.text("sub", "caption", x, H * 0.62 + 0.3, w, p["sub"], pal["bg"], font_size=c.sz["body"] - 2,
-                          color=pal["ink2"]))
-    if p.get("kicker"):
-        els.append(c.text("kicker", "caption", x, MY, w, p["kicker"], pal["bg"], font_size=c.sz["caption"],
-                          color=pal["accent"], letter_spacing_pt=1.5, bold=True))
+        els.append(c.text("sub", "caption", x, anchor + 0.3, w, p["sub"], pal["bg"],
+                          font_size=c.sz["body"], color=pal["ink2"]))
+    if p.get("meta"):
+        els.append(c.text("meta", "caption", x, H - 0.85, w, p["meta"], pal["bg"], font_size=c.sz["caption"],
+                          color=pal["muted"], h=0.3))
     return els, dark
 
 
 def r_statement(c: Ctx, p: Dict[str, Any]):
+    """一句话占满视野：竖线是页内唯一装饰，字号由句长决定。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
     x, w = col(1, 10)
-    t = c.text("t", "title", x, 0, w, p["title"], pal["bg"], font_size=c.sz["hero"], color=pal["ink"],
-               line_spacing=1.08)
-    t["y"] = round((H - t["h"]) / 2 - 0.2, 3)
-    els = [t]
+    tx = x + 0.45
+    size = c.fit_pt("title", p["title"], w - 0.45, pal["bg"], c.sz["hero"] * 1.35, c.sz["hero"] * 0.8,
+                    line_spacing=1.1)
+    t = c.text("t", "title", tx, 0, w - 0.45, p["title"], pal["bg"], font_size=size, color=pal["ink"],
+               line_spacing=1.1)
+    sub_h = 0.0
+    sub = None
     if p.get("sub"):
-        els.append(c.text("sub", "caption", x, t["y"] + t["h"] + 0.3, w, p["sub"], pal["bg"],
-                          font_size=c.sz["body"] - 2, color=pal["muted"]))
+        sub = c.text("sub", "caption", tx, 0, w - 0.45, p["sub"], pal["bg"], font_size=c.sz["body"],
+                     color=pal["muted"])
+        sub_h = sub["h"] + 0.3
+    t["y"] = round((H - (t["h"] + sub_h)) / 2 - 0.15, 3)
+    els = [c.rect("vrule", x, t["y"] + 0.08, 0.07, t["h"] + sub_h - 0.1, pal["accent"]), t]
+    if sub:
+        sub["y"] = round(t["y"] + t["h"] + 0.3, 3)
+        els.append(sub)
     return els, dark
 
 
+def r_section(c: Ctx, p: Dict[str, Any]):
+    """章节页：巨型序号（强调色）压在暗场里，标题底对齐。整稿的“停顿”与换气。"""
+    dark = bool(p.get("dark", True))
+    pal = c.pal(dark)
+    x, w = col(1, 9)
+    size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["title"] + 14, c.sz["title"] - 4, line_spacing=1.12)
+    t = c.text("t", "title", x, 0, w, p["title"], pal["bg"], font_size=size, color=pal["ink"],
+               line_spacing=1.12, valign="bottom")
+    t["y"] = round(H - 1.0 - t["h"], 3)
+    num = c.text("n", "number", x, MY - 0.15, w, str(p.get("number", "01")), pal["bg"],
+                 font_size=round(c.sz["number"] * 1.7), color=pal["accent"], line_spacing=1.0, letter_spacing_pt=-4)
+    return [num, t], dark
+
+
 def r_big_number(c: Ctx, p: Dict[str, Any]):
+    """数字是主角：字号取“放得进 7 栏的最大值”；正文只写结论与限定，被一条细线隔在右栏。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
-    els = [_title(c, p, dark)]
-    size = c.sz["number"] + 40
+    els = _head(c, p, dark)
     unit = p.get("unit", "")
     num = str(p["number"])
-    runs = [{"text": num}, {"text": unit, "font_size": round(size * float(p.get("unit_scale", 0.4)))}] if unit else None
-    x, w = col(1, 6)
-    n = c.text("n", "number", x, 0, w, num + unit, pal["bg"], font_size=size, color=pal["accent"], line_spacing=1.0,
-               letter_spacing_pt=-2, runs=runs)
-    n["y"] = round(H * 0.5 - n["h"] * 0.5 + 0.2, 3)
-    els.append(n)
+    scale = float(p.get("unit_scale", 0.26))
+    x, w = col(1, 7)
+
+    def runs_fn(size: float) -> List[Dict[str, Any]]:
+        return [{"text": num}, {"text": unit, "font_size": round(size * scale)}]
+
+    size = c.fit_pt("number", num + unit, w, pal["bg"], c.sz["number"] * 2.0, c.sz["number"] * 0.8,
+                    runs_fn=runs_fn if unit else None, line_spacing=1.0, letter_spacing_pt=-2)
+    n = c.text("n", "number", x, 0, w, num + unit, pal["bg"], font_size=size, color=pal["accent"],
+               line_spacing=1.0, letter_spacing_pt=-2, runs=runs_fn(size) if unit else None)
+    n["y"] = round(H * 0.5 - n["h"] * 0.5 + 0.35, 3)
     bx, bw = col(8, 5)
-    body = c.text("b", "body", bx, 0, bw, p["body"], pal["bg"], font_size=c.sz["body"], color=pal["ink2"])
+    body = c.text("b", "body", bx, 0, bw, p["body"], pal["bg"], font_size=c.sz["body"] + 2, color=pal["ink2"])
     body["y"] = round(n["y"] + n["h"] * 0.5 - body["h"] * 0.5, 3)
-    els.append(body)
+    rule_x = bx - 0.35
+    top, bottom = min(body["y"], n["y"] + 0.3) - 0.1, max(body["y"] + body["h"], n["y"] + n["h"] - 0.3) + 0.1
+    els += [n, c.rect("vrule", rule_x, top, 0.012, bottom - top, pal["rule"]), body]
     return els + _note(c, p, dark), dark
 
 
 def r_chart(c: Ctx, p: Dict[str, Any]):
+    """图承担读数；`highlight`（类别序号）让单系列柱/条只有一根强调色，其余退隐。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
-    els = [_title(c, p, dark)]
-    top = MY + els[0]["h"] + 0.35
-    bottom = H - 1.0
+    els = _head(c, p, dark)
+    top = els[-1]["y"] + els[-1]["h"] + 0.3
+    bottom = FOOT - 0.1
     aside = p.get("aside")
     x, w = col(1, 8 if aside else 12)
     chart = dict(p["chart"])
     chart.setdefault("palette", c.system["data_dark" if dark else "data"])
+    if p.get("highlight") is not None and chart.get("kind") == "bar":
+        chart["highlight_category"] = int(p["highlight"])
+        chart.setdefault("legend", False)
     els.append({"id": "ch", "type": "chart", "x": round(x, 3), "y": round(top, 3), "w": round(w, 3),
                 "h": round(bottom - top, 3), "chart": chart})
     if aside:
         ax, aw = col(10, 3)
-        els.append(c.text("aside", "body", ax, top + 0.4, aw, aside, pal["bg"], font_size=c.sz["body"],
-                          color=pal["ink2"]))
+        a = c.text("aside", "body", ax, top + 0.35, aw, aside, pal["bg"], font_size=c.sz["body"] + 2,
+                   color=pal["ink"])
+        els.append(c.rect("vrule", ax - 0.3, a["y"] - 0.05, 0.012, a["h"] + 0.1, pal["accent"]))
+        els.append(a)
     return els + _note(c, p, dark), dark
 
 
 def r_compare(c: Ctx, p: Dict[str, Any]):
+    """两个数字同基线同尺度；若给了 `value`，下方再按真实比例（自零起）画两根条，落差本身成为图形。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
-    title = _title(c, p, dark)
+    head = _head(c, p, dark)
+    title = head[-1]
     els: List[Dict[str, Any]] = []
     block = 0.0
-    for key, start, accent in (("left", 1, False), ("right", 7, True)):
+    vals = [p["left"].get("value"), p["right"].get("value")]
+    use_bars = all(isinstance(v, (int, float)) and v > 0 for v in vals)
+    vmax = max(vals) if use_bars else 1
+    cw = col(1, 5)[1]
+    nsize = min(c.fit_pt("number", str(p[k]["number"]), cw, pal["bg"], c.sz["number"] * 1.2, c.sz["number"] * 0.5,
+                         line_spacing=1.0, letter_spacing_pt=-2) for k in ("left", "right"))  # 两数同字号才可比
+    for key, start, accent, v in (("left", 1, False, vals[0]), ("right", 7, True, vals[1])):
         side = p[key]
         x, w = col(start, 5)
         label = c.text(f"{key}_label", "caption", x, 0, w, side["label"], pal["bg"], font_size=c.sz["caption"] + 1,
                        color=pal["muted"], bold=True, letter_spacing_pt=1)
-        n = c.text(f"{key}_n", "number", x, label["h"] + 0.15, w, side["number"], pal["bg"], font_size=c.sz["number"],
-                   color=pal["accent"] if accent else pal["ink2"], line_spacing=1.0, letter_spacing_pt=-2)
+        n = c.text(f"{key}_n", "number", x, label["h"] + 0.15, w, side["number"], pal["bg"], font_size=nsize,
+                   color=pal["accent"] if accent else pal["quiet"], line_spacing=1.0, letter_spacing_pt=-2)
         b = c.text(f"{key}_b", "body", x, n["y"] + n["h"] + 0.1, w, side["body"], pal["bg"], font_size=c.sz["body"],
                    color=pal["ink2"])
         els += [label, n, b]
-        block = max(block, b["y"] + b["h"])
-    # 两栏同基线；整块在“标题下沿 → 页脚上沿”之间垂直居中，而不是贴着标题往下堆
-    free_top, free_bottom = MY + title["h"] + 0.2, H - 1.0
+        end = b["y"] + b["h"]
+        if use_bars:
+            bar_y = end + 0.3
+            els.append(c.rect(f"{key}_bar", x, bar_y, w * v / vmax, 0.14, pal["accent"] if accent else pal["rule"]))
+            end = bar_y + 0.14
+        block = max(block, end)
+    free_top, free_bottom = title["y"] + title["h"] + 0.2, FOOT
     shift = free_top + max((free_bottom - free_top - block) / 2, 0.0)
     for el in els:
         el["y"] = round(el["y"] + shift, 3)
-    return [title] + els + _note(c, p, dark), dark
+    mx, _ = col(6, 1)
+    rule = c.rect("vrule", mx + COL_W / 2, shift + 0.1, 0.012, block - 0.1, pal["rule"])
+    return head + els + [rule] + _note(c, p, dark), dark
 
 
 def r_list(c: Ctx, p: Dict[str, Any]):
+    """标题与条目在同一条顶线上起跑，中间一条竖线把两栏钉住；条目取大一档，撑得起半页。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
-    x, w = col(1, 5)
-    t = c.text("t", "title", x, MY, w, p["title"], pal["bg"], font_size=c.sz["title"], color=pal["ink"],
-               line_spacing=1.12)
+    els = _head(c, p, dark, span=5)
     lx, lw = col(7, 6)
-    lst = c.text("items", "body", lx, 0, lw, "\n".join(p["items"]), pal["bg"], font_size=c.sz["body"] + 4,
-                 color=pal["ink"], list=p.get("list", "number"), space_after_pt=16)
-    lst["y"] = round(max(MY, (H - lst["h"]) / 2 - 0.1), 3)
-    return [t, lst] + _note(c, p, dark), dark
+    lst = c.text("items", "body", lx, TOP + 0.05, lw, "\n".join(p["items"]), pal["bg"],
+                 font_size=c.sz["body"] + 6, color=pal["ink"], list=p.get("list", "number"), space_after_pt=22)
+    els.append(lst)
+    els.append(c.rect("vrule", col(6, 1)[0] + COL_W / 2, TOP + 0.1, 0.012, max(lst["h"], 2.2), pal["rule"]))
+    return els + _note(c, p, dark), dark
 
 
 def r_table(c: Ctx, p: Dict[str, Any]):
     dark = bool(p.get("dark", False))
-    els = [_title(c, p, dark)]
-    top = MY + els[0]["h"] + 0.4
+    els = _head(c, p, dark)
+    top = els[-1]["y"] + els[-1]["h"] + 0.4
     x, w = col(1, 12)
     rows = len(p["table"]["rows"]) + 1
     els.append({"id": "tb", "type": "chart", "x": round(x, 3), "y": round(top, 3), "w": round(w, 3),
-                "h": round(min(H - 1.2 - top, rows * 0.8), 3), "chart": {"kind": "table", "data": p["table"]}})
+                "h": round(min(FOOT - 0.1 - top, rows * 0.8), 3), "chart": {"kind": "table", "data": p["table"]}})
     return els + _note(c, p, dark), dark
 
 
@@ -342,42 +455,105 @@ def r_split_image(c: Ctx, p: Dict[str, Any]):
     side = p.get("side", "right")
     img_x = W * 0.5 if side == "right" else 0.0
     els = [_image_el(dict(p["image"], role=p["image"].get("role", "subject")), img_x, 0, W * 0.5, H)]
-    x, w = col(1 if side == "right" else 8, 5)
-    t = c.text("t", "title", x, MY, w, p["title"], pal["bg"], font_size=c.sz["title"], color=pal["ink"],
-               line_spacing=1.12)
-    els.append(t)
+    start = 1 if side == "right" else 8
+    els += _head(c, p, dark, span=5, start=start)
     if p.get("body"):
+        x, w = col(start, 5)
         body = c.text("b", "body", x, 0, w, p["body"], pal["bg"], font_size=c.sz["body"] + 2, color=pal["ink2"])
         body["y"] = round(H - MY - body["h"], 3)  # 标题在上、正文压底：两端拉开，留出整块安静的中段
         els.append(body)
     return els, dark
 
 
+def r_steps(c: Ctx, p: Dict[str, Any]):
+    """顺序与阶段（2–5 步）。只表达先后，不画箭头：箭头会暗示未经证实的因果或时长。"""
+    dark = bool(p.get("dark", False))
+    pal = c.pal(dark)
+    els = _head(c, p, dark)
+    items = p["steps"]
+    span = {2: 6, 3: 4, 4: 3, 5: 2}[len(items)]
+    line_y = H * 0.47
+    els.append(c.rect("axis", MX, line_y, W - 2 * MX, 0.02, pal["rule"]))
+    for i, it in enumerate(items):
+        x, w = col(1 + i * span, span)
+        w -= 0.3
+        els.append(c.rect(f"node{i}", x, line_y - 0.1, 0.22, 0.22, pal["accent"], shape_kind="oval"))
+        if it.get("when"):
+            els.append(c.text(f"when{i}", "caption", x, line_y - 0.62, w, it["when"], pal["bg"],
+                              font_size=c.sz["caption"] + 1, color=pal["accent"], bold=True, letter_spacing_pt=1, h=0.3))
+        label = c.text(f"label{i}", "text", x, line_y + 0.45, w, it["label"], pal["bg"], font_size=c.sz["body"] + 8,
+                       color=pal["ink"], bold=True, line_spacing=1.2)
+        els.append(label)
+        if it.get("body"):
+            els.append(c.text(f"body{i}", "body", x, label["y"] + label["h"] + 0.15, w, it["body"], pal["bg"],
+                              font_size=c.sz["body"], color=pal["ink2"]))
+    return els + _note(c, p, dark), dark
+
+
 def r_close(c: Ctx, p: Dict[str, Any]):
     dark = bool(p.get("dark", True))
     pal = c.pal(dark)
     x, w = col(1, 9)
-    t = c.text("t", "title", x, MY + 0.6, w, p["title"], pal["bg"], font_size=c.sz["title"] + 6, color=pal["ink"],
+    size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["title"] + 14, c.sz["title"], line_spacing=1.1)
+    t = c.text("t", "title", x, H * 0.27, w, p["title"], pal["bg"], font_size=size, color=pal["ink"],
                line_spacing=1.1)
-    els = [t]
+    els = [_bar(c, dark, x, t["y"] - 0.45), t]
     if p.get("items"):
-        els.append(c.text("items", "body", x, MY + 0.6 + t["h"] + 0.6, w, "\n".join(p["items"]), pal["bg"],
-                          font_size=c.sz["body"] + 2, color=pal["ink2"], list=p.get("list", "number"),
-                          space_after_pt=14))
+        iy = t["y"] + t["h"] + 0.7
+        els.append(c.rect("rule", x, iy - 0.35, W - 2 * MX, 0.012, pal["rule"]))
+        els.append(c.text("items", "body", x, iy, w, "\n".join(p["items"]), pal["bg"],
+                          font_size=c.sz["body"] + 6, color=pal["ink2"], list=p.get("list", "number"),
+                          space_after_pt=18))
     return els, dark
 
 
+# recipe → (函数, 默认 role, 讲法, 必填字段)
 RECIPES = {
-    "cover": (r_cover, "open", "标题落在 62% 水平线，上方留整块安静区"),
-    "statement": (r_statement, "hold", "一句话居中偏上，其余全空，让人停下来"),
-    "big_number": (r_big_number, "build", "关键数字压住页面，正文只写结论与限定"),
-    "chart": (r_chart, "build", "图承担读数，旁注只写意义"),
-    "compare": (r_compare, "turn", "两个数字同基线同尺度，落差就是论点"),
-    "list": (r_list, "build", "标题在左固定，条目在右逐项展开"),
-    "table": (r_table, "build", "表格承担精确读数"),
-    "split_image": (r_split_image, "build", "半幅图承载空间，文字留在另一侧"),
-    "close": (r_close, "close", "收在决定与下一步"),
+    "cover": (r_cover, "open", "标题底边锚在 64% 线，上方整块安静区", ("title",)),
+    "statement": (r_statement, "hold", "一句话占满视野，竖线是唯一装饰，让人停下来", ("title",)),
+    "section": (r_section, "breathe", "巨型序号压暗场，换气与分章", ("title",)),
+    "big_number": (r_big_number, "build", "关键数字压住页面，正文只写结论与限定", ("title", "number", "body")),
+    "chart": (r_chart, "build", "图承担读数，旁注只写意义", ("title", "chart")),
+    "compare": (r_compare, "turn", "两个数字同基线同尺度，落差就是论点", ("title", "left", "right")),
+    "list": (r_list, "build", "标题与条目同一顶线，竖线钉住两栏", ("title", "items")),
+    "table": (r_table, "build", "表格承担精确读数", ("title", "table")),
+    "steps": (r_steps, "build", "只表达先后，不画箭头", ("title", "steps")),
+    "split_image": (r_split_image, "build", "半幅图承载空间，文字留在另一侧", ("title", "image")),
+    "close": (r_close, "close", "收在决定与下一步", ("title",)),
 }
+ROOT_REQUIRED = ("deck_id", "title", "audience", "goal", "core_claim", "brief", "pages")
+
+
+def validate_outline(outline: Dict[str, Any]) -> List[str]:
+    """把常见的写错变成一句人话，而不是 KeyError 堆栈。"""
+    errs: List[str] = []
+    for k in ROOT_REQUIRED:
+        if k not in outline:
+            errs.append(f"根字段缺少 {k}")
+    pages = outline.get("pages")
+    if not isinstance(pages, list) or not pages:
+        errs.append("pages 必须是非空数组")
+        return errs
+    for i, p in enumerate(pages, 1):
+        r = p.get("recipe")
+        if r not in RECIPES:
+            errs.append(f"第 {i} 页 recipe={r!r} 不存在；可选：{'、'.join(RECIPES)}")
+            continue
+        for k in RECIPES[r][3]:
+            if p.get(k) in (None, "", []):
+                errs.append(f"第 {i} 页（{r}）缺少 {k}")
+        if r == "compare":
+            for side in ("left", "right"):
+                for k in ("label", "number", "body"):
+                    if not isinstance(p.get(side), dict) or k not in p[side]:
+                        errs.append(f"第 {i} 页（compare）{side}.{k} 缺失")
+        if r == "steps":
+            if not (2 <= len(p.get("steps") or []) <= 5):
+                errs.append(f"第 {i} 页（steps）steps 需 2–5 项")
+            for j, it in enumerate(p.get("steps") or [], 1):
+                if not isinstance(it, dict) or "label" not in it:
+                    errs.append(f"第 {i} 页（steps）第 {j} 项缺少 label")
+    return errs
 
 
 def build_plan(outline: Dict[str, Any]) -> Dict[str, Any]:
@@ -387,7 +563,7 @@ def build_plan(outline: Dict[str, Any]) -> Dict[str, Any]:
     plan["palette"] = ctx.system["data"]
     pages, rhythm = [], []
     for i, p in enumerate(outline["pages"], 1):
-        fn, role, grammar = RECIPES[p["recipe"]]
+        fn, role, grammar, _req = RECIPES[p["recipe"]]
         elements, dark = fn(ctx, p)
         page: Dict[str, Any] = {
             "id": p.get("id", f"p{i}"), "role": p.get("role", role), "claim": p.get("claim", p["title"]),
@@ -425,9 +601,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     if out.exists() and not a.force:
         print(f"[HARD] E-EXIST {out} 已存在；确认要替换才加 --force")
         return 2
-    outline = json.loads(Path(a.outline).read_text(encoding="utf-8"))
+    try:
+        outline = json.loads(Path(a.outline).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"[HARD] E-OUTLINE 读不了 {a.outline}：{exc}")
+        return 2
+    errs = validate_outline(outline)
+    if errs:
+        for e in errs:
+            print(f"[HARD] E-OUTLINE {e}")
+        print(f"\n阻断：{len(errs)} 个 outline 问题，未写出文件。")
+        return 2
     plan = build_plan(outline)
-    out.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8")
+    out.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"已写出 {out}（{len(plan['pages'])} 页）。下一步：compile.py → verify.py → 看图，再手改文案与几何。")
     return 0
 

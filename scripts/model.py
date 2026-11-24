@@ -140,7 +140,7 @@ def _em_width(ch: str) -> float:
             return 0.90          # 百分号、@、& 接近一个字宽；按标点的 0.34 估会漏掉大字号数字的折行
         return 0.55 if ch.isalnum() else 0.34
     if ch in "×÷±":
-        return 0.90
+        return 1.00          # 实测：衬线 × 约 1.0 em；按 0.9 估，“2.3×”在 138pt 时被低估而折行
     if ch in "，。、；：？！（）【】《》「」『』“”‘’—…·～":
         return 1.0
     if code >= 0x2E80:
