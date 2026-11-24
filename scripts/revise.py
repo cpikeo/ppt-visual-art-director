@@ -916,6 +916,8 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
         if kind == "text":
             if op.get("content") is None:
                 raise M.BadOp(f"{where}: text 需要 content")
+            if not getattr(shape, "has_text_frame", False):
+                raise M.BadOp(f"{where}: {shape.name} 不是文本对象（表格、图表、图片、组合不接受 text 改写）")
             write_text(shape, op, rep, int(op["page"]), shape.name)
         elif kind == "box":
             if not any(op.get(k) is not None for k in ("x", "y", "w", "h")):

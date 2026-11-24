@@ -1293,6 +1293,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
     all_fonts: set = set()
     face_notes: List[str] = []
     face_seen: set = set()
+    face_states: set = set()
     aliases = {k.lower(): [a.lower() for a in v] for k, v in M.LIMITS.get("font_aliases", {}).items()
                if not k.startswith("_")}
     for index, pdf_page in enumerate(doc):
@@ -1412,13 +1413,29 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
                       f"——家族匹配通过，但字面不同（{', '.join(got_scripts)}）；"
                       f"直/骨/门/者一类共享码位的字形可能按别的地区字面渲染，"
                       f"简体字形未被核验，目标机必须人工复核")
-                facts["font_face"] = "UNVERIFIED_SCRIPT"
+
+        # P0（13.5.0）：字面只在“页面确有中日韩文字”时才有意义；无法确认也是状态，不是通过。
+        page_cjk = any("\u4e00" <= ch <= "\u9fff" for ln in lines for ch in ln["text"])
+        if page_cjk:
+            if want_script and got_scripts and want_script in got_scripts:
+                face_states.add("VERIFIED")
+            elif want_script and got_scripts:
+                face_states.add("MISMATCH")
+            else:
+                face_states.add("UNVERIFIED")
+                if ("unverified", declared and tuple(sorted(declared))) not in face_seen:
+                    face_seen.add(("unverified", declared and tuple(sorted(declared))))
+                    f.add("SOFT", "W-FONT-FACE", pid,
+                          f"页面含中文，但声明字族 {sorted(declared)} 或渲染字体 {sorted(fonts_here)} "
+                          f"无法判定地区字面（SC/TC/JP/KR）——字面 NOT VERIFIED，状态不能是 READY；"
+                          f"声明带地区后缀的字族（如 Noto Sans CJK SC），或在目标机人工复核")
 
     facts["fonts_all"] = sorted(all_fonts)
     if face_notes:
-        facts["font_face"] = "UNVERIFIED_SCRIPT"
         f.add("INFO", "I-FONT-FACE", "deck",
               "；".join(face_notes) + "——「字体：OK」只到家族，不含字面")
+    facts["font_face"] = ("MISMATCH" if "MISMATCH" in face_states else "UNVERIFIED" if "UNVERIFIED" in face_states
+                          else "VERIFIED" if face_states else "NOT_APPLICABLE")
     facts["pngs"] = make_contact_sheet(pngs, render_dir)
     return facts
 
@@ -1509,6 +1526,26 @@ def make_contact_sheet(pngs: List[Path], render_dir: Path) -> List[str]:
 # ---------------------------------------------------------------- 主流程
 
 
+def decide_status(blocked: bool, render_state: str, render_facts: Dict[str, Any]) -> Tuple[str, str]:
+    """BLOCK / PARTIAL / READY 的唯一判定点，返回 (status, fonts_state)。
+
+    BLOCK：任一层有硬问题。
+    READY：对象一致 + 渲染完成且无硬问题 + 声明字体真实参与 + 字面（SC/TC/JP/KR）已确认或页面无中日韩文字。
+    其余一律 PARTIAL：渲染没跑、字体被替换、字面不一致或无法确认。
+    READY 仍不包含 PowerPoint 实机（NOT VERIFIED）与人工签收（NOT REVIEWED）。
+    """
+    if render_state != "PASS":
+        fonts_state = "NOT CHECKED"
+    elif render_facts.get("font_substituted"):
+        fonts_state = "SUBSTITUTED"
+    else:
+        face = render_facts.get("font_face", "UNVERIFIED")
+        fonts_state = {"VERIFIED": "OK", "NOT_APPLICABLE": "OK", "MISMATCH": "FACE MISMATCH"}.get(face, "FACE UNVERIFIED")
+    if blocked:
+        return "BLOCK", fonts_state
+    return ("READY" if render_state == "PASS" and fonts_state == "OK" else "PARTIAL"), fonts_state
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     M.utf8_stdio()
     parser = argparse.ArgumentParser(description="核验 plan ↔ PPTX ↔ 渲染")
@@ -1581,18 +1618,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     # 渲染缺失或字体被替换时，断行与宽度都只代表替代字体，不是目标环境结论。
     objects = "FAIL" if obj_rep.blocked else "PASS"
     render_state = "SKIP" if pdf is None else ("FAIL" if render_rep.blocked else "PASS")
-    substituted = bool(facts["render"].get("font_substituted"))
-    if f.blocked:
-        status = "BLOCK"
-    elif render_state == "PASS" and not substituted:
-        status = "READY"
-    else:
-        status = "PARTIAL"
-    fonts_state = "SUBSTITUTED" if substituted else ("OK" if render_state == "PASS" else "NOT CHECKED")
+    status, fonts_state = decide_status(f.blocked, render_state, facts["render"])
     facts["layers"] = {"objects": objects, "render": render_state, "fonts": fonts_state,
-                       "human": "NOT REVIEWED"}
-    if substituted:
+                       "powerpoint": "NOT VERIFIED", "human": "NOT REVIEWED"}
+    if fonts_state == "SUBSTITUTED":
         print("字体替换：声明字体未全部参与渲染，断行与宽度只代表替代字体，状态不能是 READY。")
+    elif fonts_state.startswith("FACE"):
+        print("字面未确认或不一致：家族匹配不等于地区字面一致，状态不能是 READY。")
     print(f"\n对象核对：{objects}（硬 {obj_rep.count('HARD')}）｜渲染核对：{render_state}｜字体：{fonts_state}"
           f"｜提示 {f.count('SOFT')}｜说明 {f.count('INFO')}｜状态：{status}")
     print("READY 只说明对象与渲染一致，不说明设计成立；PARTIAL 说明视觉判断没有任何机器依据。")

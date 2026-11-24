@@ -123,7 +123,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
   | 环 | 不写（不允许） | 环带 | 逐扇区深墨/白墨 |
 
   直标一律写在**系列**上（不依赖 plot 级继承）。`dLblPos` 对类型有限制：donut、area 不允许写，堆叠柱不允许 `outEnd`，XSD 认不出这条，但 PowerPoint 会提示“需要修复”——`chart_audit` 逐处检查。单位取图表级 `unit`，缺省取各系列声明的同一个单位。
-  系列色对承载面 < 1.5:1 为 `E-CHART`（几乎不可见），低于 `limits.json` 的 `chart.min_contrast` 为 `W-CHART`。`highlight_category` 的图不能开原生图例（图例是系列色，柱是退隐灰）。
+  系列色对承载面 < 1.5:1 为 `E-CHART`（几乎不可见），低于 `limits.json` 的 `chart.min_contrast` 为 `W-CHART`。`highlight_category`（**0 起的整数索引**，不是类别名）的图不能开原生图例（图例是系列色，柱是退隐灰）。
 - **自定义图例用 `legend` 元素，不要手绘色块**：`{"type":"legend","for_chart":"<本页 chart 的 id>","x":…,"y":…,"w":…,"h":…}`，可选 `direction`（`vertical` 缺省／`horizontal`）、`swatch_in`（缺省 0.16）、`show_value`（仅饼/环附读数）、`font_size`、`color`。色块与标签由被引用图表的**同一份映射**生成，编译成可编辑的组合对象；核验器逐块比对色值与标签，错色即 `V-CHART` 阻断。手绘色块会收到 `W-CHART`（疑似手绘图例）。
 - 组合图共用一根数值轴（`combo_line_series` 指定系列改画折线，折线层显式不平滑）。**没有双数值轴**。
 - **轴起点**：柱/条/面积在数据全为非负且未写 `value_axis.min` 时，编译器固定从 0 起（自动轴会无声截轴）；`verify.py` 会拦成品里被改掉起点的图（`V-CHART`）。含负值的非堆叠柱开直标时，下界取整齐刻度并多留 25%，避免负柱直标与类别标签相撞；折线与散点保持自动轴。
@@ -189,7 +189,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | `W-RUNS` | 原有混排被统一 | 用 `runs` 写明分区样式 |
 | `V-TEXT-RENDER` | 元素的字未落在自己框内渲染 | 查归属，不因别处有同样的字放行 |
 | `V-FONT` | 声明字体未参与渲染 | 状态降为 PARTIAL，目标机复核 |
-| `W-FONT-FACE` `I-FONT-FACE` | 家族匹配上了，**地区字面**没匹配：声明简体而 PDF 取到日文字面（Noto/思源 CJK 的 `.ttc` 由 LibreOffice 按集合首个字面导出） | 不改状态但必须写进交付说明；直/骨/门/者一类共享码位的字形按别的地区字面渲染，简体字形要人在 PowerPoint 里复核 |
+| `W-FONT-FACE` `I-FONT-FACE` | 家族匹配上了，**地区字面**没匹配（声明简体而 PDF 取到日文字面），或页面含中文但字面无法判定 | **状态降为 PARTIAL**（`font_face` = `MISMATCH` / `UNVERIFIED`）；直/骨/门/者一类共享码位的字形按别的地区字面渲染，简体字形要人在 PowerPoint 里复核 |
 | `V-NOTES` `V-ALT` | 成品里的备注／替代文字与 plan 不一致 | 重新编译；不要手改成品 |
 
 ## 定点编辑：改既有稿
@@ -211,7 +211,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 
 | `op` | 允许的键（公共键：`page` `target`／`target_regex`／`target_index` `note`） |
 | --- | --- |
-| `text` | `content` `runs` `space_after_pt`，以及样式键（只改字，不得引入原稿没有的样式） |
+| `text` | `content` `runs` `space_after_pt`，以及样式键（只改字，不得引入原稿没有的样式）；目标必须是文本对象，表格/图表/图片/组合会被 `E-OPS` 拒绝 |
 | `box` | `x` `y` `w` `h` |
 | `style` | `font` `font_ea` `font_size` `bold` `color` `letter_spacing_pt` `align` `line_spacing` `pad_in` `valign` |
 | `fill` | `color` `alpha` |
@@ -231,7 +231,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 ## 报告字段
 
 - `compile.py`：`blocked`、`output`、`pages`、`sha256`、`issues`。
-- `verify.py`：`status`、`sha256`、`render`（PDF、PNG、`font_substituted`、`text_checks`）、`structure`、`layers`（`objects`／`render`／`fonts`／`human`）、`findings`。`render` 非 `PASS` 时 `status` 只能是 `PARTIAL`；`fonts` 为 `SUBSTITUTED` 时不能是 `READY`。
+- `verify.py`：`status`、`sha256`、`render`（PDF、PNG、`font_substituted`、`text_checks`）、`structure`、`layers`（`objects`／`render`／`fonts`／`human`）、`findings`。`render` 非 `PASS` 时 `status` 只能是 `PARTIAL`；`fonts` 为 `SUBSTITUTED`、`FACE MISMATCH`、`FACE UNVERIFIED` 时不能是 `READY`（`render.font_face`：`VERIFIED` `MISMATCH` `UNVERIFIED` `NOT_APPLICABLE`）；`layers.powerpoint` 恒为 `NOT VERIFIED`。判定只在 `verify.decide_status` 一处。
 - `revise.py`：`status`、`output`、`sha256`（失败为 null）、`ops`、`preservation`（`parts.changed` 为越界，`parts.moved` 为声明过的改写；`rejected` 为证据路径）、`issues`。
 
 `sha256` 用于确认“这份文件是不是我验的那一份”，不是复现凭据。

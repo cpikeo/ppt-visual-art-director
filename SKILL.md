@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：先读懂受众与证据，提炼洞察，定原创视觉概念，再组织叙事、构图、排印、色彩、图像与图表；把判断写成 brief 与 plan，确定性产出原生可编辑 PPTX，看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 13.4.0
+version: 13.5.0
 ---
 
 # PPT 视觉艺术指导
@@ -42,6 +42,21 @@ version: 13.4.0
 
 **概念四问**：能追溯到洞察吗？能否掉一个具体的东西？换掉主题还成立吗？缩略图上认得出是这一套吗？
 **每页三问**：先看到什么？凭什么信？删掉哪件会损失什么（说不出的是装饰）？
+
+## 二·附　八个维度落在哪里（不新增字段）
+
+色彩、排印、构图、空间、背景与摄影、插图与资产、材质与光影、叙事，是同一次艺术指导的八个切面，都已有落点：
+
+| 维度 | 落到 plan |
+| --- | --- |
+| 色彩 | `brief.art.gamut`（主导场、唯一强调色、图片色域）、`palette`（仅数据色）、`chart.color_map` |
+| 排印 | `fonts`、元素 `font_size` `runs` `letter_spacing_pt` `line_spacing` `align` |
+| 构图 / 空间 | 页 `focus` `focus_element` `composition_rationale`、元素几何与声明顺序（前中后景＝叠放顺序）、`brief.motif` |
+| 背景与摄影 / 资产 | `image_role` `info_duty` `crop_focus` `duotone` `asset_reason`、`assets.*`、`brief.art.lens` `grain` |
+| 材质与光影 | `brief.art.light` `material` |
+| 叙事 | `rhythm`、页 `role` `claim` |
+
+机器只核其中可计算的事实；八个维度整体是否成立，由 AI 判断、人签收。
 
 ## 三、三种整体判断（看图时必做）
 
@@ -96,13 +111,13 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx          # 改稿：定�
 2. **渲染核对**（LibreOffice → PDF → PNG）：越界、字体替换、空白页、逐元素文字归属、行首标点与末行孤字；并核对声明字族取到的**字面**——`W-FONT-FACE` 说明家族匹配了、地区字面没匹配（声明简体、PDF 取到日文字面）。
 3. **必须由人判断**：构图、主次、概念是否成立；目标 PowerPoint 与字体下是否正常。
 
-**状态三档，都不是质量结论**：`BLOCK` 有硬问题；`PARTIAL` 渲染没跑或声明字体被替换；`READY` 对象一致、渲染完成、字体真实参与。`human` 永远是 `NOT REVIEWED`。
+**状态三档，都不是质量结论**：`BLOCK` 有硬问题；`PARTIAL` 渲染没跑、声明字体被替换、或地区字面（SC/TC/JP/KR）不一致/无法确认；`READY` 对象一致、渲染完成、字体与字面都确认（页面无中日韩文字则字面不适用）。`powerpoint` 永远是 `NOT VERIFIED`，`human` 永远是 `NOT REVIEWED`。
 
 **看图顺序**：缩略总览（整体性、连续性）→ 逐页 PNG（先看到什么、断行、重心、留白、裁切）→ 转灰度再看一遍（有效性）→ 关键页与相邻页并排比节奏。机器事实与设计判断分开写，后者引用页码与可观察依据。
 
 **缺陷分级**：S1 否决（语义错误、数据失真、无证因果、关键内容不可读）→ S2 阻断主线（读不到主张、层级失效、节奏断裂）→ S3 质量缺陷 → S4 打磨。**按根因修，上游优先**；每次只动一组相关变量，重编译、重渲染、前后同页并排比较，预期改善没出现就回退。**停止条件**：S1 清零，无未处置的 S2，每页主角一句话说得清，剩余 S3/S4 已披露。
 
-**验证等级**：L0 对象、L1 LibreOffice 渲染、L2 PowerPoint 实机、L3 人工签收。`verify.py` 只到 L1。**不能说的话**：没跑 PowerPoint 却说“PowerPoint 下正常”；没渲染却说“已预览”“无溢出”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论；把「字体：OK」说成“简体字形已核验”（家族对上≠字面一致）。
+**验证等级**：L0 plan 与 schema、L1 PPTX 对象与 OOXML、L2 LibreOffice 真实渲染、L3 PowerPoint 实机与人工签收。`verify.py` 只到 L2；L3 未做就写 `NOT VERIFIED`。**不能说的话**：没跑 PowerPoint 却说“PowerPoint 下正常”；没渲染却说“已预览”“无溢出”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论；把「字体：OK」说成“简体字形已核验”（家族对上≠字面一致）。
 
 ## 七、定点改稿的保留规则
 
