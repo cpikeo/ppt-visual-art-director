@@ -258,14 +258,27 @@ def _para_width_em(seg: str, pieces: List[Dict[str, Any]], pt: float) -> float:
 LIST_INDENT_IN = 0.32  # 原生列表的悬挂缩进（英寸）；估宽与 compile 共用这一个数
 
 
-def list_indent(el: Dict[str, Any]) -> float:
-    return LIST_INDENT_IN if el.get("list") else 0.0
+def list_indent_for(kind: Any, size_pt: float) -> float:
+    """悬挂缩进随字号走：固定 0.32 in 在 26pt 以上的编号（如“1.”）与正文几乎贴在一起，
+    会把“1.” + “10 月”读成“1.10 月”。编号取 1.5 em，符号取 1.1 em，不小于 LIST_INDENT_IN。"""
+    if not kind:
+        return 0.0
+    em = 1.5 if kind == "number" else 1.1
+    return round(max(LIST_INDENT_IN, em * float(size_pt) / 72.0), 3)
+
+
+def list_indent(el: Dict[str, Any], size_pt: Optional[float] = None) -> float:
+    if not el.get("list"):
+        return 0.0
+    if size_pt is None:
+        size_pt = float(el.get("font_size") or 0) or 20.0
+    return list_indent_for(el.get("list"), size_pt)
 
 
 def fit_lines(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> List[int]:
     """逐段行数。按每段最大字号与逐 run 折算的宽度算，不用元素级字号一刀切。"""
     inset = st["pad"][0]
-    usable = max(box_w - 2 * inset - list_indent(el), 0.05)
+    usable = max(box_w - 2 * inset - list_indent(el, st["size"]), 0.05)
     paras = paragraph_runs(el)
     if paras is None:
         paras = [(str(el.get("content", "")), [])]

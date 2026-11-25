@@ -28,7 +28,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import show, write_atomic, place_atomic, temp_beside, EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import show, write_atomic, place_atomic, temp_beside, EMU, LIST_INDENT_IN, list_indent_for, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import stabilize_package, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -45,10 +45,10 @@ def _claim_title_placeholder(slide, page, el, top_level):
         return None
     return holder
 
-def _apply_list(para, kind: str, color: str) -> None:
+def _apply_list(para, kind: str, color: str, size_pt: float = 20.0) -> None:
     """原生列表：悬挂缩进 + 项目符号/自动编号。符号与第一段文字同色，随文字走。"""
     pPr = para._p.get_or_add_pPr()
-    emu = int(round(LIST_INDENT_IN * EMU))
+    emu = int(round(list_indent_for(kind, size_pt) * EMU))
     pPr.set("marL", str(emu))
     pPr.set("indent", str(-emu))
     clr = etree.SubElement(etree.SubElement(pPr, qn("a:buClr")), qn("a:srgbClr"))
@@ -90,7 +90,8 @@ def add_text(slide, plan, page, el, top_level=True):
         if el.get("space_after_pt"):
             para.space_after = Pt(float(el["space_after_pt"]))
         if el.get("list"):
-            _apply_list(para, str(el["list"]), str((pieces[0].get("color") if pieces else None) or st["color"]))
+            _apply_list(para, str(el["list"]), str((pieces[0].get("color") if pieces else None) or st["color"]),
+                        max([float(q.get("font_size") or st["size"]) for q in pieces] or [float(st["size"])]))
         for piece in pieces:
             run = para.add_run()
             run.text = piece.get("text", "")

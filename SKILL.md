@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 / 改 / 评审 PPT（汇报、路演、发布、复盘、融资）。先定受众、洞察与原创视觉概念，再由 Plan 契约确定性编译为原生可编辑 PPTX，看真实渲染后定点修正；也用于诊断与定点改稿。不适用于纯文案、Word/PDF 排版。
-version: 20.0.0
+version: 20.1.0
 ---
 
 # PPT 视觉艺术指导

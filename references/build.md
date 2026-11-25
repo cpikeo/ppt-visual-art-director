@@ -41,8 +41,8 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 | `statement` | hold | `title` | `sub` `dark` | 一句话占满视野，左侧一道竖线是唯一装饰 |
 | `section` | breathe | `title` | `number` `dark` | 暗场 + 巨型序号，换气与分章 |
 | `big_number` | build | `title` `number` `body` | `unit` `unit_scale` `note` `eyebrow` | 数字取放得进 7 栏的最大字号，正文被细线隔在右栏 |
-| `chart` | build | `title` `chart` | `aside` `note` `highlight` `eyebrow` | 图承担读数；`highlight`=类别序号（单系列柱/条，其余退隐） |
-| `compare` | turn | `title` `left` `right`（各 `label` `number` `body`，可加 `value`） | `note` `eyebrow` | 两数同字号同基线；两侧都有 `value` 时再画自零起的比例条 |
+| `chart` | build | `title` `chart` | `aside` `note` `highlight` `focus_series` `eyebrow` | 图承担读数；`highlight`=类别序号（单系列柱/条，其余退隐）；`focus_series`=系列序号（柱/线/面积，多系列）：被论证的系列用强调色，其余退为灰，写入 `color_map`（plan 里已有 `color_map` 则不覆盖） |
+| `compare` | turn | `title` `left` `right`（各 `label` `number` `body`，可加 `value`） | `scale` `note` `eyebrow` | 两数同字号同基线；两侧都有 `value` 时再画自零起的比例条。`scale: "value"`（两侧 `value` 均 > 0）＝**尺度隐喻**：数字字高与 `value` 成正比、共用一条基线，较大者占 8 栏，较小者字号不低于 28pt（再小不再成比例）；自动写入 `temperament: dramatic`、`hero_ratio`、`focus_element`。落差是论点时用它，两数本应等重时不用 |
 | `list` | build | `title` `items` | `list`（number/bullet/dash）`note` `eyebrow` | 标题与原生列表同一顶线，竖线钉住两栏 |
 | `table` | build | `title` `table`（headers/rows） | `note` `eyebrow` | 原生表格 |
 | `steps` | build | `title` `steps`（2–5 项，各 `label`，可加 `when` `body`） | `note` `eyebrow` | 只表达先后，不画箭头（箭头暗示因果与时长） |

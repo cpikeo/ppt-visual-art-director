@@ -18,7 +18,7 @@
 - 字族三分：`fonts.heading`、`fonts.body`（正文、图表、页码）、`fonts.number`（缺省同 heading）。
 - `letter_spacing_pt` 范围 −40…40：几百 pt 的巨型数字需要按字号比例收紧字距（约 −2%…−4% 字号），旧版 −4 的上限无法表达。
 - `rotation` 对所有对象生效，按 360 取模。
-- **原生列表**：`list: "bullet"|"dash"|"number"`，每个 `\n` 分段是一项，写成真正的项目符号/自动编号（`buChar`／`buAutoNum`）与 0.32 in 悬挂缩进，符号与第一段文字同色；不要手敲“1.”“•”。估宽按缩进后的版心算；`verify.py` 逐项比对渲染文字（渲染器会在每项前插入符号）。
+- **原生列表**：`list: "bullet"|"dash"|"number"`，每个 `\n` 分段是一项，写成真正的项目符号/自动编号（`buChar`／`buAutoNum`）与随字号变化的悬挂缩进（编号 1.5 em、符号 1.1 em，不小于 0.32 in；`model.list_indent_for` 是 compile 与估宽共用的唯一实现），符号与第一段文字同色；不要手敲“1.”“•”。估宽按缩进后的版心算；`verify.py` 逐项比对渲染文字（渲染器会在每项前插入符号）。
 - 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
 - `W-FIT` 行高按字体取 `limits.json` 的 `type.line_pitch_em.by_font`（Noto/思源 CJK 1.448、雅黑 1.32、宋体/黑体 1.15，未知 1.25），估不准就补一行。图表与表格内字号由 `limits.json` 统一给出，要改改阈值。
 

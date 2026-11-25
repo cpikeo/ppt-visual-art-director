@@ -211,6 +211,10 @@ def make_grid(spec: Any) -> Tuple[Any, Any, int, int]:
     return gcol, grow, n, rows
 
 
+SCALE_FLOOR_PT = 28   # 尺度隐喻里较小数字的字号下限
+BASELINE_EM = 0.20    # valign=bottom 的数字框：基线在框底之上的距离（em）。LibreOffice 渲染实测标定；PowerPoint 未实机验证
+
+
 class Ctx:
     def __init__(self, outline: Dict[str, Any], asset_root: Optional[Path] = None):
         self.asset_root = asset_root
@@ -285,7 +289,7 @@ class Ctx:
         inset = st["pad"][0]
 
         def last_em(width: float) -> Tuple[int, float]:
-            cap = max((width * FIT_SAFETY - 2 * inset) / (size / 72.0), 0.5)
+            cap = max((width * FIT_SAFETY - 2 * inset - M.list_indent(el, size)) / (size / 72.0), 0.5)
             n = max(1, math.ceil(em / cap - 1e-9))
             return n, em - (n - 1) * cap
 
@@ -508,6 +512,12 @@ def r_chart(c: Ctx, p: Dict[str, Any]):
     if chart.get("kind") in ("bar", "pie", "donut") and isinstance(d, dict) and len(d.get("categories") or []) <= 8 \
             and len(d.get("series") or []) <= 3:
         chart.setdefault("data_labels", True)  # 类别少：直标读数，读者不必回到坐标轴估值（可显式设 false 关闭）
+    fs = p.get("focus_series")
+    if isinstance(fs, int) and not isinstance(fs, bool) and chart.get("kind") in ("bar", "line", "area") \
+            and isinstance(d, dict) and 0 <= fs < len(d.get("series") or []) and "color_map" not in chart:
+        # 强调色只指向结论：被论证的那条系列用强调色，其余退隐为灰（直标读数，不靠图例分辨）
+        names = [str(sr.get("name")) for sr in d["series"]]
+        chart["color_map"] = {n: (pal["accent"] if i == fs else pal["quiet"]) for i, n in enumerate(names)}
     if p.get("highlight") is not None and chart.get("kind") == "bar":
         chart["highlight_category"] = int(p["highlight"])
         chart.setdefault("legend", False)
@@ -522,6 +532,54 @@ def r_chart(c: Ctx, p: Dict[str, Any]):
     return els + _note(c, p, dark), dark
 
 
+def _compare_scaled(c: Ctx, p: Dict[str, Any], head: List[Dict[str, Any]], vals: List[float], dark: bool):
+    """尺度隐喻（`scale: "value"`）：数字字高与 `value` 成正比、落在同一条基线上，落差本身就是论点。
+    较大者占 8 栏、较小者占 4 栏；较小者字号不低于 `SCALE_FLOOR_PT`（再小就读不清，不再成比例）。
+    这是 design.md「尺度隐喻」生成器的配方化：压住与被压住由数据的真实比例决定，而不是由作者目测。"""
+    pal = c.pal(dark)
+    title = head[-1]
+    big_i = 0 if vals[0] >= vals[1] else 1
+    spans = {big_i: 8, 1 - big_i: 4}
+    starts = {0: 1, 1: 1 + spans[0]}
+    keys = ("left", "right")
+    bw = col(starts[big_i], spans[big_i])[1]
+    big_pt = c.fit_pt("number", str(p[keys[big_i]]["number"]), bw, pal["bg"], c.sz["number"] * 2.0,
+                      c.sz["number"] * 0.6, line_spacing=1.0, letter_spacing_pt=-4)
+    ratio = vals[1 - big_i] / vals[big_i]
+    small_pt = max(SCALE_FLOOR_PT, int(round(big_pt * ratio / 2.0)) * 2)
+    sizes = {big_i: big_pt, 1 - big_i: small_pt}
+    els: List[Dict[str, Any]] = []
+    labels, nums, bodies = [], {}, []
+    for i, key in enumerate(keys):
+        side = p[key]
+        x, w = col(starts[i], spans[i])
+        accent = bool(i == big_i)
+        labels.append(c.text(f"{key}_label", "caption", x, 0, w, side["label"], pal["bg"],
+                             font_size=c.sz["caption"] + 1, color=pal["muted"], bold=True, letter_spacing_pt=1))
+        nums[i] = c.text(f"{key}_n", "number", x, 0, w, side["number"], pal["bg"], font_size=sizes[i],
+                         color=pal["accent"] if accent else pal["quiet"], line_spacing=1.0,
+                         letter_spacing_pt=-4 if sizes[i] > 100 else -2, valign="bottom")
+        bodies.append((x, w, side))
+    label_h = max(lb["h"] for lb in labels)
+    top_y = label_h + 0.15
+    base_y = top_y + nums[big_i]["h"]
+    for i, key in enumerate(keys):
+        # 同一条基线：valign=bottom 时基线在框底之上约 BASELINE_EM（LibreOffice 渲染实测标定），按字号补偿，小字不会浮在大字基线之上
+        nums[i]["y"] = round(base_y + BASELINE_EM * (sizes[i] - big_pt) / 72.0 - nums[i]["h"], 3)
+        labels[i]["y"] = 0.0
+        x, w, side = bodies[i]
+        b = c.text(f"{key}_b", "body", x, base_y + 0.25, c.widow_w("body", side["body"], w, c.sz["body"], pal["bg"],
+                   max_w=w * 1.1), side["body"], pal["bg"], font_size=c.sz["body"], color=pal["ink2"])
+        els += [labels[i], nums[i], b]
+    block = max(e["y"] + e["h"] for e in els)
+    free_top, free_bottom = title["y"] + title["h"] + 0.2, FOOT
+    shift = free_top + max((free_bottom - free_top - block) / 2, 0.0)
+    for el in els:
+        el["y"] = round(el["y"] + shift, 3)
+    rule = c.rect("base_rule", MX, round(base_y + shift + 0.1, 3), W - 2 * MX, 0.012, pal["rule"])
+    return head + els + [rule] + _note(c, p, dark), dark
+
+
 def r_compare(c: Ctx, p: Dict[str, Any]):
     """两个数字同基线同尺度；若给了 `value`，下方再按真实比例（自零起）画两根条，落差本身成为图形。"""
     dark = bool(p.get("dark", False))
@@ -532,6 +590,8 @@ def r_compare(c: Ctx, p: Dict[str, Any]):
     block = 0.0
     vals = [p["left"].get("value"), p["right"].get("value")]
     use_bars = all(isinstance(v, (int, float)) and v > 0 for v in vals)
+    if use_bars and p.get("scale") == "value":
+        return _compare_scaled(c, p, head, vals, dark)
     vmax = max(vals) if use_bars else 1
     cw = col(1, 5)[1]
     nsize = min(c.fit_pt("number", str(p[k]["number"]), cw, pal["bg"], c.sz["number"] * 1.2, c.sz["number"] * 0.5,
@@ -568,7 +628,8 @@ def r_list(c: Ctx, p: Dict[str, Any]):
     els = _head(c, p, dark, span=5)
     lx, lw = col(7, 6)
     longest = max(p["items"], key=len)   # 条目字号随最长一条取不折行的最大值：条目少时撑得起半页，而不是缩在角落
-    size = c.fit_pt("body", longest, lw - M.LIST_INDENT_IN, pal["bg"], c.sz["body"] + 12, c.sz["body"] + 4, line_spacing=1.2)
+    size = c.fit_pt("body", longest, lw, pal["bg"], c.sz["body"] + 12, c.sz["body"] + 4, line_spacing=1.2,
+                    list=p.get("list", "number"))   # 悬挂缩进随字号变，交给 fit_lines 按每个候选字号算
     lw = c.widow_w("body", longest, lw, size, pal["bg"], line_spacing=1.2, list=p.get("list", "number")) if len(longest) > 6 else lw
     lst = c.text("items", "body", lx, TOP + 0.05, lw, "\n".join(p["items"]), pal["bg"],
                  font_size=size, color=pal["ink"], list=p.get("list", "number"), space_after_pt=round(size * 1.1))
@@ -866,6 +927,13 @@ def build_plan(outline: Dict[str, Any], asset_root: Optional[Path] = None) -> Di
             "background": (res[2] if len(res) > 2 and res[2] else None) and ctx.pal(dark).get(res[2], res[2])
             or ctx.pal(dark)["bg"],
         }
+        if p["recipe"] == "compare" and p.get("scale") == "value":
+            vs = [(p["left"].get("value"), "left"), (p["right"].get("value"), "right")]
+            if all(isinstance(v, (int, float)) and v > 0 for v, _ in vs):
+                hi, lo = max(v for v, _ in vs), min(v for v, _ in vs)
+                page.setdefault("focus_element", max(vs)[1] + "_n")
+                page["composition"] = {"temperament": "dramatic", "hero_ratio": round(min(max(hi / lo, 1.0), 3.0), 2),
+                                       "focus_mode": "single", "strategy": "type_led", **page["composition"]}
         if p.get("claim"):
             page["claim"] = p["claim"]
         if p.get("rationale"):
