@@ -971,7 +971,7 @@ def render(pptx: Path, render_dir: Path, f: M.Report) -> Optional[Path]:
         return None
     pdf = render_dir / (pptx.stem + ".pdf")
     if not pdf.is_file():
-        f.add("INFO", "V-RENDER", "环境", "LibreOffice 未产出 PDF（可能是文件被占用）")
+        f.add("INFO", "V-RENDER", "环境", "LibreOffice 未产出 PDF" + (f"：{err}" if err else "（可能是文件被占用）"))
         return None
     return pdf
 
@@ -993,8 +993,9 @@ def environment_facts(rendered: bool) -> Dict[str, Any]:
 
 def _run_soffice(cmd: List[str], env: Dict[str, str]) -> Tuple[bool, str]:
     try:
-        subprocess.run(cmd, capture_output=True, timeout=240, env=env, check=False)
-        return True, ""
+        done = subprocess.run(cmd, capture_output=True, timeout=240, env=env, check=False)
+        tail = (done.stderr or b"").decode("utf-8", "replace").strip()[-200:]
+        return True, tail   # 成功时 err 只是 stderr 尾部，供“未产出 PDF”时说明原因
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
 

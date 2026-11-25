@@ -94,8 +94,8 @@ SCENES = {  # 论断标题 / 正文 / 关键数字 / 注释 / 封面大标题（
     "meeting": {"title": 36, "body": 20, "number": 120, "caption": 14, "hero": 60},
     "screen": {"title": 28, "body": 16, "number": 80, "caption": 13, "hero": 44},
 }
-L_STEPS = [44, 63, 25, 72.5, 53.5, 34.5]        # 浅底数据色明度：首色贴近强调色，两两 ≥ 9.5 L*
-L_STEPS_DARK = [64, 84, 45, 74.5, 54.5, 35]     # 深底数据色明度：两两 ≥ 9.5 L*，且不用近白色（近白会抢过强调色）
+L_STEPS = [44, 57, 25, 34.5, 72.5, 15]          # 浅底数据色明度：首色贴近强调色，两两 ≥ 9.5 L*；前 4 色对底 ≥ 3:1（折线/细线不发虚），后 2 色只作面积填充
+L_STEPS_DARK = [64, 54.5, 45, 74.5, 84, 35.5]   # 深底数据色明度：两两 ≥ 9.5 L*；前 4 色对底 ≥ 3:1，不用近白色（近白会抢过强调色）
 HUE_OFFSETS = [0, 190, 40, 240, 90, 320]        # 首色=种子；其余在冷暖两侧错开，彩度收低，避免与强调色“撞色”
 CHROMA_TAIL = [22, 28, 20, 26, 22]
 
@@ -384,7 +384,8 @@ def r_cover(c: Ctx, p: Dict[str, Any]):
     t["y"] = round(anchor - t["h"], 3)
     els.append(_bar(c, dark, x))
     if p.get("kicker"):
-        els.append(c.text("kicker", "caption", x + 0.85, MY - 0.11, w - 0.85, p["kicker"], pal["bg"],
+        off = 0.85 if (c.motif != "none" and p.get("motif") is not False) else 0.0   # 无横线时与标题同左轴
+        els.append(c.text("kicker", "caption", x + off, MY - 0.11, w - off, p["kicker"], pal["bg"],
                           font_size=c.sz["caption"], color=pal["accent"], letter_spacing_pt=1.5, bold=True, h=0.3))
     els.append(t)
     if p.get("sub"):
