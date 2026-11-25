@@ -1581,6 +1581,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         ops = spec.get("ops") or []
         if not ops:
             raise M.BadOp("edit.json 里没有 ops")
+        bad = M._xml_illegal(spec)
+        if bad:
+            raise M.BadOp(f"edit.json 含 XML 不允许的控制字符：{'、'.join(bad)}（否则会被写成 _x0001_ 乱码）")
     except (OSError, json.JSONDecodeError, M.BadOp) as exc:
         print(f"[HARD] E-OPS 无法读取：{type(exc).__name__}: {exc}")
         return 2

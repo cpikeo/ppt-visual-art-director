@@ -308,6 +308,13 @@ def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
     if path is None:
         rep.hard("E-IMG", loc, f"素材文件不存在或不在素材根内：{asset_root / image_id}")
         return
+    try:  # 早拦：损坏、SVG 等不可解码或超大像素的素材，否则要到写包末段才以 E-RUNTIME（退出码 3）失败
+        from PIL import Image
+        with Image.open(path) as probe_img:
+            probe_img.verify()
+    except Exception as exc:
+        rep.hard("E-IMG", loc, f"素材无法解码（仅支持 PNG/JPEG/WebP，且像素数在安全上限内）：{path.name}（{type(exc).__name__}）")
+        return
     ppi, loss = image_probe(path, ew, eh, el.get("crop_focus"))
     if ppi is not None and ppi < LIMITS["image"]["min_ppi"]:
         rep.soft("W-PPI", loc, f"有效 {ppi:.0f} ppi < {LIMITS['image']['min_ppi']}，投影会发虚")

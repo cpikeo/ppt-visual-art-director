@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -100,17 +101,41 @@ class Report:
     def to_dict(self) -> List[Dict[str, str]]:
         return [{"level": i.level, "code": i.code, "where": i.where, "message": i.message} for i in self.items]
 
+def _common_tail(msgs: List[str]) -> str:
+    """多条文案的共同后缀，截到子句边界（：；，。），太短（<24 字）视为没有。"""
+    tail = os.path.commonprefix([m[::-1] for m in msgs])[::-1]
+    for i, ch in enumerate(tail):
+        if ch in "：；，。":
+            tail = tail[i:]
+            break
+    else:
+        return ""
+    return tail if len(tail) >= 24 else ""
+
+
 def show(items: List[Issue]) -> None:
-    """打印诊断。同级别、同代码、同文案、仅位置不同的条目合并为一行（如 7 页同一条 W-PENDING），
-    减少常驻输出与重读成本；JSON 报告（Report.to_dict）仍逐条保留。"""
-    groups: Dict[Any, List[Issue]] = {}
+    """打印诊断，减少常驻输出与重读成本（JSON 报告 Report.to_dict 仍逐条保留）：
+    ① 同级别、同代码、同文案、仅位置不同 → 合并一行；
+    ② 同代码、细节不同但共有一段样板说明（如 7 条 W-PUNCT）→ 逐条只留“位置：细节”，样板只印一次。"""
+    by_code: Dict[Any, List[Issue]] = {}
     for i in items:
-        groups.setdefault((i.level, i.code, i.message), []).append(i)
-    for (level, code, message), g in groups.items():
-        if len(g) == 1:
-            print(g[0])
-        else:
-            print(f"[{level}] {code} {'、'.join(i.where for i in g)}（×{len(g)}）: {message}")
+        by_code.setdefault((i.level, i.code), []).append(i)
+    for (level, code), g in by_code.items():
+        uniq = {i.message for i in g}
+        tail = _common_tail(sorted(uniq)) if len(uniq) >= 3 else ""
+        if tail:
+            print(f"[{level}] {code}（×{len(g)}）{tail[1:] if tail[0] == '：' else tail}")
+            for i in g:
+                print(f"  {i.where}: {i.message[:-len(tail)]}")
+            continue
+        groups: Dict[str, List[Issue]] = {}
+        for i in g:
+            groups.setdefault(i.message, []).append(i)
+        for message, gg in groups.items():
+            if len(gg) == 1:
+                print(gg[0])
+            else:
+                print(f"[{level}] {code} {'、'.join(i.where for i in gg)}（×{len(gg)}）: {message}")
 
 # ---------------------------------------------------------------- 载入
 
@@ -136,7 +161,26 @@ def load_plan(path: Path, rep: Report) -> Optional[Dict[str, Any]]:
     for err in errors:
         where = "/".join(str(p) for p in err.absolute_path) or "(根)"
         rep.hard("E-SCHEMA", where, err.message[:300])
+    if isinstance(plan, dict) and not errors:
+        for where in _xml_illegal(plan):
+            rep.hard("E-SCHEMA", where, "含 XML 不允许的控制字符（\\x00–\\x08、\\x0b、\\x0c、\\x0e–\\x1f 等）：删掉它，换行用 \\n")
     return plan if isinstance(plan, dict) else None
+
+
+_XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+
+
+def _xml_illegal(node: Any, path: str = "") -> List[str]:
+    """找出含 XML 1.0 非法字符的字符串路径（最多 5 条）。在载入期拦下，好过写包末段 E-RUNTIME 或写出 _x0001_ 乱码。"""
+    if isinstance(node, str):
+        return [path or "(根)"] if _XML_BAD.search(node) else []
+    items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
+    out: List[str] = []
+    for k, v in items:
+        out += _xml_illegal(v, f"{path}/{k}" if path else str(k))
+        if len(out) >= 5:
+            break
+    return out[:5]
 
 # ---------------------------------------------------------------- 度量模型
 
