@@ -1254,7 +1254,10 @@ def _check_typography(page, lines, boxes, pid: str, f: M.Report) -> None:
         if host is not None:
             groups.setdefault(host, []).append(line)
 
+    text_hosts = {str(el.get("id")) for el in M.all_elements(page) if el.get("type") in TEXT_TYPES}
     for host, rows in groups.items():
+        if host not in text_hosts:     # 图表坐标轴、表格单元格的单字标签不是“段落末行”，孤字只对文本元素成立
+            continue
         horizontal = [ln for ln in rows if ln["dir"][0] > 0.9]
         if len(horizontal) < 2:
             continue

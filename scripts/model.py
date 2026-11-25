@@ -141,6 +141,27 @@ def show(items: List[Issue]) -> None:
 # ---------------------------------------------------------------- 载入
 
 
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"不允许 {name}（JSON 标准没有 NaN / Infinity；它们会让几何与图表静默出错）")
+
+
+def _reject_duplicate_keys(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    seen: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValueError(f"对象里键 {key!r} 重复出现（标准解析器会静默取最后一个，改动会无声失效）")
+        seen[key] = value
+    return seen
+
+
+def strict_json_loads(raw: str) -> Any:
+    """plan / edit / outline 共用的严格 JSON 读取：拒绝 NaN/Infinity、重复键，深度炸弹按 ValueError 报告。"""
+    try:
+        return json.loads(raw, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicate_keys)
+    except RecursionError:
+        raise ValueError("JSON 嵌套过深，拒绝解析")
+
+
 def load_plan(path: Path, rep: Report) -> Optional[Dict[str, Any]]:
     try:
         raw = path.read_text(encoding="utf-8-sig")
@@ -148,9 +169,9 @@ def load_plan(path: Path, rep: Report) -> Optional[Dict[str, Any]]:
         rep.hard("E-SCHEMA", str(path), f"无法读取：{exc}")
         return None
     try:
-        plan = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        rep.hard("E-SCHEMA", str(path), f"JSON 语法错误：{exc}")
+        plan = strict_json_loads(raw)
+    except ValueError as exc:   # JSONDecodeError 是 ValueError 的子类
+        rep.hard("E-SCHEMA", str(path), f"JSON 无效：{exc}")
         return None
     try:
         from jsonschema import Draft202012Validator
@@ -1121,6 +1142,12 @@ def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
         problems.append(f"包内部件 {len(names)} 个，超过 {LIMITS['package']['max_entries']}，拒绝处理")
     if unpacked > LIMITS["package"]["max_unpacked_mb"] * 1024 * 1024:
         problems.append(f"解压后超过 {LIMITS['package']['max_unpacked_mb']} MB，拒绝处理（疑似压缩炸弹）")
+    ratio_cfg = LIMITS["package"]
+    for i in infos:
+        if (i.file_size > ratio_cfg["ratio_check_min_mb"] * 1024 * 1024
+                and i.file_size / max(i.compress_size, 1) > ratio_cfg["max_part_ratio"]):
+            problems.append(f"部件 {i.filename[:80]} 压缩比异常（{i.file_size // max(i.compress_size, 1)}:1），拒绝处理（疑似压缩炸弹）")
+            break
     if any(not p.startswith("扩展名") for p in problems):
         return problems          # 越界、超限的包不再往下解压：核验本身不能成为炸弹的引爆点
     problems.extend(_xml_part_problems(path, infos))

@@ -5,7 +5,7 @@
 ## 命令与退出码
 
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
-- `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积）。
+- `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积、压缩比）。
 - `--assets` 缺省取 plan 同级 `assets/`，否则取 plan 所在目录。`verify.py` 的渲染目录缺省为 `render/<pptx 名>/`。
 - 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
 
@@ -23,7 +23,9 @@
 | `E-CHART` `W-CHART` `W-NOTE` `W-SUM` | 口径、单位、截轴说明、颜色映射、系列色沉进承载面、饼/环合计非 100（为 0 即阻断）、饼/环无类别来源；改措辞、拆图、补映射，错色没有放行开关 |
 | `W-GRAY` `V-GRAY` | 任意两系列灰度 ΔL* 低于 `chart.min_series_delta_lstar`（limits.json，现为 9.5，scaffold 色板名义 10 留损耗）；拉开明度，或直标、换线型与标记 |
 | `V-LABEL-INK` `V-LABEL-POS` `V-MARKER` `V-READOUT` | 成品图表被改过或编译链有误（墨色对比 < 4.5、`dLblPos` 非法、散点 marker 不可见、饼/环读不到类别）；重新编译，不手改成品 |
-| `E-FORMAT` | 不是合格的无宏 `.pptx`（含 DTD/实体、越界部件名、体积异常）；输出改 `.pptx`，宏稿人工另存 |
+| `E-FORMAT` | 不是合格的无宏 `.pptx`（含 DTD/实体、越界部件名、解压体积或单部件压缩比异常）；输出改 `.pptx`，宏稿人工另存 |
+| `E-SCHEMA` | schema 不符，或 JSON 本身无效：`NaN`/`Infinity`、对象内重复键（标准解析器会静默取最后一个）、嵌套过深；plan、edit.json、outline 同一规则（`model.strict_json_loads`） |
+| `E-RUNTIME` | 校验或编译期未预料的异常；`compile.py` 退出 3，不写交付件、不抛 Traceback |
 | `E-PRESERVE` | 定点编辑保留核对不通过；看 `preservation` 定位越界 |
 | `W-FIT` | 装载估算溢出；先改文案，再加框，不压字号 |
 | `W-PUNCT` `W-SPACE` `I-SPACE` | 汉字旁半角标点；中西文间多于一个空格（错）；仅一个空格（通行排法，I 级，全稿统一并写进交付说明，LibreOffice 会显松） |
@@ -32,6 +34,7 @@
 | `W-COVER` `W-RUNS` | 文字落在上层色块或图上；原有混排被统一，用 `runs` 写明 |
 | `V-TEXT-RENDER` `V-FONT` | 元素的字未落在自己框内渲染；声明字体未参与渲染（降为 PARTIAL） |
 | `W-FONT-FACE` `I-FONT-FACE` | 家族匹配、地区字面没匹配（如简体取到日文字面）或无法判定；降为 PARTIAL，直/骨/门/者等共码位字形须人在 PowerPoint 复核 |
+| `V-ORPHAN` | 文本元素折行后末行只剩一个字（`limits.json` → `render_check.orphan_min_chars`，现为 4：短说明里的孤字最显眼）；图表轴与表格单元格不判。改文案或框宽；配方内的步骤、对照、大数字正文已在编译期做估算防护（`Ctx.widow_w`），渲染兜底仍是这条 |
 | `V-SPACE` `V-RHYTHM` | 渲染量测（`scripts/spatial.py`，阈值 `limits.json` → `space`）：声明的 `temperament` 与实际占用/空白不符、未声明功能的整页过疏或大块空白、`negative_space.role=focus` 的空白离主角过远、连续 3 页版面分区几乎相同。SOFT，只指出位置；接受就写理由，不靠调阈值 |
 | `V-NOTES` `V-ALT` | 成品备注/替代文字与 plan 不一致；重新编译 |
 
@@ -68,4 +71,4 @@
 
 ## 输入安全
 
-plan、edit.json、素材与 PPTX 都视为不可信输入：素材路径限制在素材根内；外部 PPTX 的 XML 不展开实体、不联网，含 DTD/实体声明（含 UTF-16 编码）一律 `E-FORMAT`；包内越界部件名（含反斜杠写法）与解压后超过 `package.max_unpacked_mb` 的包。脚本不联网、不执行包内内容。
+plan、edit.json、素材与 PPTX 都视为不可信输入：素材路径限制在素材根内；外部 PPTX 的 XML 不展开实体、不联网，含 DTD/实体声明（含 UTF-16 编码）一律 `E-FORMAT`；包内越界部件名（含反斜杠写法）、解压后超过 `package.max_unpacked_mb` 的包、单个大部件压缩比超过 `package.max_part_ratio` 的包。已知限制：ZIP 头里的声明体积可被伪造，守卫以头部为准，不是流式计量。脚本不联网、不执行包内内容。

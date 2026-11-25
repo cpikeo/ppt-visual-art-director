@@ -505,8 +505,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")
         return 2
 
-    rep.extend(validate(plan, asset_root, args.production))
-    rep.extend(design_signals(plan))
+    try:
+        rep.extend(validate(plan, asset_root, args.production))
+        rep.extend(design_signals(plan))
+    except Exception as exc:   # 校验层遇到未预料的输入：按文档化退出码 3 报告，不抛 Traceback、不写文件
+        print(f"[HARD] E-RUNTIME 校验期失败：{type(exc).__name__}: {str(exc)[:200]}（plan 里可能有非法数值或结构；未写出文件）")
+        return 3
     show(rep.items)
     if rep.blocked:
         print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")

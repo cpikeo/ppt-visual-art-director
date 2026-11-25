@@ -427,6 +427,10 @@ def inspect_deck(pptx: Path) -> Dict[str, Any]:
     for index, slide in enumerate(prs.slides):
         try:
             objects = [safe_describe(s) for s in slide.shapes]
+            for z, obj in enumerate(objects):          # target_index 的坐标：重名对象只能靠它定位，必须让人看得见
+                obj["z"] = z
+                for zc, child in enumerate(obj.get("children", []) or []):
+                    child["z"] = zc
             flags = slide_flags(slide, objects)
             notes = slide.notes_slide.notes_text_frame.text.strip() if slide.has_notes_slide else ""
         except Exception as exc:
@@ -490,7 +494,7 @@ def to_markdown(data: Dict[str, Any]) -> str:
     def emit(obj: Dict[str, Any], depth: int = 0) -> None:
         pad = "  " * depth
         box = obj.get("box_in") or [None, None, None, None]
-        head = f"{pad}- {obj['kind']:11} {obj['name'][:26]:26} [{box[0]},{box[1]},{box[2]}×{box[3]}]"
+        head = f"{pad}- z{obj.get('z', '?')} {obj['kind']:11} {obj['name'][:26]:26} [{box[0]},{box[1]},{box[2]}×{box[3]}]"
         if obj.get("rotation"):
             head += f" {obj['rotation']}°"
         detail = ""
@@ -1587,14 +1591,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     from pptx import Presentation
     try:
         prs = Presentation(str(src))
-        spec = json.loads(ops_path.read_text(encoding="utf-8-sig"))
+        spec = M.strict_json_loads(ops_path.read_text(encoding="utf-8-sig"))
         ops = spec.get("ops") or []
         if not ops:
             raise M.BadOp("edit.json 里没有 ops")
         bad = M._xml_illegal(spec)
         if bad:
             raise M.BadOp(f"edit.json 含 XML 不允许的控制字符：{'、'.join(bad)}（否则会被写成 _x0001_ 乱码）")
-    except (OSError, json.JSONDecodeError, M.BadOp) as exc:
+    except (OSError, ValueError, M.BadOp) as exc:
         print(f"[HARD] E-OPS 无法读取：{type(exc).__name__}: {exc}")
         return 2
 

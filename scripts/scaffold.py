@@ -272,6 +272,35 @@ class Ctx:
             lo, hi = (mid, hi) if lines(mid, FIT_SAFETY) > n else (lo, mid)
         return round(min(hi * 1.08, w), 3)
 
+    def widow_w(self, kind: str, content: str, w: float, size: float, bg: str, max_w: Optional[float] = None, **kw: Any) -> float:
+        """CJK 孤字防护：单段文字折行后末行只剩约一个字时，先在 max_w 内加宽，加宽不行再收窄，返回不产生孤字的宽度。
+        估算按 em 宽度：末行余量 < 3 em（约一个词或两个汉字）即视为孤字。估不出（多段、含 runs）时原样返回，由 verify 的 V-ORPHAN 渲染兜底。"""
+        if "\n" in content:
+            return w
+        el: Dict[str, Any] = {"id": "x", "type": kind, "content": content, "pad_in": 0, "font_size": size,
+                              "x": 0, "y": 0, "w": w, "h": 1}
+        el.update(kw)
+        st = self._style(el, bg)
+        em = M._para_width_em(content, [], size)
+        inset = st["pad"][0]
+
+        def last_em(width: float) -> Tuple[int, float]:
+            cap = max((width * FIT_SAFETY - 2 * inset) / (size / 72.0), 0.5)
+            n = max(1, math.ceil(em / cap - 1e-9))
+            return n, em - (n - 1) * cap
+
+        n0, tail0 = last_em(w)
+        if n0 < 2 or tail0 >= 3.0:
+            return w
+        hi = max_w or w
+        cand = [w + (hi - w) * k / 10 for k in range(1, 11)] if hi > w else []
+        cand += [w * (1 - 0.04 * k) for k in range(1, 11)]
+        for width in cand:
+            n, tail = last_em(width)
+            if n <= n0 and (n == 1 or tail >= 3.0):
+                return round(width, 3)
+        return w
+
     def image_tone(self, image: Dict[str, Any], box: Tuple[float, float, float, float]) -> Optional[bool]:
         """封面文字区下方图像的明暗：True＝偏暗（用浅墨），False＝偏亮（用深墨），读不了图返回 None。
         box = 文字区（英寸）；按 cover 裁切还原到原图坐标，只取平均相对亮度。"""
@@ -455,6 +484,7 @@ def r_big_number(c: Ctx, p: Dict[str, Any]):
                line_spacing=1.0, letter_spacing_pt=-2, runs=runs_fn(size) if unit else None)
     n["y"] = round(H * 0.5 - n["h"] * 0.5 + 0.35, 3)
     bx, bw = col(8, 5)
+    bw = c.widow_w("body", p["body"], bw, c.sz["body"] + 2, pal["bg"], max_w=bw * 1.12)
     body = c.text("b", "body", bx, 0, bw, p["body"], pal["bg"], font_size=c.sz["body"] + 2, color=pal["ink2"])
     body["y"] = round(n["y"] + n["h"] * 0.5 - body["h"] * 0.5, 3)
     rule_x = bx - 0.35
@@ -513,7 +543,7 @@ def r_compare(c: Ctx, p: Dict[str, Any]):
                        color=pal["muted"], bold=True, letter_spacing_pt=1)
         n = c.text(f"{key}_n", "number", x, label["h"] + 0.15, w, side["number"], pal["bg"], font_size=nsize,
                    color=pal["accent"] if accent else pal["quiet"], line_spacing=1.0, letter_spacing_pt=-2)
-        b = c.text(f"{key}_b", "body", x, n["y"] + n["h"] + 0.1, w, side["body"], pal["bg"], font_size=c.sz["body"],
+        b = c.text(f"{key}_b", "body", x, n["y"] + n["h"] + 0.1, c.widow_w("body", side["body"], w, c.sz["body"], pal["bg"], max_w=w * 1.1), side["body"], pal["bg"], font_size=c.sz["body"],
                    color=pal["ink2"])
         els += [label, n, b]
         end = b["y"] + b["h"]
@@ -539,6 +569,7 @@ def r_list(c: Ctx, p: Dict[str, Any]):
     lx, lw = col(7, 6)
     longest = max(p["items"], key=len)   # 条目字号随最长一条取不折行的最大值：条目少时撑得起半页，而不是缩在角落
     size = c.fit_pt("body", longest, lw - M.LIST_INDENT_IN, pal["bg"], c.sz["body"] + 12, c.sz["body"] + 4, line_spacing=1.2)
+    lw = c.widow_w("body", longest, lw, size, pal["bg"], line_spacing=1.2, list=p.get("list", "number")) if len(longest) > 6 else lw
     lst = c.text("items", "body", lx, TOP + 0.05, lw, "\n".join(p["items"]), pal["bg"],
                  font_size=size, color=pal["ink"], list=p.get("list", "number"), space_after_pt=round(size * 1.1))
     els.append(lst)
@@ -575,28 +606,57 @@ def r_split_image(c: Ctx, p: Dict[str, Any]):
 
 
 def r_steps(c: Ctx, p: Dict[str, Any]):
-    """顺序与阶段（2–5 步）。只表达先后，不画箭头：箭头会暗示未经证实的因果或时长。"""
+    """顺序与阶段（2–5 步）。只表达先后，不画箭头：箭头会暗示未经证实的因果或时长。
+    各步等分整条版心（不再只占 12 栏中的 10 栏），轴线与步骤同宽；步骤块在页题与页脚之间垂直居中；
+    说明文字做孤字防护（末行不只剩一个字）。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
-    els = _head(c, p, dark)
+    head = _head(c, p, dark)
+    title = head[-1]
     items = p["steps"]
-    span = {2: 6, 3: 4, 4: 3, 5: 2}[len(items)]
-    line_y = H * 0.47
-    els.append(c.rect("axis", MX, line_y, W - 2 * MX, 0.02, pal["rule"]))
+    n = len(items)
+    pitch = (W - 2 * MX) / n
+    gap = 0.35
+    cw = pitch - gap
+    has_when = any(it.get("when") for it in items)
+    top_slot = 0.55 if has_when else 1.25   # 无 when 时，轴线上方放大号序号：给各步一个尺度锚点，页面不只剩一排小字
+    nsize = c.sz["number"] * 0.55
+    node_d = 0.22
+    els: List[Dict[str, Any]] = []
+    block = 0.0
     for i, it in enumerate(items):
-        x, w = col(1 + i * span, span)
-        w -= 0.3
-        els.append(c.rect(f"node{i}", x, line_y - 0.1, 0.22, 0.22, pal["accent"], shape_kind="oval"))
+        x = MX + i * pitch
+        y = 0.0
+        y += top_slot
+        node_y = y
+        y += node_d + 0.38
+        lsize = c.sz["body"] + {2: 18, 3: 16, 4: 12}.get(n, 8)   # 步数越少，单步越有分量
+        label = c.text(f"label{i}", "text", x, y, c.widow_w("text", it["label"], cw, lsize, pal["bg"], bold=True, line_spacing=1.2),
+                       it["label"], pal["bg"], font_size=lsize, color=pal["ink"], bold=True, line_spacing=1.2)
+        y2 = label["y"] + label["h"] + 0.15
+        step_els = [c.rect(f"node{i}", x, node_y, node_d, node_d, pal["accent"], shape_kind="oval")]
+        if not has_when:
+            step_els.append(c.text(f"num{i}", "number", x, 0.0, cw, f"{i + 1:02d}", pal["bg"], font_size=nsize,
+                                   color=pal["quiet"], line_spacing=1.0, letter_spacing_pt=-2, h=top_slot - 0.15))
         if it.get("when"):
-            els.append(c.text(f"when{i}", "caption", x, line_y - 0.62, w, it["when"], pal["bg"],
-                              font_size=c.sz["caption"] + 1, color=pal["accent"], bold=True, letter_spacing_pt=1, h=0.3))
-        label = c.text(f"label{i}", "text", x, line_y + 0.45, w, it["label"], pal["bg"], font_size=c.sz["body"] + 8,
-                       color=pal["ink"], bold=True, line_spacing=1.2)
-        els.append(label)
+            step_els.append(c.text(f"when{i}", "caption", x, 0.0, cw, it["when"], pal["bg"], font_size=c.sz["caption"] + 1,
+                                   color=pal["accent"], bold=True, letter_spacing_pt=1, h=0.3))
+        step_els.append(label)
+        end = label["y"] + label["h"]
         if it.get("body"):
-            els.append(c.text(f"body{i}", "body", x, label["y"] + label["h"] + 0.15, w, it["body"], pal["bg"],
-                              font_size=c.sz["body"], color=pal["ink2"]))
-    return els + _note(c, p, dark), dark
+            bw = c.widow_w("body", it["body"], cw, c.sz["body"], pal["bg"], max_w=pitch - 0.1)
+            body = c.text(f"body{i}", "body", x, y2, bw, it["body"], pal["bg"], font_size=c.sz["body"], color=pal["ink2"])
+            step_els.append(body)
+            end = body["y"] + body["h"]
+        els += step_els
+        block = max(block, end)
+    free_top, free_bottom = title["y"] + title["h"] + 0.3, FOOT
+    shift = free_top + max((free_bottom - free_top - block) / 2, 0.0)
+    for el in els:
+        el["y"] = round(el["y"] + shift, 3)
+    axis_y = shift + top_slot + node_d / 2 - 0.01
+    axis = c.rect("axis", MX, axis_y, W - 2 * MX, 0.02, pal["rule"])
+    return head + [axis] + els + _note(c, p, dark), dark
 
 
 def r_close(c: Ctx, p: Dict[str, Any]):
@@ -912,7 +972,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\n阻断：路径不安全，未写出文件。")
         return 2
     try:
-        data = json.loads(src.read_text(encoding="utf-8-sig"))
+        data = M.strict_json_loads(src.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:
         print(f"[HARD] E-OUTLINE 读不了 {src}：{exc}")
         return 2

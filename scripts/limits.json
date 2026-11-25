@@ -53,6 +53,8 @@
 
   "package": {
     "max_unpacked_mb": 1024,
+    "ratio_check_min_mb": 64,
+    "max_part_ratio": 200,
     "max_entries": 20000,
     "max_xml_part_mb": 64,
     "max_xml_total_mb": 512
@@ -97,7 +99,7 @@
     "_readme": "渲染核对用的容差与下限：span 归属容差、行归属容差、孤字判定所需的最少字数、旋转生效判定。",
     "span_tol_in": 0.2,
     "line_tol_in": 0.05,
-    "orphan_min_chars": 8,
+    "orphan_min_chars": 4,
     "rotation_min_deg": 5,
     "rotation_tol_deg": 20
   },
