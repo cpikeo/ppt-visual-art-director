@@ -2,11 +2,20 @@
 
 字段形状以 `scripts/plan.schema.json` 为准（`scaffold.py fields <节点>` 查紧凑字段表），技术阈值以 `scripts/limits.json` 为准。本文只讲 schema 表达不了的语义、坑与命令。
 
-## 必填与枚举
+## 必填与枚举速查（写 plan 之前先对一遍）
 
-字段以 `scaffold.py fields <节点>` 为准（`*` 必填，枚举同行列出）；schema 校验是硬阻断（`E-SCHEMA`），`additionalProperties: false`，拼错的键直接被拒。写之前只需记住四个坑：`brief.veto` 与 `brief.motif` 是**数组**；`role` 只有 `open` `build` `breathe` `turn` `hold` `close`；`rhythm` 条数等于页数；`page_numbers.hide` 是**页 id 数组**。`x y w h` 除 `path`／`group` 外都要写；`table` 的数据是 `data: {headers, rows}`，`scatter` 用 `series[].points`。
+schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读不到、但一次写错就整份被拒**：
 
-`brief.editorial`（`amplify` `recede` `cut`，字符串或字符串数组均可）是可选的决策记录，schema 只校验形状；页 `depth`（`background` `midground` `foreground`，元素 id 数组）有引用与顺序校验。
+| 位置 | 必填 | 类型／枚举的坑 |
+| --- | --- | --- |
+| 根 | `deck_id` `title` `audience` `goal` `core_claim` `brief` `pages` | `aspect_ratio` 只有 `16:9`／`4:3` |
+| `brief` | `insight` `concept` `veto` | `veto` 与 `motif` 都是**数组**（`motif` 写成字符串会被拒）；`art` 要填就五个键 `light` `lens` `material` `gamut` `grain` 齐填 |
+| `page` | `id` `role` `focus` `elements` | `role` 只有六个值：`open` `build` `breathe` `turn` `hold` `close`（叙事动作，不是自定义标签；页面职责写进 `composition_rationale`）；`evidence` 是**字符串数组**；`rhythm` 条数要等于页数 |
+| `page_numbers.hide` | — | 是**页 id 的字符串数组**，不是页码数字 |
+| `element` | `id` `type` | `additionalProperties: false`：拼错的键直接被拒；`x y w h` 除 `path`／`group` 外都要写 |
+| `chart` | `kind` `data` | `table` 的数据是 `data: {headers, rows}`，不是 `series`；`scatter` 用 `series[].points = [[x,y],…]` |
+
+`brief.editorial`（`amplify` `recede` `cut`，字符串或字符串数组均可）与 `brief.system`（`typography` `color` `space`）是可选的决策记录，schema 只校验形状；页 `depth`（`background` `midground` `foreground`，元素 id 数组）有引用与顺序校验。
 
 ## 用 scaffold 起稿（默认路线）
 
@@ -55,9 +64,9 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 | 字段 | 位置 | 含义 | 谁来校验 |
 | --- | --- | --- | --- |
-| `schema_version` | 根 | 缺省=1（旧稿）；当前 3（3 起移除 `brief.system`、`composition.strategy/axes`）。旧稿 `scaffold.py migrate` 升级，不就地改写 | schema 枚举 |
+| `schema_version` | 根 | 缺省=1（旧稿）；当前 2。旧稿 `scaffold.py migrate` 升级，不就地改写 | schema 枚举 |
 | `design_state` | 页 | `draft` 待判断／`judged` AI 已判断／`confirmed` 人已确认；缺省按 judged（旧稿） | `W-PENDING`；`--production` 下 `E-PENDING` |
-| `composition.atmosphere / focus_mode / grid / exception / source / recipe` | 页 | 空间气质（open immersive editorial architectural museum dense dramatic，见 `design.md` 四）、焦点策略（single dual multi none）、网格规格、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | `W-FOCUS`；整稿 `W-ATMOS`（≥5 页声明且全相同） |
+| `composition.strategy / focus_mode / grid / axes / exception / source / recipe` | 页 | 构图语法、焦点策略（single dual multi none）、网格规格、对齐轴、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | 仅一致性：`W-FOCUS` |
 | `composition.reading_path` | 页 | 阅读顺序（元素 id） | `E-REF` 引用必须存在 |
 
 作者没写 `focus` 则为占位符 `【待判断】`、页标 `draft`；`focus` 与 `rationale` 都写了才标 `judged`。`focus_mode: none` 与 `focus_element` 同时出现 → `E-REF`；`single` 却没有 `focus_element` → `W-FOCUS`。`W-SUM`：以 % 表示的饼/环合计不是 100；合计为 0 → `E-CHART`。`W-DOMINANT` 等只是面积/字号的粗略线索，不是视觉质量判定。

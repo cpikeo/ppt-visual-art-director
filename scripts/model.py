@@ -1276,22 +1276,7 @@ def place_atomic(tmp: Path, dest: Path, force: bool = False) -> None:
     if force:
         os.replace(tmp, dest)
     else:
-        try:
-            os.link(tmp, dest)
-        except FileExistsError:
-            raise
-        except OSError:
-            # exFAT/FAT32、部分网络盘与容器挂载不支持硬链接：退回 O_EXCL 独占创建（仍不覆盖已有目标）
-            try:
-                with open(dest, "xb") as fh:
-                    fh.write(tmp.read_bytes())
-                    fh.flush()
-                    os.fsync(fh.fileno())
-            except FileExistsError:
-                raise
-            except BaseException:
-                Path(dest).unlink(missing_ok=True)
-                raise
+        os.link(tmp, dest)
         tmp.unlink()
 
 
@@ -1333,7 +1318,7 @@ def write_atomic(path: Path, data: bytes, force: bool = False, verify: Any = Non
 
 
 PENDING = "【待判断】"          # scaffold 起稿时的占位：设计判断还没做，不是理由
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 2
 
 
 def pending_fields(page: Dict[str, Any]) -> List[str]:
@@ -1373,12 +1358,6 @@ def migrate_plan(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             notes.append(f"{pid}: composition_rationale 是配方默认说明，已移除并标 design_state=draft（待 AI 补真实构图理由）")
         if page.get("focus") and page.get("claim") and str(page["focus"]) == str(page["claim"]).split("\n")[0]:
             notes.append(f"{pid}: focus 与 claim 首行相同，疑为标题推断值；未改动，请复核")
-    if ver < 3:   # v3 移除无消费者字段：brief.system、composition.strategy/axes
-        (new.get("brief") or {}).pop("system", None)
-        for page in new.get("pages") or []:
-            for k in ("strategy", "axes"):
-                (page.get("composition") or {}).pop(k, None)
-        notes.append("已移除无消费者字段 brief.system、composition.strategy/axes")
     if ver != SCHEMA_VERSION:
         new["schema_version"] = SCHEMA_VERSION
         notes.append(f"schema_version {ver} → {SCHEMA_VERSION}")
