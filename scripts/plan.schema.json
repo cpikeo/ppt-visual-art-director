@@ -15,10 +15,12 @@
   ],
   "properties": {
     "deck_id": {
-      "$ref": "#/$defs/str"
+      "$ref": "#/$defs/str",
+      "maxLength": 255
     },
     "title": {
-      "$ref": "#/$defs/str"
+      "$ref": "#/$defs/str",
+      "maxLength": 255
     },
     "audience": {
       "$ref": "#/$defs/str",

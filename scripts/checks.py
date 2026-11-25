@@ -410,6 +410,9 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
         for s in series:
             unit = str(chart.get("unit") or s.get("unit") or "")
             vals = [v for v in s.get("values", []) if isinstance(v, (int, float)) and not isinstance(v, bool)]
+            if vals and sum(vals) <= 0:
+                rep.hard("E-CHART", loc, f"系列「{s.get('name')}」各扇区合计为 0：占比无定义，改用表格或补数据")
+                continue
             if unit.strip() in ("%", "％", "百分比") and vals and abs(sum(vals) - 100) > 0.5:
                 rep.soft("W-SUM", loc, f"系列「{s.get('name')}」各扇区合计 {sum(vals):g}%，不是 100%：补“其他”或核对口径；不要让读者自己发现缺口")
     if kind == "scatter":

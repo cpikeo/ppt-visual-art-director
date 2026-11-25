@@ -30,7 +30,7 @@ from lxml import etree
 from charts import add_chart, add_legend
 from checks import design_signals, validate
 from model import show, write_atomic, EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
-from ooxml import stable_xlsx as _stable_xlsx, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
+from ooxml import stabilize_package, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
 # ---------------------------------------------------------------- 建对象
@@ -370,7 +370,6 @@ def _style_master(prs, plan: Dict[str, Any]) -> None:
 def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
     """python-pptx 自带的 docProps/app.xml 是模板遗留：写着 4:3、0 页、Macintosh PowerPoint。
     重写成与成品一致的最小件；不声称由任何 Office 产品生成。"""
-    import zipfile
     pages = plan.get("pages") or []
     notes = sum(1 for p in pages if p.get("speaker_notes"))
     fmt = "Widescreen" if (plan.get("aspect_ratio") or "16:9") == "16:9" else "On-screen Show (4:3)"
@@ -380,19 +379,7 @@ def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
            f'<TotalTime>0</TotalTime><Application>ppt-visual-art-director</Application>'
            f'<PresentationFormat>{fmt}</PresentationFormat><Slides>{len(pages)}</Slides>'
            f'<Notes>{notes}</Notes><HiddenSlides>0</HiddenSlides></Properties>')
-    tmp = path.with_name(path.name + ".app")
-    with zipfile.ZipFile(path) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "docProps/app.xml":
-                data = xml.encode("utf-8")
-            elif item.filename.startswith("ppt/embeddings/") and item.filename.endswith(".xlsx"):
-                data = _stable_xlsx(data)
-            info = zipfile.ZipInfo(item.filename, (2000, 1, 1, 0, 0, 0))   # 固定条目时间：相同输入 → 相同字节
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = item.external_attr
-            zout.writestr(info, data)
-    os.replace(tmp, path)
+    stabilize_package(path, replace={"docProps/app.xml": xml.encode("utf-8")})
 
 
 def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
@@ -531,7 +518,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 write_error_deck(error_path, f"{type(exc).__name__}: {exc}")
             except Exception as diag_exc:  # 诊断稿本身写失败不能掩盖原始错误
                 note = f"诊断文件写入失败：{type(diag_exc).__name__}: {diag_exc}"
-        print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {exc}\n{note}")
+        print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {str(exc)[:200]}\n{note}")
         return 3
 
     problems = package_problems(out_path)

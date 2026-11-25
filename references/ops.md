@@ -11,37 +11,28 @@
 
 ## 诊断码
 
-行格式 `[HARD] E-CHART p2/bar: …`。HARD 用 `E-` 必须改；SOFT 用 `W-` 须逐条判断并写理由；INFO 用 `I-` 只提示看哪一页。`V-` 来自 verify.py。
+行格式 `[HARD] E-CHART p2/bar: …`。HARD（`E-`）必须改；SOFT（`W-`）须逐条判断并写理由；INFO（`I-`）只提示看哪一页；`V-` 来自 verify.py。每条输出自带含义与处置，下表只补**易误判**的几组：
 
-| 码 | 含义 | 处置 |
-| --- | --- | --- |
-| `E-OUTLINE` | `scaffold.py init` 的 outline 缺字段、recipe 不存在、steps 项数不对 | 按提示逐条补，未写出文件 |
-| `E-ASSET` `W-ASSET` | 素材来源、权利、生成记录、简报不一致；生成图作证据 | 补齐记录，或改用真实素材 |
-| `E-LAYER` `E-REF`（depth） | `depth` 声明的前/中/背景与叠放（声明）顺序矛盾，或引用了不存在的元素 | 把背景元素写在前景之前，或改声明 |
-| `W-DOMINANT` | `focus_element` 的粗估视觉重量（文字＝字号²×字数，图/图表/色块＝面积；承载层不计）没有明显超过同页配角 | 放大主角、缩小或灰化配角，或删掉 focus_element。只比尺度，不判断好不好看 |
-| `E-OVERLAP` | 实质重叠，下层未声明承载 | 多半忘了 `overlap_allowed` |
-| `E-CHART` `W-CHART` `W-NOTE` | 图表口径、单位、截轴说明、颜色映射（`color_map` 指派对不上类别、饼/环同色、手绘图例色块）、系列色沉进承载面、图例与强调柱对不上 | 改措辞、拆图、补颜色映射；错色没有放行开关 |
-| `V-LABEL-INK` `V-LABEL-POS` | 成品图表里：直标/轴/图例墨色落在其真实表面上 < 4.5:1（`chart_audit.py` 只读 XML）；或 `dLblPos` 对该图表类型非法；或墨色与决策表不一致 | 重新编译；手改成品会再次被拦 |
-| `V-MARKER` | 成品图表里：散点 marker 不可见（symbol=none 或无填充）、小于 5pt、没有关闭连线；折线 marker 色 ≠ 线色。散点 marker 色与调色板对不上记 `V-CHART`；marker 对承载面的对比、灰度区分由 `chart_audit` 经 marker 填充计算（`V-CONTRAST` `V-GRAY`） | 重新编译；手改成品会再次被拦 |
-| `W-GRAY` | **任意两个**系列的颜色转灰度后明度差 ΔL* 低于 `chart.min_series_delta_lstar`（成品里同一判断为 `V-GRAY`） | 拉开明度，或直标系列名、换线型与标记 |
-| `E-CHART`（读数） | 饼/环没有任何类别来源：饼需直标、原生图例或 `legend` 元素之一；环内直标只有数值，需原生图例或 `legend` 元素 | 开 `legend`／加 `legend` 元素；纯图例无数值直标给 `W-CHART` |
-| `V-READOUT` | 成品饼/环里读不到类别（HARD）或数值（SOFT）：只读 XML 里的 `c:legend`、`showCatName`、`showVal` | 与 plan 无关，成品被改过或编译链有误 |
-| `E-FORMAT` | 不是合格的无宏 `.pptx` | 输出改为 `.pptx`；原稿含宏则人工另存 |
-| `E-PRESERVE` | 定点编辑保留核对不通过 | 看 `preservation` 字段定位越界 |
-| `W-FIT` | 装载估算溢出（行数按字宽折算；`%` `×` `@` 按近全角宽度计；高度按“首行可见高度＋后续行距推进”估，按渲染实测校准） | 先改文案，再加框，不压字号 |
-| `W-PUNCT` | 汉字旁用了半角 `, ; : ! ?`：渲染后前后留白不稳（像“字 , 字”） | 改全角；西文数字之间的半角不报 |
-| `W-SPACE` | 中文与数字/西文之间手敲了**多于一个**的空格、不断行空格或全角空格 | 删掉，依赖字体原生字距 |
-| `I-SPACE` | （整稿汇总为一条，列出位置）中西文之间只有**一个**普通空格：通行的中文排法，LibreOffice 会叠加自动间距显松、PowerPoint 里正常 | 是风格取舍不是缺陷；全稿统一取一种并写进交付说明 |
-| `V-BLEED` | 文字落在声明为出血的元素里，被页边裁掉 | 确认被裁部分不含信息；没声明出血的文字出页仍是 `V-CLIP` 阻断 |
-| `W-CONTRAST` `V-CONTRAST` | 对比不足；文字压图时是对真实像素的量测（达标像素占比低于 `limits.json` 的 `image.zone.min_ok_share`） | 换墨色或落点、改 `crop_focus`、重做简报；不靠浓遮罩 |
-| `W-BUSY` | 图上文字对比够，但下方纹理过强（灰度标准差超限） | 换落字区或重做简报 |
-| `W-PPI` | 有效分辨率低 | 换素材或缩小显示 |
-| `W-COVER` | 文字落在上层色块或图上 | 挪位置或调层级 |
-| `W-RUNS` | 原有混排被统一 | 用 `runs` 写明分区样式 |
-| `V-TEXT-RENDER` | 元素的字未落在自己框内渲染 | 查归属，不因别处有同样的字放行 |
-| `V-FONT` | 声明字体未参与渲染 | 状态降为 PARTIAL，目标机复核 |
-| `W-FONT-FACE` `I-FONT-FACE` | 家族匹配上了，**地区字面**没匹配（声明简体而 PDF 取到日文字面），或页面含中文但字面无法判定 | **状态降为 PARTIAL**（`font_face` = `MISMATCH` / `UNVERIFIED`）；直/骨/门/者一类共享码位的字形按别的地区字面渲染，简体字形要人在 PowerPoint 里复核 |
-| `V-NOTES` `V-ALT` | 成品里的备注／替代文字与 plan 不一致 | 重新编译；不要手改成品 |
+| 码 | 含义与处置 |
+| --- | --- |
+| `E-OUTLINE` | outline 缺字段、recipe 不存在、steps 项数不对；按提示补，未写文件 |
+| `E-ASSET` `W-ASSET` `E-IMG` | 来源、权利、生成记录、简报不一致，或生成图作证据；补记录或改真实素材 |
+| `E-LAYER` `E-REF` | `depth` 与叠放顺序矛盾，或引用不存在的元素；背景元素写在前景之前 |
+| `E-OVERLAP` | 实质重叠且下层未声明承载；多半忘了 `overlap_allowed` |
+| `W-DOMINANT` | `focus_element` 的粗估视觉重量（文字＝字号²×字数，图/图表/色块＝面积）没有明显超过配角；只比尺度，不判断好看 |
+| `E-CHART` `W-CHART` `W-NOTE` `W-SUM` | 口径、单位、截轴说明、颜色映射、系列色沉进承载面、饼/环合计非 100（为 0 即阻断）、饼/环无类别来源；改措辞、拆图、补映射，错色没有放行开关 |
+| `W-GRAY` `V-GRAY` | 任意两系列灰度 ΔL* 低于 `chart.min_series_delta_lstar`；拉开明度，或直标、换线型与标记 |
+| `V-LABEL-INK` `V-LABEL-POS` `V-MARKER` `V-READOUT` | 成品图表被改过或编译链有误（墨色对比 < 4.5、`dLblPos` 非法、散点 marker 不可见、饼/环读不到类别）；重新编译，不手改成品 |
+| `E-FORMAT` | 不是合格的无宏 `.pptx`（含 DTD/实体、越界部件名、体积异常）；输出改 `.pptx`，宏稿人工另存 |
+| `E-PRESERVE` | 定点编辑保留核对不通过；看 `preservation` 定位越界 |
+| `W-FIT` | 装载估算溢出；先改文案，再加框，不压字号 |
+| `W-PUNCT` `W-SPACE` `I-SPACE` | 汉字旁半角标点；中西文间多于一个空格（错）；仅一个空格（通行排法，I 级，全稿统一并写进交付说明，LibreOffice 会显松） |
+| `V-BLEED` `V-CLIP` | 文字落在出血元素里被裁（确认不含信息）；没声明出血的文字出页即阻断 |
+| `W-CONTRAST` `V-CONTRAST` `W-BUSY` `W-PPI` | 对比不足（文字压图为真实像素量测）、纹理过强、分辨率低；换墨色或落点、改 `crop_focus`、重做简报，不靠浓遮罩 |
+| `W-COVER` `W-RUNS` | 文字落在上层色块或图上；原有混排被统一，用 `runs` 写明 |
+| `V-TEXT-RENDER` `V-FONT` | 元素的字未落在自己框内渲染；声明字体未参与渲染（降为 PARTIAL） |
+| `W-FONT-FACE` `I-FONT-FACE` | 家族匹配、地区字面没匹配（如简体取到日文字面）或无法判定；降为 PARTIAL，直/骨/门/者等共码位字形须人在 PowerPoint 复核 |
+| `V-NOTES` `V-ALT` | 成品备注/替代文字与 plan 不一致；重新编译 |
 
 ## 报告字段
 
@@ -53,7 +44,7 @@
 
 ## 能力边界
 
-- 判断记录字段（`brief.*`、`audience`、`goal`、`core_claim`、页 `focus` `composition_rationale` `open_questions`、`brief.motif`、`brief.art.*`）由 schema 校验必填与形状，脚本不对其内容做语义判断——它们是写给人与下一轮 AI 的决策记录，不是机器可证明的字段。
+- 判断记录字段（`brief.*`、`audience` `goal` `core_claim`、页 `focus` `composition_rationale` `open_questions`）只校验必填与形状，脚本不做语义判断：它们是写给人与下一轮 AI 的决策记录。
 
 | 能力 | 级别 | 说明 |
 | --- | --- | --- |
@@ -76,4 +67,4 @@
 
 ## 输入安全
 
-plan、edit.json、素材与 PPTX 都视为不可信输入：素材路径限制在素材根内；解析外部 PPTX 的 XML 一律不展开实体、不联网（防 XXE 与实体膨胀）；成品包拒绝越界部件名与解压后超过 `package.max_unpacked_mb` 的包。脚本不联网、不执行包内内容。
+plan、edit.json、素材与 PPTX 都视为不可信输入：素材路径限制在素材根内；外部 PPTX 的 XML 不展开实体、不联网，含 DTD/实体声明（含 UTF-16 编码）一律 `E-FORMAT`；包内越界部件名（含反斜杠写法）与解压后超过 `package.max_unpacked_mb` 的包。脚本不联网、不执行包内内容。

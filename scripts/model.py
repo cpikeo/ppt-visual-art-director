@@ -1029,9 +1029,13 @@ def _xml_part_problems(path, infos) -> List[str]:
                 out.append(f"部件 {i.filename} 含 DTD/实体声明，拒绝解析（OOXML 不使用）")
                 continue
             try:
-                parse_xml(data)
+                root = parse_xml(data)
             except etree.XMLSyntaxError as exc:
                 out.append(f"部件 {i.filename} 不是合法 XML：{str(exc)[:60]}")
+                continue
+            # UTF-16 等编码会绕过上面的字节匹配：以解析后的 docinfo 为准
+            if root.getroottree().docinfo.doctype or root.getroottree().docinfo.internalDTD is not None:
+                out.append(f"部件 {i.filename} 含 DTD/实体声明，拒绝解析（OOXML 不使用）")
     return out
 
 def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
@@ -1053,7 +1057,7 @@ def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
             types = parse_xml(zf.read("[Content_Types].xml"))
     except (OSError, KeyError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
         return problems + [f"不是可读的 OOXML 包：{type(exc).__name__}"]
-    if any(n.startswith("/") or ".." in n.split("/") for n in names):
+    if any(n.startswith("/") or ".." in n.replace("\\", "/").split("/") for n in names):
         problems.append("包内含越界部件名（绝对路径或 ..）")
     if unpacked > LIMITS["package"]["max_unpacked_mb"] * 1024 * 1024:
         problems.append(f"解压后超过 {LIMITS['package']['max_unpacked_mb']} MB，拒绝处理（疑似压缩炸弹）")

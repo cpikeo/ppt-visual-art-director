@@ -17,11 +17,9 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 `brief.editorial`（`amplify` `recede` `cut`）与 `brief.system`（`typography` `color` `space`）是可选的决策记录，schema 只校验形状；页 `depth`（`background` `midground` `foreground`，元素 id 数组）有引用与顺序校验。
 
-六种 `role` 的叙事动作与重量见 `design.md` 三（叙事）；写不出对应叙事动作，说明页序还没定。
-
 ## 用 scaffold 起稿（默认路线）
 
-`scripts/scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，保证正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25，左轴固定）、**框高**（直接调用 `model.fit_height_in`，折行按 98% 宽度估）、**自适应大字号**（`fit_pt`：取按 86% 宽度估算也不折行的最大字号——渲染实测大字真实宽度比估算宽 10–15%）、**跨页母题**（默认不画；`design.motif: "bar"` 恢复 15.1 的每页 (0.8, 0.7) 处 0.6×0.07 in 强调色短横线）。
+`scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25）、**框高**（`model.fit_height_in`）、**自适应大字号**（`fit_pt`：按 86% 宽度估算也不折行的最大字号，渲染实测大字比估算宽 10–15%）、**跨页母题**（默认不画；`design.motif: "bar"` 在每页 (0.8, 0.7) 处画 0.6×0.07 in 强调色短横线）。
 
 ```bash
 python scripts/scaffold.py system --seed "#B4421E" --mood warm --scene meeting   # 看色彩系统
@@ -60,7 +58,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 每页的 `eyebrow` 是眉题（小号、位于母题横线右侧）。outline 缺字段或 `recipe` 写错时，`scaffold.py init` 以 `E-OUTLINE` 逐条说明并退出 2，不写文件。
 
-每页可覆盖 `role` `claim` `focus` `rationale` `composition` `design_state` `beat` `speaker_notes` `evidence` `open_questions` `dark` `focus_element` `depth`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
+每页可覆盖：`role` `claim` `focus` `rationale` `composition` `design_state` `beat` `speaker_notes` `evidence` `open_questions` `dark` `focus_element` `depth`。`image` 写 `{id, role, info_duty, focus:{x,y}, reason, duotone}`，图须已在 `assets` 登记。生成的 plan 是起点：之后照常 compile → verify → 看图，再手改文案与几何；配方里没有的讲法，手写该页元素即可，网格函数 `col(start, span)` 与色彩系统照用。
 
 ## 设计意图字段与状态（schema_version 2）
 
@@ -71,6 +69,6 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 | `composition.strategy / focus_mode / grid / axes / exception / source / recipe` | 页 | 构图语法、焦点策略（single dual multi none）、网格规格、对齐轴、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | 仅一致性：`W-FOCUS` |
 | `composition.reading_path` | 页 | 阅读顺序（元素 id） | `E-REF` 引用必须存在 |
 
-scaffold 不再把配方说明写进 `composition_rationale`、不再用标题推断 `focus`：作者没写，`focus` 为占位符 `【待判断】`、页标 `draft`；`focus` 与 `rationale` 都写了才标 `judged`。`focus_mode: none` 与 `focus_element` 同时出现 → `E-REF`；`single` 却没有 `focus_element` → `W-FOCUS`。`W-SUM`：以 % 表示的饼/环合计不是 100。`free` 页元素 id 不再与母题保留 id `bar` 冲突；调色名在 `runs`/`stroke`/`gradient` 里同样生效。`W-DOMINANT` 等仍是面积/字号的粗略线索，不是视觉质量判定。
+作者没写 `focus` 则为占位符 `【待判断】`、页标 `draft`；`focus` 与 `rationale` 都写了才标 `judged`。`focus_mode: none` 与 `focus_element` 同时出现 → `E-REF`；`single` 却没有 `focus_element` → `W-FOCUS`。`W-SUM`：以 % 表示的饼/环合计不是 100；合计为 0 → `E-CHART`。`W-DOMINANT` 等只是面积/字号的粗略线索，不是视觉质量判定。
 
 元素坐标、文本、叠放形状、素材与生成图、图表、页码的字段语义见 `elements.md`（手写元素、图表、素材登记时读；只用配方起稿可不读）。
