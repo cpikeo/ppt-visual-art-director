@@ -13,7 +13,7 @@
     python scripts/scaffold.py init outline.json plan.json [--force]
 
 生成的 plan 是起点不是终点：之后照常 compile → verify → 看图，再手改几何与文案。
-配方清单与 outline 写法见 references/build.md「scaffold」一节。
+配方清单与 outline 写法见 references/build.md「用 scaffold 起稿」一节。
 """
 
 from __future__ import annotations
@@ -422,6 +422,10 @@ def r_chart(c: Ctx, p: Dict[str, Any]):
     x, w = col(1, 8 if aside else 12)
     chart = dict(p["chart"])
     chart.setdefault("palette", c.system["data_dark" if dark else "data"])
+    d = chart.get("data")
+    if chart.get("kind") in ("bar", "pie", "donut") and isinstance(d, dict) and len(d.get("categories") or []) <= 8 \
+            and len(d.get("series") or []) <= 3:
+        chart.setdefault("data_labels", True)  # 类别少：直标读数，读者不必回到坐标轴估值（可显式设 false 关闭）
     if p.get("highlight") is not None and chart.get("kind") == "bar":
         chart["highlight_category"] = int(p["highlight"])
         chart.setdefault("legend", False)

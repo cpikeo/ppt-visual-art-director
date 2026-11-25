@@ -145,13 +145,6 @@
         "art": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "light",
-            "lens",
-            "material",
-            "gamut",
-            "grain"
-          ],
           "properties": {
             "light": {
               "$ref": "#/$defs/str",

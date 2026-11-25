@@ -969,6 +969,27 @@ def pn_ink(plan: Dict[str, Any], page: Dict[str, Any]) -> str:
 
 PPTX_MAIN_CT = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
 
+def _xml_part_problems(path, infos) -> List[str]:
+    """逐个 XML 部件：禁止 DTD/实体声明（XXE、实体膨胀），且必须可被安全解析；否则在入口以 E-FORMAT 拦下，而不是在深处抛栈。"""
+    import zipfile
+    out: List[str] = []
+    with zipfile.ZipFile(path) as zf:
+        for i in infos:
+            if not i.filename.lower().endswith((".xml", ".rels")) or i.is_dir():
+                continue
+            if i.file_size > 64 * 1024 * 1024:  # OOXML 的 XML 部件远小于此；不把超大部件整块读进内存
+                out.append(f"部件 {i.filename} 解压后超过 64 MB，拒绝解析")
+                continue
+            data = zf.read(i)
+            if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+                out.append(f"部件 {i.filename} 含 DTD/实体声明，拒绝解析（OOXML 不使用）")
+                continue
+            try:
+                parse_xml(data)
+            except etree.XMLSyntaxError as exc:
+                out.append(f"部件 {i.filename} 不是合法 XML：{str(exc)[:60]}")
+    return out
+
 def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
     """文件是否真的是无宏 .pptx：扩展名、主部件内容类型与包内部件必须一致。
 
@@ -992,6 +1013,8 @@ def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
         problems.append("包内含越界部件名（绝对路径或 ..）")
     if unpacked > LIMITS["package"]["max_unpacked_mb"] * 1024 * 1024:
         problems.append(f"解压后超过 {LIMITS['package']['max_unpacked_mb']} MB，拒绝处理（疑似压缩炸弹）")
+    if not problems:
+        problems.extend(_xml_part_problems(path, infos))
     overrides = {o.get("PartName"): o.get("ContentType") or "" for o in types if o.get("PartName")}
     main_ct = overrides.get("/ppt/presentation.xml")
     if main_ct != PPTX_MAIN_CT:
