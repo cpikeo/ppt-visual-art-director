@@ -67,6 +67,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 | `schema_version` | 根 | 缺省=1（旧稿）；当前 2。旧稿 `scaffold.py migrate` 升级，不就地改写 | schema 枚举 |
 | `design_state` | 页 | `draft` 待判断／`judged` AI 已判断／`confirmed` 人已确认；缺省按 judged（旧稿） | `W-PENDING`；`--production` 下 `E-PENDING` |
 | `composition.strategy / focus_mode / grid / axes / exception / source / recipe` | 页 | 构图语法、焦点策略（single dual multi none）、网格规格、对齐轴、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | 仅一致性：`W-FOCUS` |
+| `composition.temperament / negative_space{role,where} / hero_ratio` | 页 | 空间气质（7 选 1）、空白的功能（5 选 1）、主角对最强配角的最低视觉重量倍数。`hero_ratio` 抬高 `W-DOMINANT` 阈值；`temperament` `negative_space` 由 `verify.py` 对真实渲染量测（`V-SPACE` `V-RHYTHM`）；`negative_space.role=focus` 无 `focus_element` → `W-FOCUS` | 编译：`W-DOMINANT` `W-FOCUS`；核验：`V-SPACE` `V-RHYTHM` |
 | `composition.reading_path` | 页 | 阅读顺序（元素 id） | `E-REF` 引用必须存在 |
 
 作者没写 `focus` 则为占位符 `【待判断】`、页标 `draft`；`focus` 与 `rationale` 都写了才标 `judged`。`focus_mode: none` 与 `focus_element` 同时出现 → `E-REF`；`single` 却没有 `focus_element` → `W-FOCUS`。`W-SUM`：以 % 表示的饼/环合计不是 100；合计为 0 → `E-CHART`。`W-DOMINANT` 等只是面积/字号的粗略线索，不是视觉质量判定。

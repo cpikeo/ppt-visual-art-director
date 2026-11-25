@@ -346,14 +346,14 @@ def _note(c: Ctx, p: Dict[str, Any], dark: bool) -> List[Dict[str, Any]]:
                    color=pal["muted"], h=0.3)]
 
 
-def _image_el(spec: Dict[str, Any], x: float, y: float, w: float, h: float) -> Dict[str, Any]:
+def _image_el(spec: Dict[str, Any], x: float, y: float, w: float, h: float, carrier: bool = False) -> Dict[str, Any]:
     el = {"id": "img", "type": "image", "image_id": spec["id"], "x": round(x, 3), "y": round(y, 3),
           "w": round(w, 3), "h": round(h, 3),
           "image_role": spec.get("role", "background"), "info_duty": spec.get("info_duty", "atmosphere"),
           "asset_reason": spec.get("reason", "氛围图，承担景深与情绪"),
           "crop_focus": spec.get("focus", {"x": 0.5, "y": 0.5})}
-    if el["image_role"] in ("background", "texture"):
-        el["overlap_allowed"] = True  # 只有承载层可以被压；其余角色的图不与文字相交
+    if carrier or el["image_role"] in ("background", "texture"):
+        el["overlap_allowed"] = True  # 只有承载层（整幅图）可以被压；其余角色的图不与文字相交
     if spec.get("duotone"):
         el["duotone"] = spec["duotone"]
     return el
@@ -374,7 +374,7 @@ def r_cover(c: Ctx, p: Dict[str, Any]):
     pal = c.pal(dark)
     els: List[Dict[str, Any]] = []
     if p.get("image"):
-        els.append(_image_el(p["image"], 0, 0, W, H))
+        els.append(_image_el(p["image"], 0, 0, W, H, carrier=True))
     size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["hero"] * 1.3, c.sz["hero"] * 0.8,
                     line_spacing=1.08, letter_spacing_pt=-0.5)
     w = c.balanced_w("title", p["title"], w, size, pal["bg"], line_spacing=1.08, letter_spacing_pt=-0.5)

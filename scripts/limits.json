@@ -36,6 +36,21 @@
     }
   },
 
+  "space": {
+    "_readme": "verify.py 对真实渲染的空间量测（scripts/spatial.py）。dead_zone_share：未声明功能的最大连续空白占页面比例上限；sparse_ink_share：未声明时整页内容占用下限（经验值，仅在本仓库 3 套真实作品上做过校准）；focus_gap_in：negative_space.role=focus 时空白与主角的最大间距；rhythm_run：连续几页同签名算机械重复；temperament 是各空间气质的量测包络（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设），只有写了 composition.temperament 才核对。",
+    "dead_zone_share": 0.4,
+    "sparse_ink_share": 0.12,
+    "focus_gap_in": 1.0,
+    "rhythm_run": 3,
+    "temperament": {
+      "open": {"min_empty": 0.3},
+      "museum": {"min_empty": 0.3},
+      "dramatic": {},
+      "immersive": {"min_ink": 0.7},
+      "dense": {"min_ink": 0.4, "max_empty": 0.2}
+    }
+  },
+
   "package": {
     "max_unpacked_mb": 1024,
     "max_entries": 20000,

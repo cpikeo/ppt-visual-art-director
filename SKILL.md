@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 / 改 / 评审 PPT（汇报、路演、发布、复盘、融资）。先定受众、洞察与原创视觉概念，再由 Plan 契约确定性编译为原生可编辑 PPTX，看真实渲染后定点修正；也用于诊断与定点改稿。不适用于纯文案、Word/PDF 排版。
-version: 18.6.0
+version: 19.0.0
 ---
 
 # PPT 视觉艺术指导
@@ -27,7 +27,7 @@ version: 18.6.0
 | --- | --- | --- |
 | 整体视觉世界 | 受众与主张；洞察（观众原以为什么，证据说明什么）；概念、否决项；光、景别、材质、色域 | `audience` `goal` `core_claim` `brief.insight/concept/veto/art` |
 | 章节叙事节奏 | 谁最重、何处停顿与转折；放大、退隐、删除什么 | `role` `rhythm` `brief.editorial/motif` |
-| 页面空间构成 | 先看到什么、凭什么、放弃了什么；网格每页自选 | `focus` `composition` `composition_rationale` |
+| 页面空间构成 | 先看到什么、凭什么、放弃了什么；空间气质、空白的功能；网格每页自选 | `focus` `composition`（含 `temperament` `negative_space` `hero_ratio`） `composition_rationale` |
 | 局部视觉执行 | 字体、墨阶、裁切、标注、材质 | 元素字段（`craft.md`） |
 
 风格词（高级、极简、科技感）不是方案；概念须能追溯到洞察、换主题就不成立。十一种配方与 `free` 只是起点，关系不在配方里就用 `free`（`free` 是原创构图的主要出口）。原则与判断框架见 `design.md`。

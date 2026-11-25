@@ -36,6 +36,7 @@ import model as M  # noqa: E402
 import checks as K  # noqa: E402
 import charts as H  # noqa: E402
 import chart_audit as A  # noqa: E402
+import spatial  # noqa: E402
 
 EMU = M.EMU
 TEXT_TYPES = M.TEXT_TYPES
@@ -1303,6 +1304,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         f.add("HARD", "V-PAGES", "渲染", f"PDF {doc.page_count} 页 ≠ plan {len(plan['pages'])} 页")
 
     pngs: List[Path] = []
+    spatial_rows: List[Tuple[str, Dict[str, Any]]] = []
     all_fonts: set = set()
     face_notes: List[str] = []
     face_seen: set = set()
@@ -1333,6 +1335,11 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
         pix.save(str(png_path))
         pngs.append(png_path)
 
+        sm = spatial.page_metrics(png_path, page_w, page_h)
+        spatial_rows.append((pid, sm))
+        fe = next((e for e in M.all_elements(spec_page) if e.get("id") == spec_page.get("focus_element") and "x" in e), None)
+        spatial.check_page(pid, spec_page, sm, M.rot_box((float(fe["x"]), float(fe["y"]), float(fe["w"]), float(fe["h"])), fe.get("rotation")) if fe else None,
+                           M.LIMITS.get("space", {}), lambda lv, code, where, msg: f.add(lv, code, where, msg))
         with Image.open(png_path) as img:
             gray = img.convert("L").resize((320, 180))
             ink = sum(1 for v in gray.tobytes() if v < 245) / max(320 * 180, 1)
@@ -1453,6 +1460,8 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
                           f"无法判定地区字面（SC/TC/JP/KR）——字面 NOT VERIFIED，状态不能是 READY；"
                           f"声明带地区后缀的字族（如 Noto Sans CJK SC），或在目标机人工复核")
 
+    spatial.rhythm(spatial_rows, w_in, h_in, M.LIMITS.get("space", {}), lambda lv, code, where, msg: f.add(lv, code, where, msg))
+    facts["spatial"] = {pid: m for pid, m in spatial_rows}
     facts["fonts_all"] = sorted(all_fonts)
     if face_notes:
         f.add("INFO", "I-FONT-FACE", "deck",

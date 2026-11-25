@@ -611,6 +611,10 @@ def _check_design_intent(rep: Report, pid: str, page: Dict[str, Any], ids: set, 
         kind = next((e.get("type") for e in all_elements(page) if e.get("id") == focus), None)
         if kind in ("shape", "divider", "path", "legend"):
             rep.soft("W-FOCUS", f"{pid}/{focus}", f"focus_element 指向装饰性元素（{kind}）：主角通常是文字、数字、图像或图表；确认这是有意的")
+    if (comp.get("negative_space") or {}).get("role") == "focus" and not focus:
+        rep.soft("W-FOCUS", pid, "negative_space.role=focus 要围着主角留白，但没有 focus_element：写出主角元素 id")
+    if comp.get("hero_ratio") and not focus:
+        rep.soft("W-FOCUS", pid, "声明了 hero_ratio 却没有 focus_element：比例无从核对")
     if comp.get("exception") is None and mode in (None, "single") and comp.get("grid") == "none":
         rep.info("I-GRID", pid, "本页声明不用网格（grid=none）但没有写 composition.exception：说明秩序由什么建立")
 
@@ -638,9 +642,10 @@ def _check_dominance(rep: Report, pid: str, page: Dict[str, Any], focus: str, bo
         return
     top_id, top_w = max(others.items(), key=lambda kv: kv[1])
     mine = weights[focus]
-    if mine < top_w * 1.15:
+    ratio = max(1.15, float((page.get("composition") or {}).get("hero_ratio") or 0))   # 页面声明的主角:配角最低比
+    if mine < top_w * ratio:
         rep.soft("W-DOMINANT", f"{pid}/{focus}",
-                 f"声明的主角「{focus}」视觉重量（≈{mine:.2f} in²）没有明显超过「{top_id}」（≈{top_w:.2f} in²）："
+                 f"声明的主角「{focus}」视觉重量（≈{mine:.2f} in²）未达「{top_id}」（≈{top_w:.2f} in²）的 {ratio:g} 倍："
                  f"放大主角、缩小或灰化配角，或改 focus_element；若本页确为并列，删掉 focus_element")
 
 

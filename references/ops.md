@@ -32,6 +32,7 @@
 | `W-COVER` `W-RUNS` | 文字落在上层色块或图上；原有混排被统一，用 `runs` 写明 |
 | `V-TEXT-RENDER` `V-FONT` | 元素的字未落在自己框内渲染；声明字体未参与渲染（降为 PARTIAL） |
 | `W-FONT-FACE` `I-FONT-FACE` | 家族匹配、地区字面没匹配（如简体取到日文字面）或无法判定；降为 PARTIAL，直/骨/门/者等共码位字形须人在 PowerPoint 复核 |
+| `V-SPACE` `V-RHYTHM` | 渲染量测（`scripts/spatial.py`，阈值 `limits.json` → `space`）：声明的 `temperament` 与实际占用/空白不符、未声明功能的整页过疏或大块空白、`negative_space.role=focus` 的空白离主角过远、连续 3 页版面分区几乎相同。SOFT，只指出位置；接受就写理由，不靠调阈值 |
 | `V-NOTES` `V-ALT` | 成品备注/替代文字与 plan 不一致；重新编译 |
 
 ## 报告字段
