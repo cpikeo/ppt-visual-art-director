@@ -280,9 +280,11 @@ def _head(c: Ctx, p: Dict[str, Any], dark: bool, span: int = 10, start: int = 1,
     """母题横线 + 可选眉题（eyebrow）+ 页题。页题是整页的论断。"""
     pal = c.pal(dark)
     x, w = col(start, span)
+    bar_on = c.motif != "none" and p.get("motif") is not False
     els = [_bar(c, dark, x)]
+    off = 0.85 if bar_on else 0.0  # 无母题横线时眉题与页题同左轴，不留下横线的空位
     if p.get("eyebrow"):
-        els.append(c.text("eyebrow", "caption", x + 0.85, MY - 0.11, w - 0.85, p["eyebrow"], pal["bg"],
+        els.append(c.text("eyebrow", "caption", x + off, MY - 0.11, w - off, p["eyebrow"], pal["bg"],
                           font_size=c.sz["caption"], color=pal["muted"], letter_spacing_pt=1.2, h=0.3))
     els.append(c.text("t", "title", x, TOP, w, p["title"], pal["bg"], font_size=size or c.sz["title"],
                       color=pal["ink"], line_spacing=1.12))
@@ -479,8 +481,10 @@ def r_list(c: Ctx, p: Dict[str, Any]):
     pal = c.pal(dark)
     els = _head(c, p, dark, span=5)
     lx, lw = col(7, 6)
+    longest = max(p["items"], key=len)   # 条目字号随最长一条取不折行的最大值：条目少时撑得起半页，而不是缩在角落
+    size = c.fit_pt("body", longest, lw - M.LIST_INDENT_IN, pal["bg"], c.sz["body"] + 12, c.sz["body"] + 4, line_spacing=1.2)
     lst = c.text("items", "body", lx, TOP + 0.05, lw, "\n".join(p["items"]), pal["bg"],
-                 font_size=c.sz["body"] + 6, color=pal["ink"], list=p.get("list", "number"), space_after_pt=22)
+                 font_size=size, color=pal["ink"], list=p.get("list", "number"), space_after_pt=round(size * 1.1))
     els.append(lst)
     els.append(c.rect("vrule", col(6, 1)[0] + COL_W / 2, TOP + 0.1, 0.012, max(lst["h"], 2.2), pal["rule"]))
     return els + _note(c, p, dark), dark
@@ -553,6 +557,11 @@ def r_close(c: Ctx, p: Dict[str, Any]):
         els.append(c.text("items", "body", x, iy, w, "\n".join(p["items"]), pal["bg"],
                           font_size=c.sz["body"] + 6, color=pal["ink2"], list=p.get("list", "number"),
                           space_after_pt=18))
+        over = els[-1]["y"] + els[-1]["h"] - (H - 0.85)   # 标题折行或大字号档会把条目推出页底：整块上移，不压字号
+        if over > 0:
+            shift = min(over, max(0.0, els[0]["y"] - 0.5))
+            for e in els:
+                e["y"] = round(e["y"] - shift, 3)
     return els, dark
 
 
@@ -749,8 +758,7 @@ def build_plan(outline: Dict[str, Any]) -> Dict[str, Any]:
 def _guard(rep: M.Report, inputs: Dict[str, Path], out: Path, force: bool) -> bool:
     """init / migrate 共用：与 compile / verify / revise 同一套路径守卫（model.guard_paths）。"""
     M.guard_paths(rep, inputs, [("输出文件", out, ".json")], force)
-    for issue in rep.items:
-        print(issue)
+    M.show(rep.items)
     return not rep.blocked
 
 
@@ -771,6 +779,30 @@ def _emit(out: Path, data: Dict[str, Any], force: bool) -> bool:
     return True
 
 
+def schema_fields(name: str) -> str:
+    """plan.schema.json 的紧凑字段表（按需查看，不必通读 40KB 的 schema）：`key*`＝必填，类型/枚举一行一项。"""
+    defs = M.SCHEMA.get("$defs", {})
+    node = M.SCHEMA if name == "root" else defs.get(name)
+    if node is None:
+        return f"未知节点 {name}；可选：root {' '.join(sorted(defs))}"
+
+    def brief(s: Dict[str, Any]) -> str:
+        if "$ref" in s:
+            return s["$ref"].rsplit("/", 1)[-1]
+        if "enum" in s:
+            return "|".join(map(str, s["enum"]))
+        t = s.get("type", "any")
+        if t == "array":
+            return f"[{brief(s.get('items', {}))}]"
+        if t == "object" and s.get("properties"):
+            return "{" + ",".join(s["properties"]) + "}"
+        lim = "".join(f" {k}={s[k]}" for k in ("minimum", "maximum", "exclusiveMinimum", "minItems", "maxItems") if k in s)
+        return f"{t}{lim}"
+
+    req = set(node.get("required", []))
+    return "\n".join(f"{k}{'*' if k in req else ''}: {brief(v)}" for k, v in node.get("properties", {}).items())
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     M.utf8_stdio()
     ap = argparse.ArgumentParser(description="设计系统与版式配方")
@@ -787,7 +819,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     s3.add_argument("plan")
     s3.add_argument("out")
     s3.add_argument("--force", action="store_true")
+    s4 = sub.add_parser("fields", help="plan.schema.json 的紧凑字段表（root/page/element/chart/…），代替通读 schema")
+    s4.add_argument("node", nargs="?", default="root")
     a = ap.parse_args(argv)
+    if a.cmd == "fields":
+        print(schema_fields(a.node))
+        return 0
     if a.cmd == "system":
         try:
             print(json.dumps(design_system(a.seed, a.mood, a.scene), ensure_ascii=False, indent=2))

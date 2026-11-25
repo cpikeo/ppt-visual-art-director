@@ -100,6 +100,18 @@ class Report:
     def to_dict(self) -> List[Dict[str, str]]:
         return [{"level": i.level, "code": i.code, "where": i.where, "message": i.message} for i in self.items]
 
+def show(items: List[Issue]) -> None:
+    """打印诊断。同级别、同代码、同文案、仅位置不同的条目合并为一行（如 7 页同一条 W-PENDING），
+    减少常驻输出与重读成本；JSON 报告（Report.to_dict）仍逐条保留。"""
+    groups: Dict[Any, List[Issue]] = {}
+    for i in items:
+        groups.setdefault((i.level, i.code, i.message), []).append(i)
+    for (level, code, message), g in groups.items():
+        if len(g) == 1:
+            print(g[0])
+        else:
+            print(f"[{level}] {code} {'、'.join(i.where for i in g)}（×{len(g)}）: {message}")
+
 # ---------------------------------------------------------------- 载入
 
 

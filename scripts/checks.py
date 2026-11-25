@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-from model import non_finite_series, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, deck_palette, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import non_finite_series, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
 def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -> Report:
@@ -19,7 +19,6 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
     tol = LIMITS["canvas"]["bound_tolerance_in"]
     pages = plan.get("pages") or []
     assets = plan.get("assets") or {}
-    palette = deck_palette(plan)
     pn_cfg = page_numbers(plan)
 
     rhythm = plan.get("rhythm")

@@ -501,7 +501,6 @@ def add_legend(slide, plan, page, el):
     与扇区对不上就是这么来的。现在图例只是 chart_color_map 的一个视图：
     改 palette 或 color_map，扇区与色块同时变；核验器按同一份映射逐块比对。
     """
-    from pptx.util import Inches, Pt
 
     ref = str(el.get("for_chart") or "")
     target = next((e for e in page.get("elements") or [] if str(e.get("id")) == ref), None)
@@ -571,7 +570,7 @@ def _swatch(slide, name: str, idx: int, x: float, y: float, size: float, color: 
 
 def _swatch_label(slide, family: str, name: str, idx: int, text: str, x: float, y: float, w: float, h: float,
                   size: float, ink: str, align: str):
-    from pptx.util import Inches, Pt
+    from pptx.util import Inches
     from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 
     frame = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(max(w, 0.3)), Inches(h))

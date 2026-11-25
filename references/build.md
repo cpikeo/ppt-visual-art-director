@@ -1,6 +1,6 @@
 # 机器契约：plan、编译、核验、定点编辑
 
-字段形状以 `scripts/plan.schema.json` 为准，技术阈值以 `scripts/limits.json` 为准。本文只讲 schema 表达不了的语义、坑与命令。
+字段形状以 `scripts/plan.schema.json` 为准（`scaffold.py fields <节点>` 查紧凑字段表），技术阈值以 `scripts/limits.json` 为准。本文只讲 schema 表达不了的语义、坑与命令。
 
 ## 必填与枚举速查（写 plan 之前先对一遍）
 
@@ -66,7 +66,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 | 字段 | 位置 | 含义 | 谁来校验 |
 | --- | --- | --- | --- |
-| `schema_version` | 根 | 缺省=1（15.2 及以前）；当前 2。旧稿 `scaffold.py migrate` 升级，不就地改写 | schema 枚举 |
+| `schema_version` | 根 | 缺省=1（旧稿）；当前 2。旧稿 `scaffold.py migrate` 升级，不就地改写 | schema 枚举 |
 | `design_state` | 页 | `draft` 待判断／`judged` AI 已判断／`confirmed` 人已确认；缺省按 judged（旧稿） | `W-PENDING`；`--production` 下 `E-PENDING` |
 | `composition.strategy / focus_mode / grid / axes / exception / source / recipe` | 页 | 构图语法、焦点策略（single dual multi none）、网格规格、对齐轴、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | 仅一致性：`W-FOCUS` |
 | `composition.reading_path` | 页 | 阅读顺序（元素 id） | `E-REF` 引用必须存在 |
@@ -87,7 +87,7 @@ scaffold 不再把配方说明写进 `composition_rationale`、不再用标题�
 - 文本自带内边距（左右 0.05、上下 0.03 in）。要贴住网格轴线（大标题、数字）写 `pad_in: 0`。
 - 默认：`title` 40pt 粗、`number` 72pt 粗、`body` `text` 20pt、`caption` `footer` 13pt；行距 1.12（标题、数字）、1.32（正文）、1.25（注释）。深底（亮度 < 0.18）未声明颜色时用浅墨。
 - 字族三分：`fonts.heading`、`fonts.body`（正文、图表、页码）、`fonts.number`（缺省同 heading）。
-- `letter_spacing_pt` 范围 −40…40：几百 pt 的巨型数字需要按字号比例收紧字距（约 −2%…−4% 字号），15.1 的 −4 上限会让它无法表达。
+- `letter_spacing_pt` 范围 −40…40：几百 pt 的巨型数字需要按字号比例收紧字距（约 −2%…−4% 字号），旧版 −4 的上限无法表达。
 - `rotation` 对所有对象生效，按 360 取模。
 - **原生列表**：`list: "bullet"|"dash"|"number"`，每个 `\n` 分段是一项，写成真正的项目符号/自动编号（`buChar`／`buAutoNum`）与 0.32 in 悬挂缩进，符号与第一段文字同色；不要手敲“1.”“•”。估宽按缩进后的版心算；`verify.py` 逐项比对渲染文字（渲染器会在每项前插入符号）。
 - 页面 `speaker_notes` 写入备注页（页面 `notes` 是设计备注，不进成品）。元素 `alt` 写入替代文字：图片缺省取 `asset_reason`，图表缺省取图题，装饰元素不写。两者都由 `verify.py` 逐项核对。
@@ -195,25 +195,7 @@ scaffold 不再把配方说明写进 `composition_rationale`、不再用标题�
 
 编译器按页序生成，默认右下、12pt、从 1 起。`hide` 列出不显示的页（需在交付说明写理由）。文字与图表不得与页码保留框相交；要在右下放长期来源，整稿改 `corner: top_right`。图片压到角区须用 `page_number_tone` 声明明暗。
 
-## 网格与装载估算（算术，不用脚本）
-
-- 列宽 `col_w = (画布宽 − 2×边距 − 沟槽×(列数−1)) ÷ 列数`。scaffold 的 16:9 网格：12 列、边距 x 0.8 / y 0.7、沟槽 0.25。第 i 列起点 `x = 边距 + (i−1)×(col_w+沟槽)`；跨 n 列宽 = n×col_w + (n−1)×沟槽。
-- 比例切分：`free = 版心宽 − 沟槽×(栏数−1)`，第 i 栏宽 = `free × 比例ᵢ ÷ Σ比例`。
-- 参考线：三分 `W/3, 2W/3`、`H/3, 2H/3`；黄金位 `0.382W, 0.618W`、`0.382H, 0.618H`。
-- 装载估算：每行字数 ≈ `(w − 2×内边距) ÷ (字号÷72)`，中文一字一 em，西文数字约 0.55 em；高度 ≈ 行数 × 字号 × 1.2 × 行距 ÷ 72。估不准以渲染为准。
-
-## plan 写作顺序
-
-先写 `brief` 与每页的 `role`、`claim`、`focus`（此时无坐标）→ 排页序与节奏 → 逐页定元素与主角 → 最后填几何（先网格算术，再字号档位，再框高）→ 编译，逐条读诊断。宁可改文案，不要改字号。
-
 ## 命令与退出码
-
-```bash
-python scripts/compile.py plan.json out.pptx [--assets DIR] [--report r.json] [--force]
-python scripts/verify.py plan.json out.pptx [--assets DIR] [--render-dir DIR] [--report v.json] [--force]
-python scripts/revise.py inspect 原稿.pptx [--json i.json] [--force]
-python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report r.json] [--force]
-```
 
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
 - `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积）。
@@ -320,29 +302,7 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx [--assets DIR] [--report
 | 母版与版式 | 有限 | 默认模板的 4:3 占位符几何按画布宽度横向缩放；**主题色（dk2/lt2/accent1–6、超链接色）取 plan 的数据色与墨色，母版底色取多数页底色，母版标题左对齐、与默认标题同字号**，新增页与图形不会回到 Office 默认外观；`docProps/app.xml` 按成品重写（页数、画布、不声称由 Office 生成）。仍只有一套母版，不做自定义版式库；未使用的 11 个默认版式保留 |
 | 动画、切换、嵌入字体、新建 SmartArt、宏 | 不支持 | `.pptm` 一律拒绝 |
 
-## 模块与依赖
-
-```
-model.py    共用：诊断、plan 载入、度量、颜色映射(chart_color_map)、几何、成品包校验、alt_text（不依赖 python-pptx）
-ooxml.py    低层写入：填充、渐变、描边、圆角、duotone、run 属性        ← model
-charts.py   原生图表、表格与 legend 图例                               ← model, ooxml
-chart_audit.py 成品图表的有效色审计（只读 chart XML，不读 plan 的颜色）     ← model
-checks.py   plan 校验与整稿模式信号                                   ← model
-compile.py  元素构建、build、CLI                                      ← model, checks, ooxml, charts
-verify.py   plan ↔ PPTX ↔ 渲染；environment 事实                       ← model, checks, charts, chart_audit
-revise.py    inspect 与定点编辑 + 保留核对                              ← model, ooxml
-```
-
-本包只含 Skill 正式文件，不含测试与案例。新增检查必须故意破坏一次、确认它会响（既要有“应通过”的输入，也要有“应被拦”的输入），并在包外的独立目录里完成。
-
-`limits.json` 是阈值唯一来源（含图上文字量测 `image.zone`、成品包大小上限 `package`），`plan.schema.json` 是数据契约唯一来源。
-
 ## 输入安全
 
 plan、edit.json、素材与 PPTX 都视为不可信输入：素材路径限制在素材根内；解析外部 PPTX 的 XML 一律不展开实体、不联网（防 XXE 与实体膨胀）；成品包拒绝越界部件名与解压后超过 `package.max_unpacked_mb` 的包。脚本不联网、不执行包内内容。
 
-## 机器边界
-
-- 编译器与核验器共用同一套 plan 模型与阈值：共用部分有缺陷，两边会一起“一致”。所以对象核对不能替代看图。堆叠柱标签墨色就是一例：对象一致，但深色块上的深字读不出，只有看渲染才发现。
-- 没跑过的检查与通过的检查长得一样。新增检查必须反向构造（故意破坏，确认它会响）。标题里的数字与结论不属于任何检查：必须自己用图表数据回算（评测里出现过标题写“少 1 分钟”而数据斜率是 2.3 的错误）。
-- `W-NOTE` 恒为提醒：截轴起点必须由你写进页面可见的 caption、轴名或图题，机器不判断你写没写对。

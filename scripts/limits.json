@@ -14,7 +14,7 @@
     "line_spacing": {"title": 1.12, "number": 1.12, "body": 1.32, "text": 1.32, "caption": 1.25, "footer": 1.25},
     "bold": {"title": true, "number": true, "caption": false},
     "inset_in": {"x": 0.05, "y": 0.03},
-    "line_pitch_em": {"_readme": "单倍行距下的行高（em），取决于字体自带的 ascent+descent+lineGap：Noto/思源 CJK 约 1.45，微软雅黑约 1.32，宋体/黑体约 1.15。未列出的字体取 default。W-FIT 用它估框高，估不准以渲染为准。", "default": 1.25, "by_font": {"notosanscjk": 1.448, "notoserifcjk": 1.448, "sourcehansans": 1.448, "sourcehanserif": 1.448, "思源": 1.448, "微软雅黑": 1.32, "microsoftyahei": 1.32, "宋体": 1.15, "simsun": 1.15, "黑体": 1.15, "simhei": 1.15}},
+    "line_pitch_em": {"_readme": "单倍行距下的行高（em），取决于字体自带的 ascent+descent+lineGap：Noto/思源 CJK 约 1.45，微软雅黑约 1.32，宋体/黑体约 1.15。未列出的字体取 default。W-FIT 用它估框高，估不准以渲染为准。", "default": 1.25, "by_font": {"notosanscjk": 1.448, "notoserifcjk": 1.448, "notosanssc": 1.448, "notosanstc": 1.448, "notosansjp": 1.448, "notosanskr": 1.448, "notoserifsc": 1.448, "notoseriftc": 1.448, "notoserifjp": 1.448, "notoserifkr": 1.448, "sourcehansans": 1.448, "sourcehanserif": 1.448, "思源": 1.448, "微软雅黑": 1.32, "microsoftyahei": 1.32, "宋体": 1.15, "simsun": 1.15, "黑体": 1.15, "simhei": 1.15}},
     "fit_tolerance": 1.05
   },
 

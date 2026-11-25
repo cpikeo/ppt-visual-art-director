@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 PPT / 改 PPT / 评审 PPT 时使用。以视觉艺术总监的判断完成汇报、路演、发布、复盘、融资材料：读懂受众与证据，提炼洞察，定原创视觉概念，再决定构图、排印、色彩、图像、图表与整稿节奏；由 Plan 契约确定性编译为原生可编辑 PPTX（原生标题占位符、列表、图表、表格，主题色与母版跟随本稿），看真实渲染后定点修正。也用于诊断既有 PPTX 与定点改稿。不适用于纯文案撰写、Word/PDF 排版。
-version: 15.3.0
+version: 16.0.0
 ---
 
 # PPT 视觉艺术指导
@@ -12,99 +12,98 @@ version: 15.3.0
 
 分工：**AI 负责判断**（概念、取舍、好不好）；**脚本负责算术与事实**（网格、对比度、框高、对象、字节、结构），不给审美结论；**人负责最终签收**。
 
-## 一、先判断任务大小，只加载需要的
+## 一、先判任务大小，只读需要的
 
-| 任务 | 做法 | 读 |
+| 任务 | 做法 | 只读 |
 | --- | --- | --- |
-| 评审、专项（配色、简报、某一页） | 只回答被问的，不跑完整流程 | `design.md` 对应章节 |
-| 改既有稿 | `revise.py inspect` → 定点编辑；不重做设计 | `build.md`「定点编辑」 |
-| 新建（页数少、信息单一） | 第二节第 1–4 步 + 编译核验 | `design.md` 一至四 |
-| 新建（整稿、路演、发布） | 第二节全流程，含图像与整稿节奏复核 | `design.md` 全部、`imagery.md`、`build.md` |
+| 评审、专项（配色、某一页） | 只答被问的，不跑全流程 | `design.md` 对应章节、九 |
+| 改既有稿 | `revise.py inspect` → 定点编辑，不重做设计 | `build.md`「定点编辑」 |
+| 新建（页少、信息单一） | 第二节 1–4 步 + 编译核验 | `design.md` 一至四 |
+| 新建（整稿、路演、发布） | 第二节全流程 + 图像 + 整稿节奏复核 | `design.md` 全部、`imagery.md`、`build.md` 开头三节 |
 
-模式不明时按字面最小范围做，开头说明模式与假设。
+其余按需：构图与图表 `design.md` 四、五；排版与色彩 六、七；诊断与教训 八、十；读诊断码、能力边界 `build.md` 对应节。模式不明时按字面最小范围做，开头说明模式与假设。**不确定字段先跑 `scaffold.py fields <root|page|element|chart|…>`（约 1KB），不要通读 `plan.schema.json`（40KB）。**
 
 ## 二、判断流程（新建）
 
-**判断先行，参数在后。** 风格词（高级、极简、科技感、电影感）不是方案；能回答下面五问，才有资格选字体与颜色。
+风格词（高级、极简、科技感）不是方案。能回答下面五问，才有资格选字体与颜色。
 
-1. **受众与主张**：谁看、已知什么、怀疑什么、在哪看；离场要记住哪一句。→ `audience` `goal` `core_claim`
+1. **受众与主张**：谁看、已知什么、怀疑什么、在哪看；离场记住哪一句。→ `audience` `goal` `core_claim`
 2. **洞察与概念**：观众原以为什么，证据说明什么，差距在哪；用什么**视觉关系**让差距被看见，**否决**什么。→ `brief.insight` `concept` `veto`
-3. **编辑取舍**：什么放大、什么退隐、什么删除。三栏有一栏写不出东西，说明还没取舍。→ `brief.editorial`
-4. **艺术指导与系统**：光、景别、材质、色域（含唯一强调色）、颗粒；字体、色彩职责、空间逻辑各一句理由；一到两个跨页母题。→ `brief.art` `brief.system` `brief.motif`
-5. **叙事**：每页 `role`（open build turn breathe hold close）与一句“做什么、多重”；最重的一页是内容最重要的一页吗？→ `role` `rhythm`
+3. **编辑取舍**：放大什么、退隐什么、删除什么；三栏有一栏写不出，说明还没取舍。→ `brief.editorial`
+4. **艺术指导与系统**：光、景别、材质、色域（含唯一强调色）、颗粒；字体、色彩职责、空间逻辑各一句理由；一到两个从内容里长出来的跨页母题。→ `brief.art` `brief.system` `brief.motif`
+5. **叙事**：每页 `role`（open build turn breathe hold close）与一句“做什么、多重”；最重的一页是最重要的一页吗？→ `role` `rhythm`
 
-然后才落到几何：
+然后落到几何：
 
-6. **设计系统**：种子色只是起点。用 `scaffold.py system` 看推导；底色、强调色、数据色**由内容与品牌决定**，不合适就用 `design.ground / accent / data` 覆盖（脚本仍保证文字对比）。
-7. **每页选一种讲法**：十一种配方与 `free`（自由构图）都只是起点。内容关系不在配方里，就用 `free`——网格是**每页自选**的工具（`grid`：12 栏默认、5/8 栏、自定边距与沟槽，或 `none` 完全自由；`cols`/`rows`/`right` 对齐到所选网格，要出血就直接写坐标），页内声明 `focus_element`（主角）与 `depth`（前中后景），在 `composition_rationale` 写清“先看到什么、凭什么、放弃了什么”。
-8. **编译、看图、修正**（第四节）。
+6. **设计系统**：`scaffold.py system` 看色彩与字号推导；底色、强调色、数据色由内容与品牌决定，不合适就用 `design.ground / accent / data` 覆盖（脚本仍保证文字对比）。
+7. **每页一种讲法**：十一种配方与 `free`（自由构图）只是起点；内容关系不在配方里就用 `free`，网格每页自选（12 栏默认、5/8 栏、自定或 `none`）。页内声明 `focus_element`（主角）与 `depth`，在 `composition_rationale` 写清“先看到什么、凭什么、放弃了什么”。
+8. **编译、看图、修正**（第四、五节）。
 
-**概念四问**：能追溯到洞察吗？能否否掉一个具体的东西吗？换掉主题还成立吗？缩略图上认得出是这一套吗？　**每页三问**：先看到什么？凭什么信？删掉哪件会损失什么？
+**概念四问**：能追溯到洞察吗？能否否掉一个具体的东西？换掉主题还成立吗？缩略图上认得出是这一套吗？　**每页三问**：先看到什么？凭什么信？删掉哪件会损失什么？
 
 ## 三、判断原则
 
 1. **概念先于风格；原创来自关系。** 换配色、字体、圆角改的是表皮；原创是只属于这份内容的尺度、裁切、并置或读法。
 2. **关系先于版式。** 先判内容是比较、时间、因果、流程、组成还是层级，再选图表与空间。相关与先后都不是因果。
-3. **主次先于均衡。** 每页一个视觉主导，靠尺度、位置、明暗、留白建立；**主角在灰度下也要比配角明显更深或更浅**。固定网格、固定位置的重复装饰不是母题，母题要从内容里长出来（15.2 起 scaffold 默认不画短横线，`design.motif: "bar"` 才恢复）。
+3. **主次先于均衡。** 每页一个视觉主导，靠尺度、位置、明暗、留白建立；**主角在灰度下也要明显更深或更浅**。固定位置的重复装饰不是母题（scaffold 默认不画；`design.motif: "bar"` 才恢复短横线）。
 4. **编辑先于缩放。** 装不下就删、合并、改写、拆页，不靠压字号。
 5. **色彩是关系系统。** 先定明度与职责，再谈色相；强调色只指向结论；同一对象跨页同色。
 6. **真实先于完整。** 没证据的漂亮页不如留白；生成图只承担氛围，不替代产品、人物、数据与事实；缺的数字写进 `open_questions`，不补造。
-7. **判断先于规则。** 什么时候守系统：信息密集、需要比较、读者要反复定位时，守网格、守字阶、守色彩职责；什么时候调系统：同一网格连续三页都在迁就内容；什么时候破：一个尺度、裁切或留白本身就是论据（巨型数字出血、整页色场、整幅图）。脚本阈值是最低执行线；破格时在 `composition_rationale` 写明破了哪条、换来什么、谁承担代价，且整稿只破少数几次，破得多就不再是破。
+7. **判断先于规则。** 信息密集、需要比较时守网格、字阶与色彩职责；同一网格连续三页都在迁就内容时调系统；尺度、裁切或留白本身就是论据时破格，并在 `composition_rationale` 写明破了哪条、换来什么、谁承担代价；整稿只破少数几次。
 8. **停止先于完美。** 目标达成、主要问题解决、系统成立即停；两轮无实质改善，交给人决策。
 
 判断顺序（上游优先）：内容与信息架构 → 主导关系与构图 → 空间与节奏 → 排印与层级 → 图像与色彩 → 工艺与细节。上层问题用下层装饰修补，必然失败。
 
 ## 四、命令
 
-`plan.json` 是设计与机器之间唯一的契约：字段以 `scripts/plan.schema.json` 为准，语义见 `references/build.md`。坐标英寸、原点左上，16:9 为 13.333 × 7.5；字号 pt；叠放顺序即声明顺序。
+`plan.json` 是设计与机器之间唯一的契约：字段以 `scripts/plan.schema.json` 为准（用 `fields` 查看），语义见 `references/build.md`。坐标英寸、原点左上，16:9 为 13.333 × 7.5；字号 pt；叠放顺序即声明顺序。
 
 ```bash
-pip install -r requirements.txt                                       # 对象层；渲染核验另见 requirements-render.txt
-python scripts/scaffold.py system --seed "#B4421E" --mood warm       # 色彩系统 + 字号阶梯（只读）
-python scripts/scaffold.py init outline.json plan.json               # outline → plan 初稿；focus/构图理由未写的页标 draft（待判断，不替你判断）
-python scripts/scaffold.py migrate old-plan.json new-plan.json       # 15.2 及以前的 plan → schema_version 2（不就地改写）
-python scripts/compile.py plan.json out.pptx [--assets DIR] [--production]   # 校验 + 编译；--production：设计判断仍是 draft/待判断即阻断；同环境相同输入 → 相同字节
-python scripts/verify.py plan.json out.pptx [--assets DIR]           # 对象核对 + 渲染核对
-python scripts/revise.py inspect 原稿.pptx                            # 改稿：只读解析
-python scripts/revise.py 原稿.pptx edit.json out.pptx                 # 改稿：定点编辑 + 保留核对
+pip install -r requirements.txt                                      # 渲染核验另见 requirements-render.txt
+python scripts/scaffold.py system --seed "#B4421E" --mood warm      # 色彩系统 + 字号阶梯（只读）
+python scripts/scaffold.py fields [root|page|element|chart|…]       # 紧凑字段表（只读）
+python scripts/scaffold.py init outline.json plan.json              # outline → plan 初稿；判断未写的页标 draft
+python scripts/scaffold.py migrate old-plan.json new-plan.json      # 旧 plan → schema_version 2（不就地改写）
+python scripts/compile.py plan.json out.pptx [--assets DIR] [--production]   # 校验 + 编译；--production：draft 即阻断；同环境同输入 → 同字节
+python scripts/verify.py plan.json out.pptx [--assets DIR]          # 对象核对 + 渲染核对
+python scripts/revise.py inspect 原稿.pptx                           # 改稿：只读解析
+python scripts/revise.py 原稿.pptx edit.json out.pptx                # 改稿：定点编辑 + 保留核对
 ```
 
-测试、案例与评测不属于本 Skill 包；验证在包外的独立目录完成，结论按 L0–L3 分级披露，未执行的写“未验证”。
+成品原生：页内第一个顶层 `title` 是原生标题占位符；`list` 是真项目符号/自动编号；图表与表格是原生对象；主题色、母版底色、标题样式跟随本稿；文字带语言标记；不整页栅格化。不自动缩字、换色、补数据、联网取图。
 
-成品原生性：页内第一个顶层 `title` 是原生标题占位符；`list` 是真正的项目符号/自动编号；图表与表格是原生对象；主题色、母版底色与标题样式跟随本稿；文字带语言标记；不整页栅格化。不自动缩字、换色、补数据、联网取图。
+`design_state`：`draft`（起稿默认，待判断）／`judged`（AI 已判断）／`confirmed`（人已确认）；交付前须无 draft。`composition` 只是过程记录，不是质量结论。
 
-设计判断状态：`design_state`＝`draft`（scaffold 起稿默认，待判断）／`judged`（AI 已判断）／`confirmed`（人已确认）；`composition` 记录构图语法、网格、对齐轴、阅读路径、焦点策略（single/dual/multi/none 都合法）与破格理由。这是过程记录，不是质量结论；交付前须无 draft（`compile.py --production`）。
-
-边界：只产出 `.pptx`；所有 CLI 的输出走同一套路径守卫（不覆盖输入、不经符号链接/硬链接写出、临时文件→回读校验→原子放入）；已有输出与报告不覆盖（`--force` 才替换）；原稿永不就地改写；素材只从素材根内读取。
+边界：只产出 `.pptx`；所有 CLI 走同一套路径守卫（不覆盖输入、不经符号链接/硬链接写出、临时文件→回读校验→原子放入）；已有输出不覆盖（`--force` 才替换）；原稿永不就地改写；素材只从素材根内读取。诊断同文案多页合并为一行输出。测试、案例与评测不属于本 Skill 包。
 
 ## 五、验收：看真实成稿
 
-三层各自成立，不合并成分数：**对象核对**（类型、几何、逐 run 文字与样式、填充描边、图片字节与裁切、图表数值与着色、OPC 完整性）；**渲染核对**（LibreOffice → PDF → PNG：越界、字体替换、空白页、文字归属、行首标点；渲染是估宽模型的裁判）；**人的判断**（构图、主次、概念；目标 PowerPoint 与字体下是否正常）。
+三层各自成立，不合并成分数：**对象核对**（类型、几何、逐 run 文字与样式、填充描边、图片字节与裁切、图表数值、OPC 完整性）；**渲染核对**（LibreOffice → PDF → PNG：越界、字体替换、空白页、文字归属、行首标点）；**人的判断**（构图、主次、概念；目标 PowerPoint 与字体下是否正常）。
 
-**状态与退出码是同一件事**（`verify.py`）：
-
-| 状态 | 含义 | 退出码 |
+| `verify.py` 状态 | 含义 | 退出码 |
 | --- | --- | --- |
 | `READY` | 对象一致、渲染完成、字体与字面确认 | 0 |
 | `BLOCK` | 有硬问题 | 1 |
 | `PARTIAL` | 渲染没跑、字体被替换、或地区字面无法确认 | 4 |
-| — | 输入或契约错误（找不到文件、plan 不合契约、路径守卫） | 2 |
+| — | 输入或契约错误 | 2 |
 
-三档都不是质量结论。`powerpoint` 永远是 `NOT VERIFIED`，`human` 永远是 `NOT REVIEWED`。Noto/思源 CJK 的 `.ttc` 经 LibreOffice 导出时字面无法判定，该环境停在 `PARTIAL`。
+三档都不是质量结论；`powerpoint` 恒为 `NOT VERIFIED`，`human` 恒为 `NOT REVIEWED`。渲染字体名须与 plan 一致（如 `Noto Sans SC` 与 `Noto Sans CJK SC` 是两个家族），否则 `PARTIAL`。
 
-**三种整体判断（看图必做）**：整体性（脱离文字，空间、主体、图像、色彩是同一个世界吗）；连续性（缩略总览里锚点、密度、明暗节奏成立吗）；有效性（**转灰度**、按投影尺寸，层级还清晰吗）。
+**看图必做三种整体判断**：整体性（脱离文字，空间、主体、图像、色彩是同一个世界吗）；连续性（缩略总览里锚点、密度、明暗节奏成立吗）；有效性（**转灰度**、按投影尺寸，层级还清晰吗）。看图顺序：缩略总览 → 逐页 PNG → 灰度 → 关键页与相邻页并排。机器事实与设计判断分开写，后者引用页码与可观察依据。
 
-编译器的**模式信号**（`W-MONOTONY` `W-RULE` `W-LABEL` `W-IMG-REUSE` `W-CLAIM` `W-GRAY` `W-SPACE` `W-DOMINANT` `I-OPEN`）只指出该看的位置：成立就改，无事就写进交付说明。`W-DOMINANT` 表示声明的主角在尺度上没有压过同页配角。
+模式信号（`W-MONOTONY` `W-RULE` `W-LABEL` `W-IMG-REUSE` `W-CLAIM` `W-GRAY` `W-SPACE` `W-DOMINANT` `I-OPEN`）只指出该看的位置：成立就改，无事就写进交付说明。
 
-**看图顺序**：缩略总览 → 逐页 PNG → 灰度 → 关键页与相邻页并排。机器事实与设计判断分开写，后者引用页码与可观察依据。**缺陷分级**：S1 否决（语义错误、数据失真、无证因果、关键内容不可读）→ S2 阻断主线 → S3 质量缺陷 → S4 打磨；按根因修，上游优先。**停止条件**：S1 清零，无未处置的 S2，每页主角一句话说得清，剩余 S3/S4 已披露。
+**缺陷分级**：S1 否决（语义错误、数据失真、无证因果、关键内容不可读）→ S2 阻断主线 → S3 质量缺陷 → S4 打磨；按根因修，上游优先。**停止条件**：S1 清零，无未处置的 S2，每页主角一句话说得清，剩余 S3/S4 已披露。
 
-**验证等级**：L0 plan 与 schema、L1 PPTX 对象与 OOXML、L2 LibreOffice 真实渲染、L3 PowerPoint 实机与人工签收。`verify.py` 只到 L2。
+**验证等级**：L0 plan 与 schema、L1 PPTX 对象与 OOXML、L2 LibreOffice 渲染、L3 PowerPoint 实机与人工签收；`verify.py` 只到 L2。
 
-**不能说的话**：没跑 PowerPoint 却说“PowerPoint 下正常”；没渲染却说“已预览”“无溢出”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论。
+**不能说**：没跑 PowerPoint 却说“PowerPoint 下正常”；没渲染却说“已预览”“无溢出”；`PARTIAL` 说“核验通过”；没看图就说视觉通过；把 `READY` 说成“设计通过”；用替代字体的断行当目标环境结论。
 
 ## 六、既有稿与评审
 
-`revise.py` 只动 `edit.json` 点名的对象与属性（组合对象内的子对象用 `in_group` 指定，同组其余子对象逐个核对不变；未点名图表的内嵌工作簿保持原字节）；写出前做保留核对，不通过则交付路径一个字节不动。通过只说明“没有顺手改坏别处”，不说明改完好看。评审骨架：一句话总评 → 否决项（位置与证据；没有就写“未发现”及查了哪些页）→ 三种整体判断 → 复核维度（`PASS／BLOCK／NOT VERIFIED` 并注明依据类型，见 `design.md` 九）→ 缺陷按严重度 → 最该改的三处 → 没检查什么。不打总分；原稿数字不“顺手修正”，怀疑有误写进 `open_questions`。
+`revise.py` 只动 `edit.json` 点名的对象与属性（组内子对象用 `in_group`；未点名图表的内嵌工作簿保持原字节）；写出前做保留核对，不通过则交付路径一个字节不动。通过只说明“没有顺手改坏别处”，不说明改完好看。
+
+评审骨架：一句话总评 → 否决项（位置与证据；没有就写“未发现”及查了哪些页）→ 三种整体判断 → 复核维度（`PASS／BLOCK／NOT VERIFIED` 并注明依据类型，见 `design.md` 九）→ 缺陷按严重度 → 最该改的三处 → 没检查什么。不打总分；原稿数字不“顺手修正”，怀疑有误写进 `open_questions`。
 
 ## 七、交付回复
 
@@ -114,15 +113,3 @@ python scripts/revise.py 原稿.pptx edit.json out.pptx                 # 改稿
 4. **视觉复核**：看了哪些页（含灰度），发现什么，做了哪些修正；没做就写没做及原因。
 5. **待人工确认**：谁、在什么环境、看哪几页。
 6. **假设与未决**：示例数据、未清权素材、`open_questions`、剩余 S3/S4。
-
-## 八、按需加载
-
-| 要做的事 | 读 |
-| --- | --- |
-| 想概念、定艺术指导、排叙事、判断整稿 | `references/design.md` 一至三 |
-| 定构图、选图表、做数据视觉 | `references/design.md` 四、五 |
-| 排版、中文字体、色彩方向 | `references/design.md` 六、七 |
-| 规划图片、写出图简报与提示词、验收生成图 | `references/imagery.md` |
-| 诊断症状、评审结论、实战教训 | `references/design.md` 八至十 |
-| 用 scaffold 起稿、free 自由构图、第一次写 plan、字段被拒 | `references/build.md` 开头三节 |
-| 读诊断码、改稿、能力边界 | `references/build.md` |

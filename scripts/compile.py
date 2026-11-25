@@ -29,7 +29,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import write_atomic, EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import show, write_atomic, EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import stable_xlsx as _stable_xlsx, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -508,15 +508,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     guard_paths(rep, {"plan": plan_path}, [("输出文件", Path(args.out), ".pptx"), ("--report", Path(args.report) if args.report else None, ".json")], args.force)
     plan = load_plan(plan_path, rep)
     if plan is None or rep.blocked:
-        for issue in rep.items:
-            print(issue)
+        show(rep.items)
         print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")
         return 2
 
     rep.extend(validate(plan, asset_root, args.production))
     rep.extend(design_signals(plan))
-    for issue in rep.items:
-        print(issue)
+    show(rep.items)
     if rep.blocked:
         print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")
         if args.report:

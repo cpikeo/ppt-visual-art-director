@@ -1081,6 +1081,11 @@ def _render_text(pdf_page) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
                               "last": i == len(blines) - 1, "n_lines": len(blines)})
             for span in line.get("spans", []):
                 sx0, sy0, sx1, sy1 = span.get("bbox") or line["bbox"]
+                if span.get("origin") and span.get("size"):
+                    # span.bbox 是字体 ascent+descent 的行盒（Noto CJK 约 1.45 em），巨型数字会比墨迹高出一截而被误报越框；
+                    # 越界判断按墨迹范围：基线上 0.95 em、基线下 0.2 em 之内。
+                    oy, sz = span["origin"][1], span["size"]
+                    sy0, sy1 = max(sy0, oy - 0.95 * sz), min(sy1, oy + 0.2 * sz)
                 spans.append({"text": span.get("text", ""), "font": span.get("font", ""),
                               "bbox": (sx0 / 72, sy0 / 72, sx1 / 72, sy1 / 72)})
     return lines, spans
@@ -1594,14 +1599,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                   [("--report", Path(args.report) if args.report else None, ".json")], args.force,
                   dirs={"--render-dir": render_arg})
     if rep.blocked:
-        for issue in rep.items:
-            print(issue)
+        M.show(rep.items)
         print("\n核验中止：路径会覆盖输入或工作目录，未写任何文件。")
         return 2
     plan = M.load_plan(plan_path, rep)
     if plan is None or rep.blocked:
-        for issue in rep.items:
-            print(issue)
+        M.show(rep.items)
         print("\nplan 本身不合契约：先修 plan，核验才有意义。")
         return 2
 
@@ -1637,8 +1640,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     f.extend(obj_rep)
     f.extend(render_rep)
 
-    for issue in f.items:
-        print(issue)
+    M.show(f.items)
 
     # READY = 对象一致 + 渲染完成 + 声明字体都真实参与渲染。任一缺失只能是 PARTIAL：
     # 渲染缺失或字体被替换时，断行与宽度都只代表替代字体，不是目标环境结论。

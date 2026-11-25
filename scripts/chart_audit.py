@@ -15,7 +15,7 @@ XSD 只认枚举，认不出这条，但 PowerPoint 会提示“需要修复”�
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from lxml import etree
 

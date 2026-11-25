@@ -314,7 +314,6 @@ def slide_part_names(pptx: Path) -> List[str]:
     这里直接读原包，不经过 python-pptx（它访问 slides 时会重新编号）。
     """
     import zipfile
-    from lxml import etree
 
     p_ns = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
     r_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -378,7 +377,6 @@ def collect_fonts(shapes, fonts: set, sizes: set) -> None:
 
 def theme_fonts(prs) -> Dict[str, Any]:
     """主题字族：改稿时判断"原稿本来想用什么字"，run 上的字体名可能只是继承。"""
-    from lxml import etree
 
     out: Dict[str, Any] = {}
     for master in prs.slide_masters:
@@ -1643,8 +1641,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     for item in log:
         print(f"  {item['op']:>2}. {item['kind']:<10} 第 {item['page']} 页"
               f"{' · ' + item['target'] if item.get('target') else ''}")
-    for issue in rep.items:
-        print(issue)
+    M.show(rep.items)
     print(f"保留核对：{status}   问题 {rep.count('HARD')}")
     print(f"页数 {len(after['pages'])}｜母版 {after['masters']}｜版式 {after['layouts']}"
           f"｜包内 {facts['parts']['parts']} 部件（越界改动 {facts['parts']['changed']}／丢失 {facts['parts']['lost']}"
@@ -1665,8 +1662,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def _blocked(rep: M.Report) -> int:
-    for issue in rep.items:
-        print(issue)
+    M.show(rep.items)
     print(f"\n阻断：{rep.count('HARD')} 个硬错误，未写出文件。")
     return 2
 
