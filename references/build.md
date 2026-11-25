@@ -39,7 +39,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 | `recipe` | 默认 `role` | 必填 | 可选 | 讲法 |
 | --- | --- | --- | --- | --- |
-| `cover` | open | `title` | `sub` `kicker` `meta` `image` `dark` | 标题底对齐锚在 64% 线，字号随标题长度取不折行最大值，上方整块安静区 |
+| `cover` | open | `title` | `sub` `kicker` `meta` `image` `dark` | 标题底对齐锚在 64% 线，字号随标题长度取不折行最大值，上方整块安静区；有图且没写 `dark` 时按文字区真实像素明暗取墨色（`init --assets`）；折行标题自动平衡行宽，不留一两字的孤行 |
 | `statement` | hold | `title` | `sub` `dark` | 一句话占满视野，左侧一道竖线是唯一装饰 |
 | `section` | breathe | `title` | `number` `dark` | 暗场 + 巨型序号，换气与分章 |
 | `big_number` | build | `title` `number` `body` | `unit` `unit_scale` `note` `eyebrow` | 数字取放得进 7 栏的最大字号，正文被细线隔在右栏 |
@@ -56,7 +56,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 **`free` 的页级网格**：`grid` 缺省 12 栏 × 6 行（边距 x 0.8 / y 0.7，沟槽 0.25 / 0.2）；写整数 N 即 N 栏（如 5、8）；写对象 `{cols, rows, margin, margin_y, gutter, gutter_y}` 自定；写 `"none"` 则本页不用网格（再用 `cols`/`rows` 报 `E-OUTLINE`）。网格是选出来的构图工具，不同页可以不同。
 
-**`free` 的元素速记**（都可选，写了才换算，其余键原样交给 schema）：`cols:[起列,跨列]`→`x w`（按本页网格）；`rows:[起行,跨行]`→`y h`；`right:x`→以该 x 为右边；`size`＝档位名（`title body number caption hero`）或 pt；`fit:[最大pt,最小pt]`＝取不折行的最大字号；`ink`/`color`/`fill` 可写调色名（`ink ink2 muted quiet accent rule bg bg_alt`）；`bottom:y` 以该 y 为文字底边；`after:元素id`+`gap` 紧接上一元素下方；文字缺 `h` 由 `fit_height_in` 估出。要出血或错网格，直接写 `x w`。页级 `bg` 可写调色名或 `#hex`（如整页强调色场）。
+**`free` 的元素速记**（都可选，写了才换算，其余键原样交给 schema）：`cols:[起列,跨列]`→`x w`（按本页网格）；`rows:[起行,跨行]`→`y h`；`right:x`→以该 x 为右边；`size`＝档位名（`title body number caption hero`）或 pt；`fit:[最大pt,最小pt]`＝取不折行的最大字号；`ink`/`color`/`fill` 可写调色名（`ink ink2 muted quiet accent rule bg bg_alt`，组内子元素同样生效）；`bottom:y` 以该 y 为文字底边；`after:元素id`+`gap` 紧接上一元素下方；文字缺 `h` 由 `fit_height_in` 估出。要出血或错网格，直接写 `x w`。页级 `bg` 可写调色名或 `#hex`（如整页强调色场）。
 
 每页的 `eyebrow` 是眉题（小号、位于母题横线右侧）。outline 缺字段或 `recipe` 写错时，`scaffold.py init` 以 `E-OUTLINE` 逐条说明并退出 2，不写文件。
 

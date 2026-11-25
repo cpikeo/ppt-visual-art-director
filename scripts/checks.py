@@ -185,10 +185,7 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
                                     f"但 LibreOffice 会叠加自动间距显得更松、PowerPoint 里正常；全稿统一取一种并写进交付说明")
     return rep
 
-# 中西文间的手敲空格：字体自身的字距已够，空格宽度又因渲染器而异
-# （Noto CJK 空格约 0.22–0.26 em；LibreOffice 还会叠加中西文自动间距，实测明显偏松；宋体空格 0.5 em）。
-_CJK_SPACE = re.compile(r"[\u3400-\u9fff][ \u00a0]+[A-Za-z0-9]|[A-Za-z0-9%][ \u00a0]+[\u3400-\u9fff]")
-
+# 中西文间的手敲空格：字体自带字距已够，空格宽度又随渲染器而异（Noto CJK 约 0.22–0.26 em；宋体 0.5 em）。
 # 分级：单个普通 ASCII 空格是中文排版的常规做法（中西文之间加空格是通行排法，
 # PowerPoint 里也不显松），只在 LibreOffice 渲染中叠加自动间距才显松——这是渲染器相关的
 # 风格取舍，不是缺陷，降为 I-SPACE 提示；连续两个及以上空格、不断行空格（ ）
@@ -220,6 +217,10 @@ def classify_cjk_spaces(content: Any) -> Tuple[List[str], List[str]]:
     return hard, soft
 
 
+# 中文语境里的半角标点：与汉字相邻的 , ; : ! ? 在多数字体里前后留白异常，渲染后像“字 , 字”
+_ASCII_PUNCT = re.compile(r"[㐀-鿿][,;:!?]|[,;:!?](?=[㐀-鿿])")
+
+
 def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> None:
     content = el.get("content", "")
     if not str(content).strip():
@@ -230,6 +231,10 @@ def check_text(plan, page, el, loc, ew, eh, asset_root: Path, rep: Report) -> No
     need = fit_height_in(el, st, ew)
     if need > eh * LIMITS["type"]["fit_tolerance"]:
         rep.soft("W-FIT", loc, f"按 {st['size']:g}pt 估算需 {need:.2f}in，框高 {eh:.2f}in：先编辑文案，再加宽/拆页")
+    punct = _ASCII_PUNCT.findall(str(content))
+    if punct:
+        rep.soft("W-PUNCT", loc, f"汉字旁用了半角标点（{'、'.join(dict.fromkeys(punct))[:20]}）：渲染时前后留白不稳，"
+                                 f"改全角（，；：！？）；西文与数字之间的半角不受影响")
     hard_space, soft_space = classify_cjk_spaces(content)
     if hard_space:
         rep.soft("W-SPACE", loc, f"中文与数字/西文之间有手敲空格（{'、'.join(hard_space[:3])}）："

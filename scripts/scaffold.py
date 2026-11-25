@@ -212,7 +212,8 @@ def make_grid(spec: Any) -> Tuple[Any, Any, int, int]:
 
 
 class Ctx:
-    def __init__(self, outline: Dict[str, Any]):
+    def __init__(self, outline: Dict[str, Any], asset_root: Optional[Path] = None):
+        self.asset_root = asset_root
         design = outline.get("design") or {}
         overrides = {k: design[k] for k in ("ground", "accent", "data", "data_dark") if design.get(k)}
         self.system = design_system(design.get("seed", "#1F3A5F"), design.get("mood", "auto"),
@@ -253,6 +254,48 @@ class Ctx:
             size -= 2
         return int(lo)
 
+    def balanced_w(self, kind: str, content: str, w: float, size: float, bg: str, **kw: Any) -> float:
+        """真折行时，在行数不变的前提下收窄到最窄宽度（text-wrap: balance），避免末行只剩一两个字。
+        是否折行按 need() 同一把尺（98% 宽）判断，估成一行的不动；收窄按大字安全系数（86%）量，再留 8% 余量。"""
+        def lines(width: float, safety: float) -> int:
+            el: Dict[str, Any] = {"id": "x", "type": kind, "content": content, "pad_in": 0,
+                                  "font_size": size, "x": 0, "y": 0, "w": width, "h": 1}
+            el.update(kw)
+            return sum(M.fit_lines(el, self._style(el, bg), width * safety))
+
+        if lines(w, 0.98) < 2:
+            return w
+        n = lines(w, FIT_SAFETY)
+        lo, hi = w * 0.5, w
+        for _ in range(12):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if lines(mid, FIT_SAFETY) > n else (lo, mid)
+        return round(min(hi * 1.08, w), 3)
+
+    def image_tone(self, image: Dict[str, Any], box: Tuple[float, float, float, float]) -> Optional[bool]:
+        """封面文字区下方图像的明暗：True＝偏暗（用浅墨），False＝偏亮（用深墨），读不了图返回 None。
+        box = 文字区（英寸）；按 cover 裁切还原到原图坐标，只取平均相对亮度。"""
+        if not self.asset_root:
+            return None
+        path = M.resolve_asset(self.asset_root, image.get("id", ""))
+        if not path:
+            return None
+        try:
+            from PIL import Image
+            with Image.open(path) as im:
+                im = im.convert("L")
+                pw, ph = im.size
+                l, r, t, b = M._crop_geometry(pw, ph, W, H, image.get("focus"))
+                vx0, vy0, vx1, vy1 = pw * l, ph * t, pw * (1 - r), ph * (1 - b)
+                x, y, w, h = box
+                crop = im.crop((int(vx0 + (vx1 - vx0) * x / W), int(vy0 + (vy1 - vy0) * y / H),
+                                int(vx0 + (vx1 - vx0) * (x + w) / W), int(vy0 + (vy1 - vy0) * (y + h) / H)))
+                crop = crop.resize((24, 24))
+                mean = sum(crop.tobytes()) / (24 * 24 * 255.0)
+        except Exception:
+            return None
+        return mean < 0.5
+
     def text(self, eid: str, kind: str, x: float, y: float, w: float, content: str, bg: str,
              h: Optional[float] = None, **kw: Any) -> Dict[str, Any]:
         el: Dict[str, Any] = {"id": eid, "type": kind, "content": content, "pad_in": 0}
@@ -286,7 +329,9 @@ def _head(c: Ctx, p: Dict[str, Any], dark: bool, span: int = 10, start: int = 1,
     if p.get("eyebrow"):
         els.append(c.text("eyebrow", "caption", x + off, MY - 0.11, w - off, p["eyebrow"], pal["bg"],
                           font_size=c.sz["caption"], color=pal["muted"], letter_spacing_pt=1.2, h=0.3))
-    els.append(c.text("t", "title", x, TOP, w, p["title"], pal["bg"], font_size=size or c.sz["title"],
+    tsize = size or c.sz["title"]
+    tw = c.balanced_w("title", p["title"], w, tsize, pal["bg"], line_spacing=1.12)
+    els.append(c.text("t", "title", x, TOP, tw, p["title"], pal["bg"], font_size=tsize,
                       color=pal["ink"], line_spacing=1.12))
     return els
 
@@ -319,15 +364,20 @@ def _image_el(spec: Dict[str, Any], x: float, y: float, w: float, h: float) -> D
 def r_cover(c: Ctx, p: Dict[str, Any]):
     """标题底边锚在 64% 水平线（valign 底对齐，框高估不准也不会漂），上方整块留给安静区。
     字号按标题长度取“不折行的最大字号”，短标题就大，长标题自动收。"""
-    dark = bool(p.get("dark", True))
+    span = 8 if p.get("image") else 10
+    x, w = col(1, span)
+    if p.get("dark") is not None:
+        dark = bool(p["dark"])
+    else:   # 没写就看文字区下的真实像素：亮图配深墨，暗图配浅墨；无图或读不了图维持深底
+        tone = c.image_tone(p["image"], (x, H * 0.25, w, H * 0.5)) if p.get("image") else None
+        dark = True if tone is None else tone
     pal = c.pal(dark)
     els: List[Dict[str, Any]] = []
     if p.get("image"):
         els.append(_image_el(p["image"], 0, 0, W, H))
-    span = 8 if p.get("image") else 10
-    x, w = col(1, span)
     size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["hero"] * 1.3, c.sz["hero"] * 0.8,
                     line_spacing=1.08, letter_spacing_pt=-0.5)
+    w = c.balanced_w("title", p["title"], w, size, pal["bg"], line_spacing=1.08, letter_spacing_pt=-0.5)
     t = c.text("t", "title", x, 0, w, p["title"], pal["bg"], font_size=size, color=pal["ink"],
                line_spacing=1.08, letter_spacing_pt=-0.5, valign="bottom")
     anchor = H * 0.64
@@ -354,6 +404,7 @@ def r_statement(c: Ctx, p: Dict[str, Any]):
     tx = x + 0.45
     size = c.fit_pt("title", p["title"], w - 0.45, pal["bg"], c.sz["hero"] * 1.35, c.sz["hero"] * 0.8,
                     line_spacing=1.1)
+    w = c.balanced_w("title", p["title"], w - 0.45, size, pal["bg"], line_spacing=1.1) + 0.45
     t = c.text("t", "title", tx, 0, w - 0.45, p["title"], pal["bg"], font_size=size, color=pal["ink"],
                line_spacing=1.1)
     sub_h = 0.0
@@ -552,7 +603,8 @@ def r_close(c: Ctx, p: Dict[str, Any]):
     pal = c.pal(dark)
     x, w = col(1, 9)
     size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["title"] + 14, c.sz["title"], line_spacing=1.1)
-    t = c.text("t", "title", x, H * 0.27, w, p["title"], pal["bg"], font_size=size, color=pal["ink"],
+    tw = c.balanced_w("title", p["title"], w, size, pal["bg"], line_spacing=1.1)
+    t = c.text("t", "title", x, H * 0.27, tw, p["title"], pal["bg"], font_size=size, color=pal["ink"],
                line_spacing=1.1)
     els = [_bar(c, dark, x, t["y"] - 0.45), t]
     if p.get("items"):
@@ -592,22 +644,30 @@ def r_free(c: Ctx, p: Dict[str, Any]):
     gcol, grow, _n, _r = make_grid(p.get("grid"))
     def tok(v: Any) -> Any:
         return pal[v] if isinstance(v, str) and v in pal else v
-    out: List[Dict[str, Any]] = []
-    by_id: Dict[str, Dict[str, Any]] = {}
-    for i, spec in enumerate(p["els"], 1):
-        el = {k: v for k, v in spec.items() if k not in ("cols", "rows", "size", "fit", "ink", "bottom", "right", "after", "gap")}
-        el.setdefault("id", f"e{i}")
-        kind = el.setdefault("type", "text")
+
+    def paint(el: Dict[str, Any]) -> Dict[str, Any]:
+        """调色名在所有会写颜色的地方一致生效：color/fill、runs、描边、渐变，以及组内子元素（递归）。"""
+        el = dict(el)
         for key in ("color", "fill"):
             if key in el:
                 el[key] = tok(el[key])
-        # 调色名在所有会写颜色的地方一致生效：runs、描边、渐变（此前只认 color/fill/ink，写在别处会被 schema 拒绝）
         if isinstance(el.get("runs"), list):
             el["runs"] = [dict(r, color=tok(r["color"])) if isinstance(r, dict) and "color" in r else r for r in el["runs"]]
         if isinstance(el.get("stroke"), dict) and "color" in el["stroke"]:
             el["stroke"] = dict(el["stroke"], color=tok(el["stroke"]["color"]))
         if isinstance(el.get("gradient"), dict):
             el["gradient"] = {k: (tok(v) if k in ("from", "to") else v) for k, v in el["gradient"].items()}
+        if isinstance(el.get("elements"), list):
+            el["elements"] = [paint(ch) if isinstance(ch, dict) else ch for ch in el["elements"]]
+        return el
+
+    out: List[Dict[str, Any]] = []
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for i, spec in enumerate(p["els"], 1):
+        el = {k: v for k, v in spec.items() if k not in ("cols", "rows", "size", "fit", "ink", "bottom", "right", "after", "gap")}
+        el.setdefault("id", f"e{i}")
+        kind = el.setdefault("type", "text")
+        el = paint(el)
         if kind == "chart" and isinstance(el.get("chart"), dict):
             # 暗场上的图表用暗场数据色序列（与 chart 配方同一来源），作者可用 chart.palette 覆盖
             el["chart"] = dict(el["chart"])
@@ -720,10 +780,10 @@ def validate_outline(outline: Dict[str, Any]) -> List[str]:
     return errs
 
 
-def build_plan(outline: Dict[str, Any]) -> Dict[str, Any]:
+def build_plan(outline: Dict[str, Any], asset_root: Optional[Path] = None) -> Dict[str, Any]:
     """outline → plan。scaffold 只做几何与色值的算术：作者没写的设计判断（focus、构图理由、节奏）
     一律留成 PENDING 并把页标成 draft，不拿配方说明或标题冒充判断；作者两者都写了才算 judged。"""
-    ctx = Ctx(outline)
+    ctx = Ctx(outline, asset_root)
     plan: Dict[str, Any] = {k: v for k, v in outline.items() if k not in ("design", "pages")}
     plan["schema_version"] = M.SCHEMA_VERSION
     plan["fonts"] = ctx.fonts
@@ -818,6 +878,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     s2 = sub.add_parser("init", help="outline.json → plan.json 初稿（设计判断留 draft）")
     s2.add_argument("outline")
     s2.add_argument("out")
+    s2.add_argument("--assets", help="素材根（封面按图像明暗取墨色时读取；缺省取 outline 同级 assets/，否则 outline 所在目录）")
     s2.add_argument("--force", action="store_true", help="允许替换已存在的输出（仍不得覆盖输入、不经符号链接）")
     s3 = sub.add_parser("migrate", help="旧版 plan.json → 当前 schema_version，不就地改写")
     s3.add_argument("plan")
@@ -867,7 +928,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"\n阻断：{len(errs)} 个 outline 问题，未写出文件。")
         return 2
     try:
-        plan = build_plan(data)
+        root = Path(a.assets) if a.assets else (src.parent / "assets" if (src.parent / "assets").is_dir() else src.parent)
+        plan = build_plan(data, root)
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         print(f"[HARD] E-OUTLINE 无法生成 plan：{type(exc).__name__}: {exc}")
         return 2
