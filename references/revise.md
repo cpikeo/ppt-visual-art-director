@@ -24,7 +24,7 @@
 | `line` | `color` `width_pt` `dash` `hide` |
 | `order` | `to`（`back`／`front`） |
 | `image` | `image_id` |
-| `chart_data` | `data`（不改系列数与系列名；组合图不支持） |
+| `chart_data` | `data`、可选 `unit`（不改系列数与系列名；组合图不支持；数据契约与新建图表同一实现 `model.chart_data_problems`：重名、非有限、值数、饼/环负值与合计为 0 均 `E-OPS`，% 合计≠100 给 `W-SUM`） |
 | `delete` | — |
 | `background` | `color`（按页） |
 

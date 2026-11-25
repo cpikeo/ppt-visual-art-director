@@ -29,7 +29,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import show, write_atomic, EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import show, write_atomic, place_atomic, temp_beside, EMU, LIST_INDENT_IN, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import stabilize_package, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
 
 
@@ -382,7 +382,7 @@ def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
     stabilize_package(path, replace={"docProps/app.xml": xml.encode("utf-8")})
 
 
-def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
+def build(plan: Dict[str, Any], asset_root: Path, out: Path, force: bool = False) -> None:
     from pptx import Presentation
     from pptx.util import Inches
     from pptx.dml.color import RGBColor
@@ -418,15 +418,15 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     prs.core_properties.author = "ppt-visual-art-director"
     brief = plan.get("brief") or {}
     prs.core_properties.comments = (brief.get("concept") or "")[:500]
-    # 临时文件名带进程号：既不覆盖用户同名文件，也不会两次并发编译互相踩踏。
-    tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
+    # 临时件由 mkstemp 独占创建（不可预测、并发互不踩踏）；落盘走 model.place_atomic：默认 link 不覆盖，--force 才 replace。
+    tmp = temp_beside(out)
     try:
         prs.save(str(tmp))
         _normalize_app_props(tmp, plan)
         problems = package_problems(tmp, check_suffix=False)   # 先验临时件再落盘：不合格的包不得以交付名出现（与 revise.py 一致）
         if problems:
             raise PackageError("；".join(problems))
-        os.replace(tmp, out)
+        place_atomic(tmp, out, force)
     finally:
         if tmp.exists():
             tmp.unlink()
@@ -439,7 +439,7 @@ def error_deck_path(out: Path) -> Path:
     return out.with_name(out.stem + ".error.pptx")
 
 
-def write_error_deck(out: Path, message: str) -> None:
+def write_error_deck(out: Path, message: str, force: bool = False) -> None:
     """诊断稿：同样先写临时文件再原子替换，写到一半失败不留半成品。"""
     from pptx import Presentation
     from pptx.util import Inches, Pt
@@ -453,10 +453,10 @@ def write_error_deck(out: Path, message: str) -> None:
     for para in tf.paragraphs:
         for run in para.runs:
             run.font.size = Pt(14 if run.text.startswith("编译失败") else 11)
-    tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
+    tmp = temp_beside(out)
     try:
         prs.save(str(tmp))
-        os.replace(tmp, out)
+        place_atomic(tmp, out, force)
     finally:
         if tmp.exists():
             tmp.unlink()
@@ -517,7 +517,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     try:
-        build(plan, asset_root, out_path)
+        build(plan, asset_root, out_path, args.force)
+    except FileExistsError:
+        print(f"[HARD] E-EXIST {out_path} 在编译期间已被创建；未覆盖（确认要替换再加 --force）")
+        return 2
     except PackageError as exc:
         print(f"[HARD] E-FORMAT 成品包不合格，交付路径未写：{exc}")
         return 3
@@ -525,7 +528,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         error_path, note = diagnostic_target(plan_path, out_path, report_path, args.force)
         if error_path is not None:
             try:
-                write_error_deck(error_path, f"{type(exc).__name__}: {exc}")
+                write_error_deck(error_path, f"{type(exc).__name__}: {exc}", args.force)
             except Exception as diag_exc:  # 诊断稿本身写失败不能掩盖原始错误
                 note = f"诊断文件写入失败：{type(diag_exc).__name__}: {diag_exc}"
         print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {str(exc)[:200]}\n{note}")

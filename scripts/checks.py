@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 
-from model import non_finite_series, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import chart_data_problems, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
 def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -> Report:
@@ -394,27 +394,11 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
         return
 
     series = data.get("series") or []
-    # 数据契约：名称是 color_map、combo_line_series、图例与核验的唯一键，重名会让映射静默指向第一个。
-    names = [str(x.get("name")) for x in series]
-    dup = sorted({n for n in names if names.count(n) > 1})
-    if dup:
-        rep.hard("E-CHART", loc, f"系列名重复 {dup}：名称是颜色、组合线与图例的唯一键")
-    cats_all = [str(c) for c in (data.get("categories") or [])]
-    dup_c = sorted({c for c in cats_all if cats_all.count(c) > 1})
-    if dup_c:
-        rep.hard("E-CHART", loc, f"类别名重复 {dup_c}：类别是饼/环取色与 color_map 的键")
-    for name in non_finite_series(series):
-        rep.hard("E-CHART", loc, f"系列「{name}」含非有限数值（NaN / Infinity / 非数字）")
-    if kind in ("pie", "donut"):
-        # 机器能回算的口径：以 % 表示的构成，合计应为 100；不是 100 要么数据漏项、要么需要“其他”扇区
-        for s in series:
-            unit = str(chart.get("unit") or s.get("unit") or "")
-            vals = [v for v in s.get("values", []) if isinstance(v, (int, float)) and not isinstance(v, bool)]
-            if vals and sum(vals) <= 0:
-                rep.hard("E-CHART", loc, f"系列「{s.get('name')}」各扇区合计为 0：占比无定义，改用表格或补数据")
-                continue
-            if unit.strip() in ("%", "％", "百分比") and vals and abs(sum(vals) - 100) > 0.5:
-                rep.soft("W-SUM", loc, f"系列「{s.get('name')}」各扇区合计 {sum(vals):g}%，不是 100%：补“其他”或核对口径；不要让读者自己发现缺口")
+    # 数据契约（重名、非有限、值数、饼/环、百分比堆叠）与既有图表改数共用 model.chart_data_problems
+    for severity, code, message in chart_data_problems(
+            kind, data.get("categories"), series, str(chart.get("unit") or ""),
+            chart.get("stacked"), chart_flags(chart)["data_labels"]):
+        (rep.hard if severity == "HARD" else rep.soft)(code, loc, message)
     if kind == "scatter":
         if "points" not in (series[0] if series else {}):
             rep.hard("E-CHART", loc, "scatter 的 data 需为 series[].points=[[x,y],…]")
@@ -427,16 +411,7 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
         if "categories" not in data:
             rep.hard("E-CHART", loc, f"{kind} 的 data 需为 categories/series")
             return
-        cats = data["categories"]
-        for s in series:
-            if len(s["values"]) != len(cats):
-                rep.hard("E-CHART", loc, f"系列「{s['name']}」有 {len(s['values'])} 个值，类别 {len(cats)} 个")
         if kind in ("pie", "donut"):
-            if len(series) != 1:
-                rep.hard("E-CHART", loc, f"{kind} 只能单系列，现有 {len(series)} 个")
-            for s in series:
-                if any(v < 0 for v in s["values"]):
-                    rep.hard("E-CHART", loc, "饼/环不能有负值")
             # 读数闭环用有效开关（model.chart_flags）判断，与编译器、核验器同一份缺省；
             # legend 元素（for_chart 指向本图）同样算类别来源。
             has_legend_el = any(e.get("type") == "legend" and str(e.get("for_chart")) == str(el.get("id"))
@@ -476,18 +451,6 @@ def check_chart(loc: str, el: Dict[str, Any], plan: Dict[str, Any], page: Dict[s
             rep.hard("E-CHART", loc, "百分比堆叠只有 bar 支持")
         if len(series) < 2:
             rep.hard("E-CHART", loc, "堆叠至少需要两个系列")
-        if stacked == "percent" and kind == "bar":
-            bad = []
-            for j in range(len(data["categories"])):
-                total = sum(float(s["values"][j]) for s in series)
-                if abs(total - 100) > 0.5:
-                    bad.append(f"{data['categories'][j]}={total:g}")
-            if bad:
-                message = f"百分比堆叠要求每列合计 100，实际 {bad}；图形会归一化而直标仍是原值"
-                if chart_flags(chart)["data_labels"]:
-                    rep.hard("E-CHART", loc, message)
-                else:
-                    rep.soft("W-CHART", loc, message)
     if chart.get("horizontal") and kind != "bar":
         rep.hard("E-CHART", loc, "horizontal 只用于 bar")
     combo = chart.get("combo_line_series") or []

@@ -557,7 +557,7 @@ OP_KEYS = {
     "line": {"color", "width_pt", "dash", "hide"},
     "order": {"to"},
     "image": {"image_id"},
-    "chart_data": {"data"},
+    "chart_data": {"data", "unit"},
     "delete": set(),
     "background": {"color"},
 }
@@ -784,7 +784,7 @@ def apply_image(shape, path: Path) -> None:
     blip.set(qn("r:embed"), rId)
 
 
-def apply_chart(shape, op: Dict[str, Any]) -> None:
+def apply_chart(shape, op: Dict[str, Any], rep: Optional[M.Report] = None) -> None:
     from pptx.chart.data import CategoryChartData
 
     if not getattr(shape, "has_chart", False):
@@ -798,15 +798,25 @@ def apply_chart(shape, op: Dict[str, Any]) -> None:
     cats, series = data.get("categories") or [], data.get("series") or []
     if not cats or not series:
         raise M.BadOp("chart_data 需要 data.categories 与 data.series")
-    # 与新建图表同一条数据契约（plan 校验 checks.py 用的也是 model.non_finite_series）。
-    bad = M.non_finite_series(series)
-    if bad:
-        raise M.BadOp(f"系列 {bad} 含非有限数值（NaN / Infinity / 布尔 / 非数字）；与新建图表的 E-CHART 规则一致，拒绝写入")
-    names = [str(s.get("name")) for s in series if s.get("name")]
-    dup = sorted({n for n in names if names.count(n) > 1})
-    if dup:
-        raise M.BadOp(f"系列名重复 {dup}：名称是颜色与图例的唯一键")
     existing = [s.name for s in chart.plots[0].series]
+    series = [{**s, "name": s.get("name") or (existing[i] if i < len(existing) else None)} for i, s in enumerate(series)]
+    # 与新建图表同一条数据契约：model.chart_data_problems（checks.check_chart 用的也是它）。
+    el = chart.plots[0]._element
+    tag = etree.QName(el).localname
+    kind = {"pieChart": "pie", "doughnutChart": "donut", "barChart": "bar", "lineChart": "line", "areaChart": "area"}.get(tag, tag)
+    grouping = el.find(M.qn("c:grouping"))
+    stacked = "percent" if grouping is not None and grouping.get("val") == "percentStacked" else None
+    data_labels = any(n.get("val") in ("1", "true") for n in chart._chartSpace.iter(M.qn("c:showVal")))
+    # 单位不在 chart 部件里：以 op.unit 为准；饼/环原图合计为 100 视为百分比构成
+    unit = str(op.get("unit") or "")
+    if not unit and kind in ("pie", "donut"):
+        old_vals = [float(v) for v in chart.plots[0].series[0].values if v is not None]
+        unit = "%" if old_vals and abs(sum(old_vals) - 100) <= 0.5 else ""
+    for severity, code, message in M.chart_data_problems(kind, cats, series, unit, stacked, data_labels):
+        if severity == "HARD":
+            raise M.BadOp(f"{code} {message}（与新建图表同一条数据契约，拒绝写入）")
+        if rep is not None:
+            rep.soft(code, "chart_data", message)
     if len(series) != len(existing):
         raise M.BadOp(f"系列数 {len(series)} ≠ 原图 {len(existing)}；加减系列会破坏配色与格式，请重建")
     # 类别顺序与名称决定颜色↔类别的绑定（扇区按 idx 着色、图例按 idx 取色）。
@@ -958,7 +968,7 @@ def run_ops(prs, ops: List[Dict[str, Any]], asset_root: Path, log: List[Dict[str
                 raise M.BadOp(f"{where}: 找不到素材 {op['image_id']!r}（素材根 {asset_root}）")
             apply_image(shape, path)
         elif kind == "chart_data":
-            apply_chart(shape, op)
+            apply_chart(shape, op, rep)
             movable |= _chart_parts(shape)
         elif kind == "order":
             apply_order(shape, op)
@@ -1602,7 +1612,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 3
 
     # 先落到临时件：保留核对不通过时，交付路径一个字节都不动。
-    tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
+    tmp = M.temp_beside(out)
     try:
         prs.save(str(tmp))
         X.stabilize_package(tmp, {str(n).lstrip("/") for n in movable})
@@ -1629,13 +1639,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     compare_slide_rels(src, tmp, before_slides, after_slides, touched_pages, rep)
     if not rep.blocked:
         post_check(after, rep)
-        os.replace(tmp, out)
+        try:
+            M.place_atomic(tmp, out, args.force)
+        except FileExistsError:
+            tmp.unlink(missing_ok=True)
+            print(f"[HARD] E-EXIST {out} 在改写期间已被创建；未覆盖（确认要替换再加 --force）")
+            return 2
     else:
         rejected = out.with_name(out.stem + ".preserve-failed.pptx")
-        # 诊断稿也守同一条规则：不压输入，也不静默覆盖已有文件（--force 才替换）
-        if rejected in (src, ops_path) or (rejected.exists() and not args.force):
+        # 诊断稿也守同一条规则：不压输入，也不静默覆盖已有文件（--force 才替换）；撞名则改用唯一名
+        if rejected in (src, ops_path):
             rejected = out.with_name(f"{out.stem}.{os.getpid()}.preserve-failed.pptx")
-        os.replace(tmp, rejected)
+        try:
+            M.place_atomic(tmp, rejected, args.force)
+        except FileExistsError:
+            rejected = out.with_name(f"{out.stem}.{os.getpid()}.preserve-failed.pptx")
+            M.place_atomic(tmp, rejected, False)
         facts["rejected"] = str(rejected)
     status = "BLOCK" if rep.blocked else "READY"
 

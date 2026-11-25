@@ -21,7 +21,7 @@
 | `E-OVERLAP` | 实质重叠且下层未声明承载；多半忘了 `overlap_allowed` |
 | `W-DOMINANT` | `focus_element` 的粗估视觉重量（文字＝字号²×字数，图/图表/色块＝面积）没有明显超过配角；只比尺度，不判断好看 |
 | `E-CHART` `W-CHART` `W-NOTE` `W-SUM` | 口径、单位、截轴说明、颜色映射、系列色沉进承载面、饼/环合计非 100（为 0 即阻断）、饼/环无类别来源；改措辞、拆图、补映射，错色没有放行开关 |
-| `W-GRAY` `V-GRAY` | 任意两系列灰度 ΔL* 低于 `chart.min_series_delta_lstar`；拉开明度，或直标、换线型与标记 |
+| `W-GRAY` `V-GRAY` | 任意两系列灰度 ΔL* 低于 `chart.min_series_delta_lstar`（limits.json，现为 9.5，scaffold 色板名义 10 留损耗）；拉开明度，或直标、换线型与标记 |
 | `V-LABEL-INK` `V-LABEL-POS` `V-MARKER` `V-READOUT` | 成品图表被改过或编译链有误（墨色对比 < 4.5、`dLblPos` 非法、散点 marker 不可见、饼/环读不到类别）；重新编译，不手改成品 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx`（含 DTD/实体、越界部件名、体积异常）；输出改 `.pptx`，宏稿人工另存 |
 | `E-PRESERVE` | 定点编辑保留核对不通过；看 `preservation` 定位越界 |

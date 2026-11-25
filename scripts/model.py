@@ -7,6 +7,7 @@ compile / verify / revise 共用这一份实现；这里不依赖 python-pptx，
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import math
@@ -346,6 +347,55 @@ def non_finite_series(series: List[Dict[str, Any]]) -> List[str]:
         if not all(is_finite_number(v) for v in flat):
             bad.append(str(s.get("name")))
     return bad
+
+
+def chart_data_problems(kind: str, categories: Optional[List[Any]], series: List[Dict[str, Any]], unit: str = "",
+                        stacked: Any = None, data_labels: bool = False) -> List[Tuple[str, str, str]]:
+    """图表数据契约的唯一实现：新建（checks.check_chart）与既有图表改数（revise.apply_chart）共用。
+
+    返回 [(严重度 HARD|SOFT, 诊断码, 说明)]。规则：系列名与类别名唯一、数值有限、值数=类别数；
+    饼/环单系列、不得为负、合计不得为 0、以 % 表示时合计应为 100；百分比堆叠每列合计应为 100。
+    """
+    out: List[Tuple[str, str, str]] = []
+    names = [str(s.get("name")) for s in series]
+    cnt = collections.Counter(names)
+    if any(c > 1 for c in cnt.values()):
+        out.append(("HARD", "E-CHART", f"系列名重复 {sorted(n for n, c in cnt.items() if c > 1)}：名称是颜色、组合线与图例的唯一键"))
+    cats = [str(c) for c in (categories or [])]
+    ccnt = collections.Counter(cats)
+    if any(c > 1 for c in ccnt.values()):
+        out.append(("HARD", "E-CHART", f"类别名重复 {sorted(n for n, c in ccnt.items() if c > 1)}：类别是饼/环取色与 color_map 的键"))
+    for name in non_finite_series(series):
+        out.append(("HARD", "E-CHART", f"系列「{name}」含非有限数值（NaN / Infinity / 布尔 / 非数字）"))
+    if categories is None:
+        return out
+    lengths_ok = True
+    for s in series:
+        n = len(s.get("values") or [])
+        if n != len(cats):
+            lengths_ok = False
+            out.append(("HARD", "E-CHART", f"系列「{s.get('name')}」有 {n} 个值，类别 {len(cats)} 个"))
+    if kind in ("pie", "donut"):
+        if len(series) != 1:
+            out.append(("HARD", "E-CHART", f"{kind} 只能单系列，现有 {len(series)} 个"))
+        for s in series:
+            vals = [v for v in (s.get("values") or []) if is_finite_number(v)]
+            if any(v < 0 for v in vals):
+                out.append(("HARD", "E-CHART", "饼/环不能有负值"))
+            if vals and sum(vals) <= 0:
+                out.append(("HARD", "E-CHART", f"系列「{s.get('name')}」各扇区合计为 0：占比无定义，改用表格或补数据"))
+            elif str(unit or s.get("unit") or "").strip() in ("%", "％", "百分比") and vals and abs(sum(vals) - 100) > 0.5:
+                out.append(("SOFT", "W-SUM", f"系列「{s.get('name')}」各扇区合计 {sum(vals):g}%，不是 100%：补“其他”或核对口径；不要让读者自己发现缺口"))
+    if stacked == "percent" and kind == "bar" and lengths_ok and not non_finite_series(series):
+        bad = []
+        for j, cat in enumerate(categories):
+            total = sum(float(s["values"][j]) for s in series)
+            if abs(total - 100) > 0.5:
+                bad.append(f"{cat}={total:g}")
+        if bad:
+            out.append(("HARD" if data_labels else "SOFT", "E-CHART" if data_labels else "W-CHART",
+                        f"百分比堆叠要求每列合计 100，实际 {bad}；图形会归一化而直标仍是原值"))
+    return out
 
 
 def chart_items(chart: Dict[str, Any]) -> List[str]:
@@ -1017,13 +1067,18 @@ def _xml_part_problems(path, infos) -> List[str]:
     """逐个 XML 部件：禁止 DTD/实体声明（XXE、实体膨胀），且必须可被安全解析；否则在入口以 E-FORMAT 拦下，而不是在深处抛栈。"""
     import zipfile
     out: List[str] = []
+    budget = LIMITS["package"]["max_xml_total_mb"] * 1024 * 1024   # 全包 XML 解压总预算：单件不大也可能有上万件
     with zipfile.ZipFile(path) as zf:
         for i in infos:
             if not i.filename.lower().endswith((".xml", ".rels")) or i.is_dir():
                 continue
-            if i.file_size > 64 * 1024 * 1024:  # OOXML 的 XML 部件远小于此；不把超大部件整块读进内存
-                out.append(f"部件 {i.filename} 解压后超过 64 MB，拒绝解析")
+            if i.file_size > LIMITS["package"]["max_xml_part_mb"] * 1024 * 1024:  # OOXML 的 XML 部件远小于此；不把超大部件整块读进内存
+                out.append(f"部件 {i.filename} 解压后超过 {LIMITS['package']['max_xml_part_mb']} MB，拒绝解析")
                 continue
+            budget -= i.file_size
+            if budget < 0:
+                out.append(f"XML 部件解压总量超过 {LIMITS['package']['max_xml_total_mb']} MB，停止解析")
+                break
             data = zf.read(i)
             if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
                 out.append(f"部件 {i.filename} 含 DTD/实体声明，拒绝解析（OOXML 不使用）")
@@ -1054,15 +1109,21 @@ def package_problems(path: Path, check_suffix: bool = True) -> List[str]:
             infos = zf.infolist()
             names = [i.filename for i in infos]
             unpacked = sum(i.file_size for i in infos)
-            types = parse_xml(zf.read("[Content_Types].xml"))
+            ct = zf.getinfo("[Content_Types].xml")
+            if ct.file_size > LIMITS["package"]["max_xml_part_mb"] * 1024 * 1024:
+                return problems + ["[Content_Types].xml 过大，拒绝解析"]
+            types = parse_xml(zf.read(ct))
     except (OSError, KeyError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
         return problems + [f"不是可读的 OOXML 包：{type(exc).__name__}"]
     if any(n.startswith("/") or ".." in n.replace("\\", "/").split("/") for n in names):
         problems.append("包内含越界部件名（绝对路径或 ..）")
+    if len(names) > LIMITS["package"]["max_entries"]:
+        problems.append(f"包内部件 {len(names)} 个，超过 {LIMITS['package']['max_entries']}，拒绝处理")
     if unpacked > LIMITS["package"]["max_unpacked_mb"] * 1024 * 1024:
         problems.append(f"解压后超过 {LIMITS['package']['max_unpacked_mb']} MB，拒绝处理（疑似压缩炸弹）")
-    if not problems:
-        problems.extend(_xml_part_problems(path, infos))
+    if any(not p.startswith("扩展名") for p in problems):
+        return problems          # 越界、超限的包不再往下解压：核验本身不能成为炸弹的引爆点
+    problems.extend(_xml_part_problems(path, infos))
     overrides = {o.get("PartName"): o.get("ContentType") or "" for o in types if o.get("PartName")}
     main_ct = overrides.get("/ppt/presentation.xml")
     if main_ct != PPTX_MAIN_CT:
@@ -1116,7 +1177,7 @@ def package_integrity(path: Path) -> List[str]:
             if bad:
                 out.append(f"部件 CRC 校验失败：{bad}")
             names = zf.namelist()
-            dup = sorted({n for n in names if names.count(n) > 1})
+            dup = sorted(n for n, c in collections.Counter(names).items() if c > 1)
             if dup:
                 out.append(f"包内有重名部件：{dup[:4]}")
             nameset = set(names)
@@ -1205,6 +1266,31 @@ def guard_paths(rep: "Report", inputs: Dict[str, Optional[Path]], outputs: List[
                 break
 
 
+def place_atomic(tmp: Path, dest: Path, force: bool = False) -> None:
+    """把已写好的临时文件放到交付名：所有 CLI（compile / revise / scaffold / verify）唯一的落点。
+
+    默认不覆盖：os.link 在目标已存在时原子失败（FileExistsError），关闭“检查后、放入前”被并发进程抢占的窗口；
+    force 才 os.replace。成功后临时文件已被移走或删除。
+    """
+    tmp, dest = Path(tmp), Path(dest)
+    if force:
+        os.replace(tmp, dest)
+    else:
+        os.link(tmp, dest)
+        tmp.unlink()
+
+
+def temp_beside(path: Path, suffix: str = ".part") -> Path:
+    """与目标同目录的唯一临时文件（O_EXCL 创建，不可预测、不经符号链接、并发互不踩踏）。调用方负责清理。"""
+    path = Path(path)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=suffix, dir=str(path.parent))
+    os.close(fd)
+    umask = os.umask(0)
+    os.umask(umask)
+    os.chmod(name, 0o666 & ~umask)   # mkstemp 默认 0600；交付物应取普通文件权限，而不是只有属主可读
+    return Path(name)
+
+
 def write_atomic(path: Path, data: bytes, force: bool = False, verify: Any = None) -> None:
     """所有 CLI 共用的落盘：同目录临时文件 → 写后回读校验 → 原子放入。
 
@@ -1225,11 +1311,7 @@ def write_atomic(path: Path, data: bytes, force: bool = False, verify: Any = Non
         err = verify(back) if verify else None
         if err:
             raise ValueError(f"写后校验失败：{err}")
-        if force:
-            os.replace(tmp, path)
-        else:
-            os.link(tmp, path)   # 已存在 → FileExistsError，不覆盖
-            tmp.unlink()
+        place_atomic(tmp, path, force)
     finally:
         if tmp.exists():
             tmp.unlink()
