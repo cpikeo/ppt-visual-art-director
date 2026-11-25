@@ -602,7 +602,7 @@ def _check_depth(rep: Report, pid: str, page: Dict[str, Any], ids: set) -> None:
                     pos[eid] = order.index(eid)
     # 只比顶层元素；组内顺序不参与
     ranked = sorted(pos.items(), key=lambda kv: kv[1])
-    for (a, ia), (b, ib) in zip(ranked, ranked[1:]):
+    for (a, _), (b, _) in zip(ranked, ranked[1:]):
         if rank[seen[a]] > rank[seen[b]]:
             rep.hard("E-LAYER", f"{pid}/{a}",
                      f"「{a}」声明为 {seen[a]}，却叠在 {seen[b]} 的「{b}」之下：叠放就是声明顺序，把它写到「{b}」之后")

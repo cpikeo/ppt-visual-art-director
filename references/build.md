@@ -15,7 +15,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 | `element` | `id` `type` | `additionalProperties: false`：拼错的键直接被拒；`x y w h` 除 `path`／`group` 外都要写 |
 | `chart` | `kind` `data` | `table` 的数据是 `data: {headers, rows}`，不是 `series`；`scatter` 用 `series[].points = [[x,y],…]` |
 
-`brief.editorial`（`amplify` `recede` `cut`）与 `brief.system`（`typography` `color` `space`）是可选的决策记录，schema 只校验形状；页 `depth`（`background` `midground` `foreground`，元素 id 数组）有引用与顺序校验。
+`brief.editorial`（`amplify` `recede` `cut`，字符串或字符串数组均可）与 `brief.system`（`typography` `color` `space`）是可选的决策记录，schema 只校验形状；页 `depth`（`background` `midground` `foreground`，元素 id 数组）有引用与顺序校验。
 
 ## 用 scaffold 起稿（默认路线）
 

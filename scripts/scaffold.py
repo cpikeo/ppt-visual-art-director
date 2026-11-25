@@ -791,7 +791,7 @@ def build_plan(outline: Dict[str, Any], asset_root: Optional[Path] = None) -> Di
     plan["palette"] = ctx.system["data"]
     pages, rhythm = [], []
     for i, p in enumerate(outline["pages"], 1):
-        fn, role, grammar, _req = RECIPES[p["recipe"]]
+        fn, role, _grammar, _req = RECIPES[p["recipe"]]
         res = fn(ctx, p)
         elements, dark = res[0], res[1]
         if p["recipe"] != "free" and (ctx.motif == "none" or p.get("motif") is False):   # free 页的元素 id 归作者，不与母题保留 id 撞车
@@ -844,6 +844,12 @@ def _emit(out: Path, data: Dict[str, Any], force: bool) -> bool:
     return True
 
 
+def schema_errors(plan: Dict[str, Any]) -> List[str]:
+    from jsonschema import Draft202012Validator
+    errs = sorted(Draft202012Validator(M.SCHEMA).iter_errors(plan), key=lambda e: list(map(str, e.absolute_path)))
+    return [f"{'/'.join(map(str, e.absolute_path)) or '(根)'}: {e.message[:300]}" for e in errs]
+
+
 def schema_fields(name: str) -> str:
     """plan.schema.json 的紧凑字段表（按需查看，不必通读 40KB 的 schema）：`key*`＝必填，类型/枚举一行一项。"""
     defs = M.SCHEMA.get("$defs", {})
@@ -851,16 +857,18 @@ def schema_fields(name: str) -> str:
     if node is None:
         return f"未知节点 {name}；可选：root {' '.join(sorted(defs))}"
 
-    def brief(s: Dict[str, Any]) -> str:
+    def brief(s: Dict[str, Any], deep: bool = True) -> str:
         if "$ref" in s:
             return s["$ref"].rsplit("/", 1)[-1]
         if "enum" in s:
             return "|".join(map(str, s["enum"]))
+        if "anyOf" in s:
+            return "|".join(brief(x, False) for x in s["anyOf"])
         t = s.get("type", "any")
         if t == "array":
-            return f"[{brief(s.get('items', {}))}]"
-        if t == "object" and s.get("properties"):
-            return "{" + ",".join(s["properties"]) + "}"
+            return f"[{brief(s.get('items', {}), False)}]"
+        if t == "object" and s.get("properties"):   # 嵌套对象带一层类型：写错数组/字符串是最常见的返工
+            return "{" + ",".join(f"{k}:{brief(v, False)}" if deep else k for k, v in s["properties"].items()) + "}"
         lim = "".join(f" {k}={s[k]}" for k in ("minimum", "maximum", "exclusiveMinimum", "minItems", "maxItems") if k in s)
         return f"{t}{lim}"
 
@@ -933,6 +941,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         plan = build_plan(data, root)
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         print(f"[HARD] E-OUTLINE 无法生成 plan：{type(exc).__name__}: {exc}")
+        return 2
+    bad = schema_errors(plan)
+    if bad:   # 在 init 就拦：不写出一份注定编译不过的 plan（路径相对生成后的 plan；字段表见 `fields`）
+        for e in bad:
+            print(f"[HARD] E-SCHEMA {e}")
+        print(f"\n阻断：生成的 plan 有 {len(bad)} 个 schema 问题，未写出文件（用 scaffold.py fields <节点> 查字段与枚举）。")
         return 2
     if not _emit(out, plan, a.force):
         return 3

@@ -950,7 +950,9 @@ def render(pptx: Path, render_dir: Path, f: M.Report) -> Optional[Path]:
         f.add("INFO", "V-RENDER", "环境", "找不到 LibreOffice；页尺寸、断行、字体替换与溢出均未核验")
         return None
     try:
-        import pymupdf  # noqa: F401
+        import importlib.util
+        if importlib.util.find_spec("pymupdf") is None:
+            raise ImportError
     except ImportError:
         f.add("INFO", "V-RENDER", "环境", "找不到 PyMuPDF（pip install -r requirements-render.txt）；渲染核对跳过")
         return None
