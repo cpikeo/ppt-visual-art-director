@@ -997,6 +997,8 @@ def _run_soffice(cmd: List[str], env: Dict[str, str]) -> Tuple[bool, str]:
     try:
         done = subprocess.run(cmd, capture_output=True, timeout=240, env=env, check=False)
         tail = (done.stderr or b"").decode("utf-8", "replace").strip()[-200:]
+        if done.returncode != 0:   # 非零退出码即失败：不再靠“PDF 是否存在”倒推，避免把残缺输出当渲染
+            return False, f"退出码 {done.returncode}" + (f"：{tail}" if tail else "")
         return True, tail   # 成功时 err 只是 stderr 尾部，供“未产出 PDF”时说明原因
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)

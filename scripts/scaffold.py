@@ -632,7 +632,7 @@ def r_free(c: Ctx, p: Dict[str, Any]):
     每个元素是普通 plan 元素，外加这些**可选**速记（写了才换算，其余键原样交给 schema）：
       cols:[起列, 跨列]       → x, w（12 栏网格）；要出血或错网格就直接写 x, w
       size: 档位名|pt          → 档位取 title/body/number/caption/hero；  fit:[最大pt, 最小pt] → 取不折行的最大字号
-      ink / color / fill 写调色名（ink ink2 muted quiet accent rule bg bg_alt）→ 换成当前明暗场的色值
+      ink / color 写调色名（形状底色用 color，没有 fill 字段）（ink ink2 muted quiet accent rule bg bg_alt）→ 换成当前明暗场的色值
       bottom: y                → 以该 y 为文字底边（valign=bottom），不依赖框高估算
       y 缺省且给了 after:元素id → 紧接该元素下方，gap 缺省 0.2 in
       h 缺省（文字）            → 由 model.fit_height_in 估出

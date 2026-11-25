@@ -423,10 +423,17 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path) -> None:
     try:
         prs.save(str(tmp))
         _normalize_app_props(tmp, plan)
+        problems = package_problems(tmp, check_suffix=False)   # 先验临时件再落盘：不合格的包不得以交付名出现（与 revise.py 一致）
+        if problems:
+            raise PackageError("；".join(problems))
         os.replace(tmp, out)
     finally:
         if tmp.exists():
             tmp.unlink()
+
+class PackageError(Exception):
+    """成品包不合格（内容类型、宏等）：交付路径未写。"""
+
 
 def error_deck_path(out: Path) -> Path:
     return out.with_name(out.stem + ".error.pptx")
@@ -511,6 +518,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         build(plan, asset_root, out_path)
+    except PackageError as exc:
+        print(f"[HARD] E-FORMAT 成品包不合格，交付路径未写：{exc}")
+        return 3
     except Exception as exc:  # 运行期异常：不覆盖正式输出
         error_path, note = diagnostic_target(plan_path, out_path, report_path, args.force)
         if error_path is not None:
@@ -521,10 +531,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {str(exc)[:200]}\n{note}")
         return 3
 
-    problems = package_problems(out_path)
-    if problems:
-        print(f"[HARD] E-FORMAT 成品包不合格：{'；'.join(problems)}")
-        return 3
     print(f"\n已写出 {out_path}（{len(plan['pages'])} 页，{canvas(plan)[0]}×{canvas(plan)[1]} in）"
           f"  警告 {rep.count('SOFT')}，提示 {rep.count('INFO')}")
     if args.report:
