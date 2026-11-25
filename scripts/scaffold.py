@@ -238,9 +238,9 @@ class Ctx:
         return math.ceil((M.fit_height_in(el, st, w * 0.98) * 1.05 + 0.02) * 20) / 20
 
     def fit_pt(self, kind: str, content: str, w: float, bg: str, hi: float, lo: float,
-               runs_fn: Any = None, **kw: Any) -> int:
-        """取不使任何一段折行的最大字号（hi→lo，步长 2）。字号随内容长度走，而不是一刀切。"""
-        paras = max(1, len(str(content).split("\n")))
+               runs_fn: Any = None, max_lines: int = 0, **kw: Any) -> int:
+        """取不使任何一段折行的最大字号（hi→lo，步长 2）；max_lines>0 时允许总行数到该值（大字断句成几行）。"""
+        paras = max(max_lines, len(str(content).split("\n")), 1)
         size = int(hi)
         while size > lo:
             el: Dict[str, Any] = {"id": "x", "type": kind, "content": content, "pad_in": 0,
@@ -398,26 +398,33 @@ def r_cover(c: Ctx, p: Dict[str, Any]):
 
 
 def r_statement(c: Ctx, p: Dict[str, Any]):
-    """一句话占满视野：竖线是页内唯一装饰，字号由句长决定。"""
+    """一句话压住画面：字号随句长取 1–3 行内的最大值（短句巨大、长句断成三行），整块偏下锚定，上方留整块安静区；
+    竖线是页内唯一装饰。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
-    x, w = col(1, 10)
+    x, w = col(1, 11)
     tx = x + 0.45
-    size = c.fit_pt("title", p["title"], w - 0.45, pal["bg"], c.sz["hero"] * 1.35, c.sz["hero"] * 0.8,
-                    line_spacing=1.1)
-    w = c.balanced_w("title", p["title"], w - 0.45, size, pal["bg"], line_spacing=1.1) + 0.45
-    t = c.text("t", "title", tx, 0, w - 0.45, p["title"], pal["bg"], font_size=size, color=pal["ink"],
-               line_spacing=1.1)
-    sub_h = 0.0
-    sub = None
-    if p.get("sub"):
-        sub = c.text("sub", "caption", tx, 0, w - 0.45, p["sub"], pal["bg"], font_size=c.sz["body"],
-                     color=pal["muted"])
-        sub_h = sub["h"] + 0.3
-    t["y"] = round((H - (t["h"] + sub_h)) / 2 - 0.15, 3)
-    els = [c.rect("vrule", x, t["y"] + 0.08, 0.07, t["h"] + sub_h - 0.1, pal["accent"]), t]
+    n = len(str(p["title"]).replace("\n", ""))
+    lines = 1 if n <= 10 else 2 if n <= 22 else 3
+    size = c.fit_pt("title", p["title"], w - 0.45, pal["bg"], c.sz["hero"] * 1.6, c.sz["hero"] * 0.7,
+                    max_lines=lines, line_spacing=1.08)
+    while True:   # 主体块高不超过页高 56%：上方留整块安静区，下方不贴边
+        tw = c.balanced_w("title", p["title"], w - 0.45, size, pal["bg"], line_spacing=1.08)
+        t = c.text("t", "title", tx, 0, tw, p["title"], pal["bg"], font_size=size, color=pal["ink"], line_spacing=1.08)
+        if t["h"] <= H * 0.56 or size <= c.sz["hero"] * 0.7:
+            break
+        size -= 4
+    sub = c.text("sub", "caption", tx, 0, w - 0.45, p["sub"], pal["bg"], font_size=c.sz["body"],
+                 color=pal["muted"]) if p.get("sub") else None
+    sub_h = sub["h"] + 0.3 if sub else 0.0
+    t["y"] = round(H * 0.74 - t["h"] - sub_h, 3)
+    probe = {"id": "x", "type": "title", "content": p["title"], "pad_in": 0, "font_size": size, "x": 0, "y": 0, "w": tw, "h": 1,
+             "line_spacing": 1.08}
+    n_lines = len(str(p["title"]).split("\n")) if "\n" in str(p["title"]) else sum(M.fit_lines(probe, c._style(probe, pal["bg"]), tw * 0.98))
+    ink_h = min(t["h"], n_lines * size * 1.08 * 1.448 / 72)  # 竖线只量真实行数，不跟保守的框高走
+    els = [c.rect("vrule", x, t["y"] + 0.08, 0.07, ink_h + sub_h - 0.1, pal["accent"]), t]
     if sub:
-        sub["y"] = round(t["y"] + t["h"] + 0.3, 3)
+        sub["y"] = round(t["y"] + ink_h + 0.3, 3)
         els.append(sub)
     return els, dark
 
@@ -553,7 +560,7 @@ def r_table(c: Ctx, p: Dict[str, Any]):
     x, w = col(1, 12)
     rows = len(p["table"]["rows"]) + 1
     els.append({"id": "tb", "type": "chart", "x": round(x, 3), "y": round(top, 3), "w": round(w, 3),
-                "h": round(min(FOOT - 0.1 - top, rows * 0.8), 3), "chart": {"kind": "table", "data": {"headers": p["table"]["headers"], "rows": p["table"]["rows"]},
+                "h": round(min(FOOT - 0.1 - top, rows * 1.0), 3), "chart": {"kind": "table", "data": {"headers": p["table"]["headers"], "rows": p["table"]["rows"]},
                           **{k: p["table"][k] for k in ("column_align", "column_weights") if k in p["table"]}}})
     return els + _note(c, p, dark), dark
 
@@ -602,18 +609,18 @@ def r_steps(c: Ctx, p: Dict[str, Any]):
 def r_close(c: Ctx, p: Dict[str, Any]):
     dark = bool(p.get("dark", True))
     pal = c.pal(dark)
-    x, w = col(1, 9)
-    size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["title"] + 14, c.sz["title"], line_spacing=1.1)
+    x, w = col(1, 11)
+    size = c.fit_pt("title", p["title"], w, pal["bg"], c.sz["title"] + 26, c.sz["title"], line_spacing=1.1)
     tw = c.balanced_w("title", p["title"], w, size, pal["bg"], line_spacing=1.1)
-    t = c.text("t", "title", x, H * 0.27, tw, p["title"], pal["bg"], font_size=size, color=pal["ink"],
+    t = c.text("t", "title", x, H * 0.33, tw, p["title"], pal["bg"], font_size=size, color=pal["ink"],
                line_spacing=1.1)
     els = [_bar(c, dark, x, t["y"] - 0.45), t]
     if p.get("items"):
         iy = t["y"] + t["h"] + 0.7
         els.append(c.rect("rule", x, iy - 0.35, W - 2 * MX, 0.012, pal["rule"]))
         els.append(c.text("items", "body", x, iy, w, "\n".join(p["items"]), pal["bg"],
-                          font_size=c.sz["body"] + 6, color=pal["ink2"], list=p.get("list", "number"),
-                          space_after_pt=18))
+                          font_size=c.sz["body"] + 2, color=pal["ink2"], list=p.get("list", "number"),
+                          space_after_pt=16))
         over = els[-1]["y"] + els[-1]["h"] - (H - 0.85)   # 标题折行或大字号档会把条目推出页底：整块上移，不压字号
         if over > 0:
             shift = min(over, max(0.0, els[0]["y"] - 0.5))

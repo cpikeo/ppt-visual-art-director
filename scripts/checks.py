@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -644,6 +645,65 @@ def _check_dominance(rep: Report, pid: str, page: Dict[str, Any], focus: str, bo
                  f"放大主角、缩小或灰化配角，或改 focus_element；若本页确为并列，删掉 focus_element")
 
 
+def page_space(plan: Dict[str, Any], page: Dict[str, Any]) -> Dict[str, Any]:
+    """一页的空间事实（只读几何，不评审美）：占位率（24×14 格被元素盒占到的比例）、
+    视觉重心（按 _visual_weight 加权，0–1 归一）、主体尺度比（最重元素 ÷ 第二重）。
+    整页承载层（满幅图/色场）与发丝线不计占位：它们是环境，不是内容。"""
+    w, h = canvas(plan)
+    boxes = page_geometry(page)
+    cells, wsum, cx, cy, weights = set(), 0.0, 0.0, 0.0, []
+    for el in all_elements(page):
+        box = boxes.get(str(el.get("id")))
+        if box is None or el.get("id") == "_page_number":
+            continue
+        x, y, bw, bh = box
+        if min(bw, bh) <= 0.08 or (el.get("overlap_allowed") and bw * bh >= 0.7 * w * h):
+            continue
+        for i in range(max(0, int(x / w * 24)), min(24, int(math.ceil((x + bw) / w * 24)))):
+            for j in range(max(0, int(y / h * 14)), min(14, int(math.ceil((y + bh) / h * 14)))):
+                cells.add((i, j))
+        wt = _visual_weight(el, box)
+        if wt > 0:
+            weights.append(wt)
+            wsum += wt
+            cx += wt * (x + bw / 2) / w
+            cy += wt * (y + bh / 2) / h
+    weights.sort(reverse=True)
+    return {"density": len(cells) / 336.0,
+            "centroid": (cx / wsum, cy / wsum) if wsum else (0.5, 0.5),
+            "hero": weights[0] if weights else 0.0,
+            "ratio": (weights[0] / weights[1]) if len(weights) > 1 and weights[1] > 0 else 9.9}
+
+
+def spatial_signals(plan: Dict[str, Any], rep: Report) -> None:
+    """整稿空间节奏的事实线索（疏密、重心、气质、留白是否有主体撑住）；只指出该看的页，不下审美结论。"""
+    pages = plan.get("pages") or []
+    sp = [page_space(plan, p) for p in pages]
+    for p, s in zip(pages, sp):
+        if s["density"] < 0.22 and s["hero"] < 0.6 and p.get("role") not in ("breathe",):
+            rep.soft("W-VOID", str(p.get("id")),
+                     f"占位率仅 {s['density']:.0%} 且最大元素的视觉重量 {s['hero']:.2f} in²：大面积空白没有主体撑住。"
+                     "放大主体、改成出血或收拢到一个尺度更大的整体；确为停顿页就把 role 设为 breathe")
+    if len(pages) < 5:
+        return
+    dens = [s["density"] for s in sp]
+    if max(dens) - min(dens) < 0.12:
+        rep.soft("W-RHYTHM", "整稿", f"{len(pages)} 页占位率只在 {min(dens):.0%}–{max(dens):.0%} 之间：整套没有疏密落差，"
+                 "选一页极空、一页极密，或确认这是同轴比较")
+    def sd(v: List[float]) -> float:
+        m = sum(v) / len(v)
+        return (sum((x - m) ** 2 for x in v) / len(v)) ** 0.5
+    sx, sy = sd([s["centroid"][0] for s in sp]), sd([s["centroid"][1] for s in sp])
+    if max(sx, sy) < 0.08:
+        rep.soft("W-CENTROID", "整稿", f"视觉重心跨页几乎不动（σx={sx:.2f}，σy={sy:.2f}，画布宽高为 1）：构图重心每页相同，整稿会平；"
+                 "用偏心、上下分层、对角或出血让重心换位置")
+    atm = [(p.get("composition") or {}).get("atmosphere") for p in pages]
+    got = [a for a in atm if a]
+    if len(got) >= 5 and len(set(got)) == 1:
+        rep.soft("W-ATMOS", "整稿", f"{len(got)} 页声明了同一种空间气质「{got[0]}」：封面、数据页、结尾通常需要不同的空间性格")
+
+
+
 def design_signals(plan: Dict[str, Any]) -> Report:
     """整稿层面的模式信号：指出"这一处该由你看一眼"，不是评分，也不下审美结论。
 
@@ -654,6 +714,7 @@ def design_signals(plan: Dict[str, Any]) -> Report:
     pages = plan.get("pages") or []
     if len(pages) < 2:
         return rep
+    spatial_signals(plan, rep)
     w, h = canvas(plan)
     canvas_area = max(w * h, 1e-6)
 
