@@ -990,30 +990,40 @@ def zone_probe(path: Path, img_el: Dict[str, Any], text_box: Box, page_backgroun
 
             ax, ay = src_px(x0, y0, img_box[2], img_box[3], img_box[0], img_box[1])
             bx, by = src_px(x1, y1, img_box[2], img_box[3], img_box[0], img_box[1])
-            n = int(LIMITS["image"]["zone"]["samples"])
-            region = src.crop((int(max(ax, 0)), int(max(ay, 0)), max(int(bx), int(ax) + 1), max(int(by), int(ay) + 1)))
-            region = region.resize((n, n), Image.BOX)
-            pixels = list(region.get_flattened_data() if hasattr(region, "get_flattened_data") else region.getdata())
+            zone = LIMITS["image"]["zone"]
+            n, tn = int(zone["samples"]), int(zone["texture_samples"])
+            raw = src.crop((int(max(ax, 0)), int(max(ay, 0)), max(int(bx), int(ax) + 1), max(int(by), int(ay) + 1)))
+            flat = lambda im: list(im.get_flattened_data() if hasattr(im, "get_flattened_data") else im.getdata())
+            pixels = flat(raw.resize((n, n), Image.BOX))
+            tex_pixels = flat(raw.resize((tn, tn), Image.BOX))
     except Exception:
         return None
     duo = img_el.get("duotone")
     alpha = float(img_el.get("alpha", 1.0))
     bg = hex_rgb(page_background)
-    lums: List[float] = []
-    grays: List[float] = []
-    for px in pixels:
+    dk, lt = (hex_rgb(duo["dark"]), hex_rgb(duo["light"])) if duo else (None, None)
+
+    def final_rgb(px: Tuple[int, int, int]) -> Tuple[int, int, int]:
+        """裁切之后的处理链：duotone → alpha 与页面底色混合（与渲染器同序，均在 sRGB 编码值上做）。"""
         rgb = px
         if duo:
             g = (0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]) / 255.0
-            d, lt = hex_rgb(duo["dark"]), hex_rgb(duo["light"])
-            rgb = tuple(round(d[i] + (lt[i] - d[i]) * g) for i in range(3))
+            rgb = tuple(round(dk[i] + (lt[i] - dk[i]) * g) for i in range(3))
         if alpha < 0.999:
             rgb = tuple(round(bg[i] + (rgb[i] - bg[i]) * alpha) for i in range(3))
-        lums.append(_lum_rgb(rgb))
-        grays.append((0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]))
-    mean = sum(grays) / len(grays)
-    std = (sum((g - mean) ** 2 for g in grays) / len(grays)) ** 0.5
-    return {"lums": lums, "gray_std": std, "gray_mean": mean}
+        return rgb
+
+    lums = [_lum_rgb(final_rgb(px)) for px in pixels]
+    # 纹理 = 高通残差的均方根：灰度（编码值，Rec.709 权重，0–255）减去其 box 模糊后的 RMS。
+    # 平滑渐变（雾、光晕）残差≈0，不误报；碎裂的细节（叶、杯沿、文字、条纹）残差大。
+    # 旧口径是整区灰度标准差：渐变落字区被误判为“碎”，而真正的局部细节取决于平均后的明暗跨度。
+    from PIL import Image, ImageFilter
+    tg = [0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] for c in map(final_rgb, tex_pixels)]
+    plane = Image.new("L", (tn, tn))
+    plane.putdata([int(round(v)) for v in tg])
+    low = flat(plane.filter(ImageFilter.BoxBlur(int(zone["texture_blur"]))))
+    texture = (sum((a - b) ** 2 for a, b in zip(flat(plane), low)) / len(low)) ** 0.5
+    return {"lums": lums, "texture": texture, "gray_mean": sum(tg) / len(tg)}
 
 def zone_contrast(ink_hex: str, probe: Dict[str, Any], limit: float) -> Tuple[float, float]:
     """（达标像素占比，最不利 5% 像素的对比度）。"""

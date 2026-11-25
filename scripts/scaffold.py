@@ -352,10 +352,10 @@ def _bar(c: Ctx, dark: bool, x: float = MX, y: float = MY) -> Dict[str, Any]:
 
 
 def _head(c: Ctx, p: Dict[str, Any], dark: bool, span: int = 10, start: int = 1,
-          size: Optional[int] = None) -> List[Dict[str, Any]]:
+          size: Optional[int] = None, box: Optional[Tuple[float, float]] = None) -> List[Dict[str, Any]]:
     """母题横线 + 可选眉题（eyebrow）+ 页题。页题是整页的论断。"""
     pal = c.pal(dark)
-    x, w = col(start, span)
+    x, w = box or col(start, span)
     bar_on = c.motif != "none" and p.get("motif") is not False
     els = [_bar(c, dark, x)]
     off = 0.85 if bar_on else 0.0  # 无母题横线时眉题与页题同左轴，不留下横线的空位
@@ -405,6 +405,7 @@ def r_cover(c: Ctx, p: Dict[str, Any]):
         tone = c.image_tone(p["image"], (x, H * 0.25, w, H * 0.5)) if p.get("image") else None
         dark = True if tone is None else tone
     pal = c.pal(dark)
+    full_w = w   # 标题收窄只为均衡折行；副题、元信息仍用整栏宽，否则会被挤出孤字
     els: List[Dict[str, Any]] = []
     if p.get("image"):
         els.append(_image_el(p["image"], 0, 0, W, H, carrier=True))
@@ -419,13 +420,13 @@ def r_cover(c: Ctx, p: Dict[str, Any]):
     if p.get("kicker"):
         off = 0.85 if (c.motif != "none" and p.get("motif") is not False) else 0.0   # 无横线时与标题同左轴
         els.append(c.text("kicker", "caption", x + off, MY - 0.11, w - off, p["kicker"], pal["bg"],
-                          font_size=c.sz["caption"], color=pal["accent"], letter_spacing_pt=1.5, bold=True, h=0.3))
+                          font_size=c.sz["caption"], color=pal["ink2"] if p.get("image") else pal["accent"], letter_spacing_pt=1.5, bold=True, h=0.3))
     els.append(t)
     if p.get("sub"):
-        els.append(c.text("sub", "caption", x, anchor + 0.3, w, p["sub"], pal["bg"],
+        els.append(c.text("sub", "caption", x, anchor + 0.3, full_w, p["sub"], pal["bg"],
                           font_size=c.sz["body"], color=pal["ink2"]))
     if p.get("meta"):
-        els.append(c.text("meta", "caption", x, H - 0.85, w, p["meta"], pal["bg"], font_size=c.sz["caption"],
+        els.append(c.text("meta", "caption", x, H - 0.85, full_w, p["meta"], pal["bg"], font_size=c.sz["caption"],
                           color=pal["muted"], h=0.3))
     return els, dark
 
@@ -651,18 +652,35 @@ def r_table(c: Ctx, p: Dict[str, Any]):
 
 
 def r_split_image(c: Ctx, p: Dict[str, Any]):
+    """图占一侧（`side` left|right，`ratio` 图宽占页宽 0.3–0.65，缺省 0.5）；文字在另一侧：标题压顶、正文压底。
+    标题与正文必须在文字栏内留出 ≥0.4in 的中段：放不下就先收标题字号，而不是让两个文本框相交。"""
     dark = bool(p.get("dark", False))
     pal = c.pal(dark)
     side = p.get("side", "right")
-    img_x = W * 0.5 if side == "right" else 0.0
-    els = [_image_el(dict(p["image"], role=p["image"].get("role", "subject")), img_x, 0, W * 0.5, H)]
-    start = 1 if side == "right" else 8
-    els += _head(c, p, dark, span=5, start=start)
+    ratio = min(max(float(p.get("ratio", 0.5)), 0.3), 0.65)
+    iw = W * ratio
+    img_x = W - iw if side == "right" else 0.0
+    x0, w0 = (MX, W - iw - MX - 0.55) if side == "right" else (iw + 0.55, W - iw - MX - 0.55)
+    els = [_image_el(dict(p["image"], role=p["image"].get("role", "subject")), img_x, 0, iw, H)]
+    foot = H - 1.15 if p.get("note") else H - MY
+    body = None
     if p.get("body"):
-        x, w = col(start, 5)
-        body = c.text("b", "body", x, 0, w, p["body"], pal["bg"], font_size=c.sz["body"] + 2, color=pal["ink2"])
-        body["y"] = round(H - MY - body["h"], 3)  # 标题在上、正文压底：两端拉开，留出整块安静的中段
+        body = c.text("b", "body", x0, 0, w0, p["body"], pal["bg"], font_size=c.sz["body"] + 2, color=pal["ink2"], valign="bottom")
+        body["y"] = round(foot - body["h"], 3)
+    size = c.sz["title"]
+    while True:
+        head = _head(c, p, dark, size=size, box=(x0, w0))
+        t = head[-1]
+        if body is None or body["y"] - (t["y"] + t["h"]) >= 0.4 or size <= 30:
+            break
+        size -= 4
+    els += head
+    if body is not None:
         els.append(body)
+    if p.get("note"):
+        nw = min(w0, 11.85 - x0) if side == "left" else w0   # 文字在右侧时页码也在右下角：note 止于页码框之前
+        els.append(c.text("note", "caption", x0, H - 0.85, nw, p["note"], pal["bg"], font_size=c.sz["caption"],
+                          color=pal["muted"]))
     return els, dark
 
 
@@ -902,6 +920,44 @@ def validate_outline(outline: Dict[str, Any]) -> List[str]:
     return errs
 
 
+class ContentDropped(ValueError):
+    pass
+
+
+COMMON_KEYS = {"recipe", "id", "role", "title", "focus", "rationale", "claim", "beat", "evidence", "open_questions",
+               "speaker_notes", "page_number_tone", "focus_element", "depth", "design_state", "composition", "motif", "dark"}
+RECIPE_KEYS = {   # 每个配方真正消费的页字段（与 references/build.md 配方表一致）；写了表外的键＝会被静默忽略
+    "cover": {"sub", "kicker", "meta", "image"}, "statement": {"sub"}, "section": {"number"},
+    "big_number": {"number", "unit", "unit_scale", "body", "note", "eyebrow"},
+    "chart": {"chart", "aside", "highlight", "focus_series", "note", "eyebrow"},
+    "compare": {"left", "right", "scale", "note", "eyebrow"}, "list": {"items", "list", "note", "eyebrow"},
+    "table": {"table", "note", "eyebrow"}, "steps": {"steps", "note", "eyebrow"},
+    "split_image": {"image", "body", "side", "ratio", "note", "eyebrow"}, "close": {"items", "list"},
+}
+
+
+def unknown_keys(p: Dict[str, Any]) -> List[str]:
+    allowed = COMMON_KEYS | RECIPE_KEYS.get(p.get("recipe"), set())
+    return [] if p.get("recipe") == "free" else sorted(k for k in p if k not in allowed)
+
+
+LANDING_KEYS = ("title", "sub", "kicker", "meta", "eyebrow", "body", "note", "aside")
+
+
+def unlanded_text(p: Dict[str, Any], elements: List[Dict[str, Any]]) -> List[str]:
+    """作者写了、却没有进入任何元素的文字字段。配方只消费自己认识的键，其余会被静默丢弃——
+    含 note（口径、示意图声明）这类不该丢的限定语。逐字比对，不做模糊匹配。"""
+    def squash(t: str) -> str:
+        return "".join(str(t).split())
+    def walk(els: List[Dict[str, Any]]):
+        for e in els:
+            yield e
+            yield from walk(e.get("elements") or [])
+    landed = squash("".join(str(e.get("content", "")) + "".join(str(r.get("text", "")) for r in e.get("runs") or [])
+                            for e in walk(elements)))
+    return [k for k in LANDING_KEYS if isinstance(p.get(k), str) and p[k].strip() and squash(p[k]) not in landed]
+
+
 def build_plan(outline: Dict[str, Any], asset_root: Optional[Path] = None) -> Dict[str, Any]:
     """outline → plan。scaffold 只做几何与色值的算术：作者没写的设计判断（focus、构图理由、节奏）
     一律留成 PENDING 并把页标成 draft，不拿配方说明或标题冒充判断；作者两者都写了才算 judged。"""
@@ -915,6 +971,14 @@ def build_plan(outline: Dict[str, Any], asset_root: Optional[Path] = None) -> Di
         fn, role, _grammar, _req = RECIPES[p["recipe"]]
         res = fn(ctx, p)
         elements, dark = res[0], res[1]
+        if unknown_keys(p):
+            raise ContentDropped(f"第 {i} 页（{p['recipe']}）的字段 {'、'.join(unknown_keys(p))} 不被该配方消费，会被静默忽略："
+                                 "拼写有误、换配方，或改用 free")
+        if p["recipe"] != "free":
+            lost = unlanded_text(p, elements)
+            if lost:
+                raise ContentDropped(f"第 {i} 页（{p['recipe']}）的 {'、'.join(lost)} 没有进入版面（该配方不消费这个字段，会被静默丢弃）："
+                                     "换一个消费它的配方，或改用 free 把它放进构图")
         if p["recipe"] != "free" and (ctx.motif == "none" or p.get("motif") is False):   # free 页的元素 id 归作者，不与母题保留 id 撞车
             elements = [e for e in elements if e.get("id") != "bar"]
         authored = bool(p.get("focus") and p.get("rationale"))
@@ -1067,6 +1131,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         root = Path(a.assets) if a.assets else (src.parent / "assets" if (src.parent / "assets").is_dir() else src.parent)
         plan = build_plan(data, root)
+    except ContentDropped as exc:
+        print(f"[HARD] E-DROP {exc}")
+        return 2
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         print(f"[HARD] E-OUTLINE 无法生成 plan：{type(exc).__name__}: {exc}")
         return 2

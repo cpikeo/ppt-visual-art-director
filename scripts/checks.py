@@ -284,8 +284,8 @@ def check_text_on_image(plan, page, el, loc, st, asset_root: Path, rep: Report) 
     if share < zone["min_ok_share"]:
         rep.soft("W-CONTRAST", loc, f"{st['color']} 压在图上：仅 {share:.0%} 的落点像素达到 {limit}:1"
                                     f"（最不利 5% 约 {worst:.1f}:1）。字没落在安静区：移动文字、改裁切 crop_focus，或重做图的简报")
-    elif probe["gray_std"] > zone["max_gray_std"]:
-        rep.soft("W-BUSY", loc, f"文字下方图像纹理偏强（灰度标准差 {probe['gray_std']:.0f} > {zone['max_gray_std']}）："
+    elif probe["texture"] > zone["max_texture"]:
+        rep.soft("W-BUSY", loc, f"文字下方图像细节偏碎（局部纹理 {probe['texture']:.1f} > {zone['max_texture']}）："
                                 f"对比达标但读感会碎；落字区应连续、低纹理")
 
 def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:

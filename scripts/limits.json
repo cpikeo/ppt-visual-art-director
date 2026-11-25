@@ -29,15 +29,17 @@
     "min_ppi": 72,
     "max_crop_loss": 0.72,
     "zone": {
-      "_readme": "文字下方图像的静态量测：达标像素占比下限、灰度标准差上限（纹理强度，0–255）、采样边长。量的是文字框整体，偏保守。",
+      "_readme": "文字下方图像的静态量测（最终合成结果：裁切→duotone→alpha）。对比：samples×samples 个 BOX 样本的线性相对亮度 Y，达标占比下限 min_ok_share。纹理：texture_samples 边长的灰度（sRGB 编码值，Rec.709 权重）减去 texture_blur 半径 box 模糊后的 RMS；平滑渐变≈0，碎细节大。max_texture 的校准依据见 dev/CALIBRATION.md（3 张真实图的 8 个落字区 + 4 组合成样本）：安静区 0.8–2.6，细节区 ≥ 8.5；它是 provisional 阈值，换视觉世界后应重新校准。",
       "min_ok_share": 0.9,
-      "max_gray_std": 42,
-      "samples": 40
+      "max_texture": 8.0,
+      "samples": 40,
+      "texture_samples": 128,
+      "texture_blur": 3
     }
   },
 
   "space": {
-    "_readme": "verify.py 对真实渲染的空间量测（scripts/spatial.py）。dead_zone_share：未声明功能的最大连续空白占页面比例上限；sparse_ink_share：未声明时整页内容占用下限（经验值，仅在本仓库 3 套真实作品上做过校准）；focus_gap_in：negative_space.role=focus 时空白与主角的最大间距；rhythm_run：连续几页同签名算机械重复；temperament 是各空间气质的量测包络（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设）（dramatic 靠尺度反差成立，由 hero_ratio 核对，不设空白包络；这是对 3 套真实作品校准后删除的假设），只有写了 composition.temperament 才核对。",
+    "_readme": "verify.py 对真实渲染的空间量测（scripts/spatial.py）。dead_zone_share：未声明功能的最大连续空白占页面比例上限；sparse_ink_share：未声明时整页内容占用下限（经验值，仅在本仓库 3 套真实作品上做过校准）；focus_gap_in：negative_space.role=focus 时空白与主角的最大间距；rhythm_run：连续几页同签名算机械重复；temperament 是各空间气质的量测包络，只有写了 composition.temperament 才核对。",
     "dead_zone_share": 0.4,
     "sparse_ink_share": 0.12,
     "focus_gap_in": 1.0,

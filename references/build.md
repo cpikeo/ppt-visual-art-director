@@ -17,6 +17,8 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 `brief.editorial`（`amplify` `recede` `cut`，字符串或字符串数组均可）与 `brief.system`（`typography` `color` `space`）是可选的决策记录，schema 只校验形状；页 `depth`（`background` `midground` `foreground`，元素 id 数组）有引用与顺序校验。
 
+**内容不静默丢失（`E-DROP`）**：`init` 对非 `free` 页逐字核对 `title` `sub` `kicker` `meta` `eyebrow` `body` `note` `aside` 是否进入版面，并拒绝配方不认识的页字段（拼错、写给另一个配方的键）。口径、示意图声明这类限定语被丢掉比版式难看更糟。
+
 ## 用 scaffold 起稿（默认路线）
 
 `scaffold.py` 只做算术，不做判断：**色彩系统**（种子色 → CIELAB 推出环境/结构/文字/强调/数据色，正文 ≥ 7:1、注释 ≥ 4.8:1、强调色 ≥ 4.5:1，数据色两两灰度差 ≥ 9.5 L*，深浅两套）、**字号阶梯**（`hall`／`meeting`／`screen`）、**12 栏网格**（边距 x 0.8 / y 0.7，沟槽 0.25）、**框高**（`model.fit_height_in`）、**自适应大字号**（`fit_pt`：按 86% 宽度估算也不折行的最大字号，渲染实测大字比估算宽 10–15%）、**跨页母题**（默认不画；`design.motif: "bar"` 在每页 (0.8, 0.7) 处画 0.6×0.07 in 强调色短横线）。
@@ -46,7 +48,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 | `list` | build | `title` `items` | `list`（number/bullet/dash）`note` `eyebrow` | 标题与原生列表同一顶线，竖线钉住两栏 |
 | `table` | build | `title` `table`（headers/rows） | `note` `eyebrow` | 原生表格 |
 | `steps` | build | `title` `steps`（2–5 项，各 `label`，可加 `when` `body`） | `note` `eyebrow` | 只表达先后，不画箭头（箭头暗示因果与时长） |
-| `split_image` | build | `title` `image` | `body` `side` `eyebrow` | 半幅图，标题压顶、正文压底 |
+| `split_image` | build | `title` `image` | `body` `side` `ratio` `note` `eyebrow` | 图占一侧（`side` left｜right；`ratio` 图宽占页宽 0.3–0.65，缺省 0.5）；标题压顶、正文压底，两者间留 ≥0.4in，放不下先收标题字号 |
 | `close` | close | `title` | `items` `dark` | 暗场收束到决定与下一步 |
 | `free` | build | `title`（页题记录）`els` | `grid` `dark` `bg` `focus_element` `depth` | **自由构图**：逐个写元素，系统只供网格、色值与字号档（见下） |
 
