@@ -924,7 +924,7 @@ class ContentDropped(ValueError):
     pass
 
 
-COMMON_KEYS = {"recipe", "id", "role", "title", "focus", "rationale", "claim", "beat", "evidence", "open_questions",
+COMMON_KEYS = {"recipe", "id", "role", "title", "focus", "rationale", "claim", "concept", "beat", "evidence", "open_questions",
                "speaker_notes", "page_number_tone", "focus_element", "depth", "design_state", "composition", "motif", "dark"}
 RECIPE_KEYS = {   # 每个配方真正消费的页字段（与 references/build.md 配方表一致）；写了表外的键＝会被静默忽略
     "cover": {"sub", "kicker", "meta", "image"}, "statement": {"sub"}, "section": {"number"},
@@ -998,7 +998,7 @@ def build_plan(outline: Dict[str, Any], asset_root: Optional[Path] = None) -> Di
             page["claim"] = p["claim"]
         if p.get("rationale"):
             page["composition_rationale"] = p["rationale"]
-        for key in ("evidence", "open_questions", "speaker_notes", "page_number_tone", "focus_element", "depth"):
+        for key in ("concept", "evidence", "open_questions", "speaker_notes", "page_number_tone", "focus_element", "depth"):
             if p.get(key):
                 page[key] = p[key]
         pages.append(page)

@@ -30,6 +30,7 @@
 | `W-FIT` | 装载估算溢出；先改文案，再加框，不压字号 |
 | `W-PUNCT` `W-SPACE` `I-SPACE` | 汉字旁半角标点；中西文间多于一个空格（错）；仅一个空格（通行排法，I 级，全稿统一并写进交付说明，LibreOffice 会显松） |
 | `V-BLEED` `V-CLIP` | 文字落在出血元素里被裁（确认不含信息）；没声明出血的文字出页即阻断 |
+| `W-FUSION` `I-FUSION` | 同页多图明度/冷暖/色度差超限（只量可计算部分，不评美）；换图或改裁切，有意并置则写 `composition.exception` |
 | `W-CONTRAST` `V-CONTRAST` `W-BUSY` `W-PPI` | 对比不足（文字压图为真实像素量测）、纹理过强、分辨率低；换墨色或落点、改 `crop_focus`、重做简报，不靠浓遮罩 |
 | `W-COVER` `W-RUNS` | 文字落在上层色块或图上；原有混排被统一，用 `runs` 写明 |
 | `V-TEXT-RENDER` `V-FONT` | 元素的字未落在自己框内渲染；声明字体未参与渲染（降为 PARTIAL） |

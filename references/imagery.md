@@ -40,7 +40,7 @@
 | **感知明度** | CIELAB L\*，0–100% | **写进简报与提示词**（“左侧墙面明度不低于 70%”） |
 | **线性相对亮度 Y** | sRGB 展开 gamma 后按 `0.2126R+0.7152G+0.0722B` 加权，0–1 | 对比度计算的输入 |
 | **对比度** | `(Y亮+0.05)/(Y暗+0.05)` | 正文 4.5:1，≥24pt 大字 3:1（`limits.contrast`） |
-| **纹理** | 落字区灰度（sRGB 编码值，Rec.709 权重，0–255）减去 3px box 模糊后的 RMS——只量碎细节，不把平滑的雾、光晕、渐变当噪声 | ≤ 8.0（`image.zone.max_texture`，provisional，依据见 `dev/CALIBRATION.md`） |
+| **纹理** | 落字区灰度（sRGB 编码值，Rec.709 权重，0–255）减去 3px box 模糊后的 RMS——只量碎细节，不把平滑的雾、光晕、渐变当噪声 | ≤ 8.0（`image.zone.max_texture`，provisional，依据与局限见 `limits.json` 的 `_readme`） |
 
 两者不要换算：L\* 70 的灰面约 Y 0.36，压深墨约 8:1、压白字约 1.9:1。所以简报给生成工具写感知明度（“左半任何位置不高于 15%”），验收给自己写对比度（“深墨 `#1A1A1A` 在该区 ≥ 4.5:1”），缺一条就会“图看着够亮、字读不出”。
 
@@ -71,3 +71,11 @@
 真实性：生成图不当证据（`E-ASSET`）；照片里的品牌、水印可能与证据有关，不擅自抹除；权利未确认写 `pending`，不伪造授权；素材须在素材根内，`image_id` 不接受绝对路径、`..` 与指向根外的符号链接（`E-IMG`）。
 
 **分工**：AI 判断这张图成不成立、独不独特、光与色是不是同一个世界、构图是否服务信息关系、简报数字是否到位——没有阈值也没有开关。编译器只量可计算的：几何与分辨率（`W-GEOM` `E-OVERLAP` `W-CROP` `W-PPI`）、像素（`W-CONTRAST` `W-BUSY` `I-CONTRAST`）、素材登记（`E-ASSET` `W-ASSET` `E-IMG`），不说“不好看”；它说“字没落在安静区”时给的是位置与数字，怎么改由你判断。
+
+## 七、多图组合与蒙版
+
+- `mask`（图片元素）：预设名 `oval` `round_rect` `diamond` `triangle` `parallelogram` `trapezoid` `hexagon` `snip_corner` `arch`，或顶点数组 `[[x,y],…]`（0–1，相对图片框，≥3 点）。写成原生几何，PowerPoint 里仍可「编辑顶点」「更改图片」。**蒙版不进文字落点量测**（`W-CONTRAST` 仍按整个图片框计算，被切掉的角以真实渲染为准）。
+- `soft_edge_pt`：原生柔化边缘半径（pt，0–60）。用于让两张同场景的图连成一个场；柔边落在深色底上会发暗发脏，渲染后必须看。
+- 图压图：下层图声明 `overlap_allowed: true`，且该页 `composition.strategy` 是 `layered` `interlock` `diagonal` `bleed` 之一（`hero` `background` `texture` 本就可以）；文字压在这类图上仍是 `E-OVERLAP`。
+- `W-FUSION`：同页 ≥2 张图（不含 `icon` `texture`、面积 ≥0.8 in²），量最终裁切（含 `duotone`）的 L*、b*、C* 页内最大差，超 `limits.json` `image.fusion` 即报；`composition.exception` 写了理由则降为 `I-FUSION`。出现时先换图或改裁切，再考虑 `duotone`，最后才是声明破格。
+

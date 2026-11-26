@@ -24,7 +24,7 @@
 
 ## 叠放、形状、路径、组
 
-- **叠放顺序就是声明顺序**，先写的在下。承载层（底图、整幅 `hero` 主视觉、蒙版、色块、做底的巨型数字或标题）要有东西压在上面；`hero` 作承载层时，文字必须落在简报声明的安静区，由 `W-CONTRAST` / `W-BUSY` 量测，`subject` / `illustration` / `icon` / `detail` 不能被压，在自己身上声明 `overlap_allowed: true`；`number` 与 `title` 可以做承载层，`body`、`caption`、`footer` 与图表不能自我豁免。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
+- **叠放顺序就是声明顺序**，先写的在下。承载层（底图、整幅 `hero` 主视觉、蒙版、色块、做底的巨型数字或标题）要有东西压在上面；`hero` 作承载层时，文字必须落在简报声明的安静区，由 `W-CONTRAST` / `W-BUSY` 量测，`subject` / `illustration` / `icon` / `detail` 不能被文字压；只有在页面 `composition.strategy` 为 `layered` `interlock` `diagonal` `bleed` 时，才可声明 `overlap_allowed: true` 以被别的**图片**层叠（见 `imagery.md` 七）；`number` 与 `title` 可以做承载层，`body`、`caption`、`footer` 与图表不能自我豁免。实质重叠（面积 ≥ 0.5 in²、短边 ≥ 0.05 in、占较小者 ≥ 25%）且下层未声明即阻断（`E-OVERLAP`）。
 - `shape_kind`：`rect` `round_rect` `oval` `triangle` `diamond` `chevron` `arrow_right` `arrow_up`。`corner_in` 仅用于圆角矩形（半径，英寸）。`fill_alpha` 低于 0.15 基本不可见。
 - `gradient`：`{from, to, angle, from_alpha?, to_alpha?}`，`angle` 0 为左到右、90 为上到下；末端透明度应接近 0。`stroke`：`{color, width_pt, dash, cap}`。
 - 路径顶点为坐标 `[x, y]` 或锚点 `{"el": "n1", "anchor": "right", "at": 0.5}`。两点为直线，三点以上为折线；`closed: true` 加 `color` 为填充。锚点在编译期解析，改形状要重编译；旋转组内的锚点会错位，连线应同组或改用坐标。

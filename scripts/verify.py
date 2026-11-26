@@ -486,6 +486,25 @@ def verify_image(plan, el, shape, name, facts, asset_root: Path, f: M.Report) ->
     elif got_duo is not None:
         f.add("SOFT", "V-STYLE", name, "未声明双色调，成品图片却有该效果")
 
+    mask = el.get("mask")
+    spPr = shape._element.spPr
+    prst, cust = spPr.find(qn("a:prstGeom")), spPr.find(qn("a:custGeom"))
+    if isinstance(mask, str):
+        if prst is None or prst.get("prst") != M.MASK_PRESETS[mask]:
+            f.add("HARD", "V-STYLE", name, f"声明了蒙版 {mask}，成品图片几何是 {prst.get('prst') if prst is not None else '自定义'}")
+    elif mask:
+        got = [(int(p.get("x")), int(p.get("y"))) for p in spPr.iter(qn("a:pt"))] if cust is not None else None
+        want = [(int(round(float(a) * 100000)), int(round(float(b) * 100000))) for a, b in mask]
+        if got != want:
+            f.add("HARD", "V-STYLE", name, "声明了多边形蒙版，成品图片的自定义几何与之不符")
+    elif cust is not None or (prst is not None and prst.get("prst") != "rect"):
+        f.add("SOFT", "V-STYLE", name, "未声明蒙版，成品图片却不是矩形")
+    soft = spPr.find(qn("a:effectLst") + "/" + qn("a:softEdge"))
+    want_soft = int(round(float(el.get("soft_edge_pt", 0)) * 12700))
+    got_soft = int(soft.get("rad")) if soft is not None else 0
+    if got_soft != want_soft:
+        f.add("HARD", "V-STYLE", name, f"柔边半径 {got_soft} EMU ≠ 声明 {want_soft} EMU")
+
 
 def _series_from_xml(shape) -> List[Dict[str, Any]]:
     """跨 plot 读取全部系列：组合图里柱与线分属两个 plot，按名称核对才可靠。"""

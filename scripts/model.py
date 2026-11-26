@@ -985,6 +985,55 @@ def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]
     # 有效分辨率按"最终留在画面里的那部分像素"算：裁得越紧，同样的框里 ppi 越高。
     return min(px_w * (1 - left - right) / w, px_h * (1 - top - bottom) / h), loss
 
+# 图片蒙版预设 → DrawingML 预设几何。schema 枚举与 compile / verify 共用这一张表（dev/tests 校验一致）。
+MASK_PRESETS = {"oval": "ellipse", "round_rect": "roundRect", "diamond": "diamond", "triangle": "triangle",
+                "parallelogram": "parallelogram", "trapezoid": "trapezoid", "hexagon": "hexagon",
+                "snip_corner": "snip2DiagRect", "arch": "round2SameRect"}
+
+def _lab(rgb: Tuple[int, int, int]) -> Tuple[float, float, float]:
+    """sRGB → CIELAB（D65）。图像世界指纹只需要 L*、b*、色度，不引入色彩管理。"""
+    r, g, b = (_LIN[v] for v in rgb)
+    x, y, z = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047, 0.2126 * r + 0.7152 * g + 0.0722 * b, \
+              (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+    f = lambda t: t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+    fx, fy, fz = f(x), f(y), f(z)
+    return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
+
+def image_signature(path: Path, el: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    """最终裁切（含 duotone）后图像的整体指纹：感知明度 L*、冷暖 b*（正=暖黄）、色度 C*、清晰度（高通 RMS）。
+
+    只描述“这些图是不是同一个世界”的可计算部分，不评价好看；读不了图返回 None。
+    """
+    box = explicit_box(el)
+    if box is None:
+        return None
+    try:
+        from PIL import Image, ImageChops, ImageFilter, ImageStat
+        with Image.open(path) as src:
+            src.draft("RGB", (768, 768))   # JPEG 解码时直接降采样：只要整体统计，不需要全分辨率
+            src = src.convert("RGB")
+            pw, ph = src.size
+            l, r, t, b = crop_geometry(pw, ph, box[2], box[3], el.get("crop_focus"))
+            x0, y0 = int(l * pw), int(t * ph)
+            crop = src.crop((x0, y0, max(int((1 - r) * pw), x0 + 1), max(int((1 - b) * ph), y0 + 1)))
+            data = crop.resize((48, 48), Image.BOX).tobytes()
+            gray = crop.convert("L").resize((128, 128), Image.BOX)
+            sharp = ImageStat.Stat(ImageChops.difference(gray, gray.filter(ImageFilter.BoxBlur(3)))).rms[0]
+    except Exception:
+        return None
+    duo = el.get("duotone")
+    dk, lt = (hex_rgb(duo["dark"]), hex_rgb(duo["light"])) if duo else (None, None)
+    n = len(data) // 3
+    sl = sa = sb = sc = 0.0
+    for i in range(n):
+        px = (data[3 * i], data[3 * i + 1], data[3 * i + 2])
+        if duo:
+            g = (0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]) / 255.0
+            px = tuple(round(dk[k] + (lt[k] - dk[k]) * g) for k in range(3))  # type: ignore[index]
+        L, a, bb = _lab(px)
+        sl, sa, sb, sc = sl + L, sa + a, sb + bb, sc + math.hypot(a, bb)
+    return {"L": sl / n, "a": sa / n, "b": sb / n, "C": sc / n, "sharp": sharp}
+
 def backdrop_image(page: Dict[str, Any], target: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], bool]]:
     """文字落在哪张图上：返回（图片元素，图与文字之间是否隔着色块/渐变蒙版）；没有图则 None。
 

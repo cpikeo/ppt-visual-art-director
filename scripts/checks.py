@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-from model import page_views, chart_data_problems, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, intersection, union_box, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, image_probe, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import page_views, chart_data_problems, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, intersection, union_box, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, image_probe, image_signature, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+
+LAYER_STRATEGIES = ("layered", "interlock", "diagonal", "bleed")   # 声明了这些构图，图片之间的层叠才算有依据
 
 
 def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, views: Optional[List[Dict[str, Any]]] = None) -> Report:
@@ -89,9 +91,11 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, v
 
             display_text = kind in ("number", "title")  # 巨型数字/标题可以是底层图形（字体即图像）
             if el.get("overlap_allowed") and kind not in CARRIERS and not display_text and not (
-                    kind == "image" and el.get("image_role") in ("background", "texture", "hero")):
+                    kind == "image" and (el.get("image_role") in ("background", "texture", "hero")
+                                         or (page.get("composition") or {}).get("strategy") in LAYER_STRATEGIES)):
                 rep.hard("E-OVERLAP", eloc,
-                         "overlap_allowed 只能声明在承载层（背景图、整幅主视觉/蒙版/色块/闭合路径/做底的巨型数字或标题）上；正文、注释与图表被压时不能自我豁免")
+                         "overlap_allowed 只能声明在承载层（背景图、整幅主视觉/蒙版/色块/闭合路径/做底的巨型数字或标题）上；"
+                         "图片被图片层叠时，需页面 composition.strategy 声明 layered/interlock/diagonal/bleed；正文、注释与图表被压时不能自我豁免")
             if kind == "divider" and eh > 0.2:
                 rep.soft("W-GEOM", eloc, f"divider 高 {eh:.2f}in，已经是一块色块；用 shape 更清楚")
             if kind == "group":
@@ -115,6 +119,8 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, v
                 check_chart(eloc, el, plan, page, rep)
             elif kind == "legend":
                 check_legend(plan, page, el, eloc, rep)
+
+        _check_fusion(rep, pid, page, view, asset_root)
 
         elems = view["elems"]
         has_legend_el = any(e.get("type") == "legend" for e in elems)
@@ -166,11 +172,17 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, v
         items, boxes = view["items"], view["boxes"]
         for i, lower in enumerate(items):
             lbox = boxes.get(lower["el"].get("id"))
-            if lbox is None or lower["el"].get("overlap_allowed") or lower["el"]["type"] == "path":
+            if lbox is None or lower["el"]["type"] == "path":
+                continue
+            # 非承载层的图（主体/细节等）只允许被别的图层叠；文字压在它上面仍然是 E-OVERLAP。
+            images_only = lower["el"]["type"] == "image" and lower["el"].get("image_role") not in ("background", "texture", "hero")
+            if lower["el"].get("overlap_allowed") and not images_only:
                 continue
             lbox = rot_box(lbox, lower["el"].get("rotation"))
             for upper in items[i + 1:]:
                 if upper["group"] is not None and upper["group"] == lower["group"]:
+                    continue
+                if lower["el"].get("overlap_allowed") and upper["el"]["type"] == "image":
                     continue
                 ubox = boxes.get(upper["el"].get("id"))
                 if ubox is None:
@@ -322,6 +334,36 @@ def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
         rep.soft("W-PPI", loc, f"有效 {ppi:.0f} ppi < {LIMITS['image']['min_ppi']}，投影会发虚")
     if loss is not None and loss > LIMITS["image"]["max_crop_loss"]:
         rep.soft("W-CROP", loc, f"最终裁切丢掉了原图 {loss:.0%}，画幅或落位框大概选错了")
+
+def _check_fusion(rep: Report, pid: str, page: Dict[str, Any], view: Dict[str, Any], asset_root: Path) -> None:
+    """同页多图是否属于同一个世界：只报可计算的差（明度、冷暖、色度），有意的并置用 composition.exception 声明。"""
+    cfg = LIMITS["image"]["fusion"]
+    sigs: List[Tuple[str, Dict[str, float]]] = []
+    for item in view["items"]:
+        el = item["el"]
+        if el.get("type") != "image" or el.get("image_role") in ("icon", "texture"):
+            continue
+        box = explicit_box(el)
+        path = resolve_asset(asset_root, el.get("image_id", ""))
+        if box is None or path is None or box[2] * box[3] < cfg["min_area_sq_in"]:
+            continue
+        sig = image_signature(path, el)
+        if sig is not None:
+            sigs.append((str(el.get("id")), sig))
+    if len(sigs) < cfg["min_images"]:
+        return
+    spread = {k: max(s[k] for _i, s in sigs) - min(s[k] for _i, s in sigs) for k in ("L", "b", "C")}
+    over = [f"{name} 差 {spread[k]:.0f}（上限 {cfg[lim]}）" for k, name, lim in
+            (("L", "明度 L*", "max_dL"), ("b", "冷暖 b*", "max_db"), ("C", "色度 C*", "max_dC"))
+            if spread[k] > cfg[lim]]
+    if not over:
+        return
+    declared = str((page.get("composition") or {}).get("exception") or "").strip()
+    msg = f"同页 {len(sigs)} 张图的{'；'.join(over)}：它们是同一个世界吗？统一选图或裁切，或把差异当作表达写进 composition.exception"
+    if declared:
+        rep.info("I-FUSION", pid, msg + "（已声明破格理由）")
+    else:
+        rep.soft("W-FUSION", pid, msg)
 
 def check_path(page: Dict[str, Any], el, loc, boxes, rep: Report) -> None:
     pts = resolve_points(el, boxes)

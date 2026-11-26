@@ -28,7 +28,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import show, write_atomic, place_atomic, temp_beside, EMU, list_indent_for, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_numbers, page_views, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import show, write_atomic, place_atomic, temp_beside, EMU, list_indent_for, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, crop_geometry, MASK_PRESETS, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_numbers, page_views, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import stabilize_package, apply_duotone, apply_fill_alpha, apply_gradient, apply_stroke, set_corner_radius, set_run_font, strip_style
 
 
@@ -187,7 +187,38 @@ def add_image(slide, page, el, asset_root: Path):
             etree.SubElement(blip, qn("a:alphaModFix")).set("amt", str(int(round(float(el["alpha"]) * 100000))))
     if el.get("duotone"):
         apply_duotone(pic, el["duotone"])
+    if el.get("mask"):
+        apply_mask(pic, el["mask"])
+    if el.get("soft_edge_pt"):
+        # spPr 子元素次序：xfrm → 几何 → 填充 → 线 → effectLst，图片没有填充与线，追加在末尾即合法。
+        eff = etree.SubElement(pic._element.spPr, qn("a:effectLst"))
+        etree.SubElement(eff, qn("a:softEdge")).set("rad", str(int(round(float(el["soft_edge_pt"]) * 12700))))
     return pic
+
+def apply_mask(pic, mask) -> None:
+    """图片蒙版：预设名换 prstGeom；顶点数组（0–1，相对图片框）写成原生 custGeom 多边形。
+    都是 PowerPoint 里可继续「裁剪为形状 / 编辑顶点」的原生几何，不栅格化。"""
+    spPr = pic._element.spPr
+    old = spPr.find(qn("a:prstGeom"))
+    if isinstance(mask, str):
+        old.set("prst", MASK_PRESETS[mask])
+        return
+    cust = etree.Element(qn("a:custGeom"))
+    for tag in ("a:avLst", "a:gdLst", "a:ahLst", "a:cxnLst"):
+        etree.SubElement(cust, qn(tag))
+    rect = etree.SubElement(cust, qn("a:rect"))
+    for k, v in (("l", "0"), ("t", "0"), ("r", "r"), ("b", "b")):
+        rect.set(k, v)
+    path = etree.SubElement(etree.SubElement(cust, qn("a:pathLst")), qn("a:path"))
+    path.set("w", "100000")
+    path.set("h", "100000")
+    for i, (px, py) in enumerate(mask):
+        node = etree.SubElement(path, qn("a:moveTo" if i == 0 else "a:lnTo"))
+        pt = etree.SubElement(node, qn("a:pt"))
+        pt.set("x", str(int(round(float(px) * 100000))))
+        pt.set("y", str(int(round(float(py) * 100000))))
+    etree.SubElement(path, qn("a:close"))
+    spPr.replace(old, cust)
 
 def add_page_number(slide, plan, page, index):
     from pptx.util import Inches

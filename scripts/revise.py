@@ -567,7 +567,7 @@ OP_KEYS = {
 }
 # 每种操作授权改动的对象属性（对象指纹的顶层键）。段落样式与文本框字段再按声明收窄。
 GRANT_TOP = {
-    "text": {"text"}, "box": {"box_in"}, "style": set(), "fill": {"fill"},
+    "text": {"text"}, "box": {"box_in", "ppi", "crop"}, "style": set(), "fill": {"fill"},
     "line": {"stroke", "stroke_pt"}, "image": {"sha256", "px", "ppi", "crop"},
     "chart_data": {"plots", "payload"}, "order": set(), "delete": set(), "background": set(),
 }
