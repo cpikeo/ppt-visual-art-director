@@ -533,30 +533,8 @@ def r_chart(c: Ctx, p: Dict[str, Any]):
     return els + _note(c, p, dark), dark
 
 
-def _compare_scaled(c: Ctx, p: Dict[str, Any], head: List[Dict[str, Any]], vals: List[float], dark: bool):
-    """尺度隐喻（`scale: "value"`）：数字字高与 `value` 成正比、落在同一条基线上，落差本身就是论点。
-    较大者占 8 栏、较小者占 4 栏；较小者字号不低于 `SCALE_FLOOR_PT`（再小就读不清，不再成比例）。
-    这是 design.md「尺度隐喻」生成器的配方化：压住与被压住由数据的真实比例决定，而不是由作者目测。"""
-    pal = c.pal(dark)
-    title = head[-1]
-    big_i = 0 if vals[0] >= vals[1] else 1
-    spans = {big_i: 8, 1 - big_i: 4}
-    starts = {0: 1, 1: 1 + spans[0]}
-    keys = ("left", "right")
-    bw = col(starts[big_i], spans[big_i])[1]
-    big_pt = c.fit_pt("number", str(p[keys[big_i]]["number"]), bw, pal["bg"], c.sz["number"] * 2.0,
-                      c.sz["number"] * 0.6, line_spacing=1.0, letter_spacing_pt=-4)
-    ratio = vals[1 - big_i] / vals[big_i]
-    small_w = col(starts[1 - big_i], spans[1 - big_i])[1]
-    while True:
-        small_pt = max(SCALE_FLOOR_PT, int(round(big_pt * ratio / 2.0)) * 2)
-        # 较小者必须放得进自己的 4 栏：放不下（两数接近时按比例的字号比窄栏还宽）就整体等比收小，
-        # 否则它会折行、框高暴涨，与标签和标题实质重叠（E-OVERLAP）。
-        if small_pt <= c.fit_pt("number", str(p[keys[1 - big_i]]["number"]), small_w, pal["bg"], small_pt, SCALE_FLOOR_PT,
-                                 line_spacing=1.0, letter_spacing_pt=-4 if small_pt > 100 else -2) or big_pt <= SCALE_FLOOR_PT * 2:
-            break
-        big_pt -= 2
-    sizes = {big_i: big_pt, 1 - big_i: small_pt}
+def _compare_scaled_els(c: Ctx, p: Dict[str, Any], pal: Dict[str, str], keys, starts, spans, sizes, big_i: int,
+                        big_pt: int):
     els: List[Dict[str, Any]] = []
     labels, nums, bodies = [], {}, []
     for i, key in enumerate(keys):
@@ -580,8 +558,41 @@ def _compare_scaled(c: Ctx, p: Dict[str, Any], head: List[Dict[str, Any]], vals:
         b = c.text(f"{key}_b", "body", x, base_y + 0.25, c.widow_w("body", side["body"], w, c.sz["body"], pal["bg"],
                    max_w=w * 1.1), side["body"], pal["bg"], font_size=c.sz["body"], color=pal["ink2"])
         els += [labels[i], nums[i], b]
-    block = max(e["y"] + e["h"] for e in els)
+    return els, base_y
+
+
+def _compare_scaled(c: Ctx, p: Dict[str, Any], head: List[Dict[str, Any]], vals: List[float], dark: bool):
+    """尺度隐喻（`scale: "value"`）：数字字高与 `value` 成正比、落在同一条基线上，落差本身就是论点。
+    较大者占 8 栏、较小者占 4 栏；较小者字号不低于 `SCALE_FLOOR_PT`（再小就读不清，不再成比例）。
+    这是 design.md「尺度隐喻」生成器的配方化：压住与被压住由数据的真实比例决定，而不是由作者目测。"""
+    pal = c.pal(dark)
+    title = head[-1]
+    big_i = 0 if vals[0] >= vals[1] else 1
+    spans = {big_i: 8, 1 - big_i: 4}
+    starts = {0: 1, 1: 1 + spans[0]}
+    keys = ("left", "right")
+    bw = col(starts[big_i], spans[big_i])[1]
+    big_pt = c.fit_pt("number", str(p[keys[big_i]]["number"]), bw, pal["bg"], c.sz["number"] * 2.0,
+                      c.sz["number"] * 0.6, line_spacing=1.0, letter_spacing_pt=-4)
+    ratio = vals[1 - big_i] / vals[big_i]
+    small_w = col(starts[1 - big_i], spans[1 - big_i])[1]
+    while True:
+        small_pt = max(SCALE_FLOOR_PT, int(round(big_pt * ratio / 2.0)) * 2)
+        # 较小者必须放得进自己的 4 栏：放不下（两数接近时按比例的字号比窄栏还宽）就整体等比收小，
+        # 否则它会折行、框高暴涨，与标签和标题实质重叠（E-OVERLAP）。
+        if small_pt <= c.fit_pt("number", str(p[keys[1 - big_i]]["number"]), small_w, pal["bg"], small_pt, SCALE_FLOOR_PT,
+                                 line_spacing=1.0, letter_spacing_pt=-4 if small_pt > 100 else -2) or big_pt <= SCALE_FLOOR_PT * 2:
+            break
+        big_pt -= 2
     free_top, free_bottom = title["y"] + title["h"] + 0.2, FOOT
+    while True:
+        sizes = {big_i: big_pt, 1 - big_i: max(SCALE_FLOOR_PT, int(round(big_pt * ratio / 2.0)) * 2)}
+        els, base_y = _compare_scaled_els(c, p, pal, keys, starts, spans, sizes, big_i, big_pt)
+        block = max(e["y"] + e["h"] for e in els)
+        # 整块（标签+数字+正文）必须放进标题与页脚之间：放不下就整体等比收小，而不是越界压到脚注（E-OVERLAP）。
+        if block <= free_bottom - free_top or big_pt <= SCALE_FLOOR_PT * 2:
+            break
+        big_pt -= 4
     shift = free_top + max((free_bottom - free_top - block) / 2, 0.0)
     for el in els:
         el["y"] = round(el["y"] + shift, 3)

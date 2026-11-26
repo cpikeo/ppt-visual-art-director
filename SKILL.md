@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 / 改 / 评审 PPT（汇报、路演、发布、复盘、融资）。先定受众、洞察与原创视觉概念，再由 Plan 契约确定性编译为原生可编辑 PPTX，看真实渲染后定点修正；也用于诊断与定点改稿。不适用于纯文案、Word/PDF 排版。
-version: 20.4.0
+version: 20.5.0
 ---
 
 # PPT 视觉艺术指导
@@ -48,7 +48,7 @@ python scripts/revise.py inspect 原稿.pptx                            # 改稿
 python scripts/revise.py 原稿.pptx edit.json out.pptx                 # 改稿：定点编辑 + 保留核对
 ```
 
-图像可用 `crop_focus` + `crop_zoom`（1–8）从同一素材裁出“整体 + 局部”，配合 `mask`、层叠与出血做不规则构成（`design.md` 五）。成品原生可编辑（标题占位符、真项目符号、原生图表与表格），不整页栅格化；不自动缩字、换色、补数据、联网取图。`design_state` 交付前须无 `draft`。只产出 `.pptx`。
+整页空间合成（图、背景、字如何共同建立一个“场”）见 `design.md` 六。图像可用 `crop_focus` + `crop_zoom`（1–8）从同一素材裁出“整体 + 局部”，配合 `mask`、层叠与出血做不规则构成（`design.md` 五）。成品原生可编辑（标题占位符、真项目符号、原生图表与表格），不整页栅格化；不自动缩字、换色、补数据、联网取图。`design_state` 交付前须无 `draft`。只产出 `.pptx`。
 
 ## 四、验收
 
