@@ -51,6 +51,12 @@ def qn(tag: str) -> str:
     prefix, local = tag.split(":")
     return "{%s}%s" % (_NS[prefix], local)
 
+def ser_name(ser) -> str:
+    """c:ser 的系列名（c:tx 下第一个 c:v；缺省为空串）。生成、独立审计与核验共用这一个读法。"""
+    node = ser.find(qn("c:tx"))
+    node = None if node is None else node.find(".//" + qn("c:v"))
+    return node.text if node is not None and node.text else ""
+
 # 解析来自外部的 PPTX 部件一律走这个解析器：不展开实体、不联网，防 XXE 与实体膨胀。
 SAFE_PARSER = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False, huge_tree=False)
 
@@ -162,6 +168,13 @@ def strict_json_loads(raw: str) -> Any:
         raise ValueError("JSON 嵌套过深，拒绝解析")
 
 
+def schema_errors(plan: Any) -> List[str]:
+    """plan 对 plan.schema.json 的违例（路径排序，文案截断）；load_plan 与 scaffold init 共用。"""
+    from jsonschema import Draft202012Validator
+    errs = sorted(Draft202012Validator(SCHEMA).iter_errors(plan), key=lambda e: list(map(str, e.absolute_path)))
+    return [f"{'/'.join(map(str, e.absolute_path)) or '(根)'}: {e.message[:300]}" for e in errs]
+
+
 def load_plan(path: Path, rep: Report) -> Optional[Dict[str, Any]]:
     try:
         raw = path.read_text(encoding="utf-8-sig")
@@ -174,17 +187,15 @@ def load_plan(path: Path, rep: Report) -> Optional[Dict[str, Any]]:
         rep.hard("E-SCHEMA", str(path), f"JSON 无效：{exc}")
         return None
     try:
-        from jsonschema import Draft202012Validator
+        errors = schema_errors(plan)
     except ImportError:
         rep.hard("E-SCHEMA", "环境", "缺少 jsonschema：pip install -r requirements.txt")
         return plan
-    validator = Draft202012Validator(SCHEMA)
-    errors = sorted(validator.iter_errors(plan), key=lambda e: list(map(str, e.absolute_path)))
-    for err in errors:
-        where = "/".join(str(p) for p in err.absolute_path) or "(根)"
-        rep.hard("E-SCHEMA", where, err.message[:300])
+    for line in errors:
+        where, _, msg = line.partition(": ")
+        rep.hard("E-SCHEMA", where, msg)
     if isinstance(plan, dict) and not errors:
-        for where in _xml_illegal(plan):
+        for where in xml_illegal(plan):
             rep.hard("E-SCHEMA", where, "含 XML 不允许的控制字符（\\x00–\\x08、\\x0b、\\x0c、\\x0e–\\x1f 等）：删掉它，换行用 \\n")
     return plan if isinstance(plan, dict) else None
 
@@ -192,14 +203,14 @@ def load_plan(path: Path, rep: Report) -> Optional[Dict[str, Any]]:
 _XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 
 
-def _xml_illegal(node: Any, path: str = "") -> List[str]:
+def xml_illegal(node: Any, path: str = "") -> List[str]:
     """找出含 XML 1.0 非法字符的字符串路径（最多 5 条）。在载入期拦下，好过写包末段 E-RUNTIME 或写出 _x0001_ 乱码。"""
     if isinstance(node, str):
         return [path or "(根)"] if _XML_BAD.search(node) else []
     items = node.items() if isinstance(node, dict) else enumerate(node) if isinstance(node, list) else ()
     out: List[str] = []
     for k, v in items:
-        out += _xml_illegal(v, f"{path}/{k}" if path else str(k))
+        out += xml_illegal(v, f"{path}/{k}" if path else str(k))
         if len(out) >= 5:
             break
     return out[:5]
@@ -243,7 +254,7 @@ def _boundary_em(text: str) -> float:
     return 0.1 * n
 
 
-def _para_width_em(seg: str, pieces: List[Dict[str, Any]], pt: float) -> float:
+def para_width_em(seg: str, pieces: List[Dict[str, Any]], pt: float) -> float:
     """一段的宽度，以"基准字号 1 em"计。逐 run 按各自字号折算：
     标题里放一个 96pt 数字加 24pt 单位，按整段取同一个字号估高会差出好几行。"""
     if not pieces:
@@ -286,7 +297,7 @@ def fit_lines(el: Dict[str, Any], st: Dict[str, Any], box_w: float) -> List[int]
     for seg, pieces in paras:
         base = max([float(p.get("font_size") or st["size"]) for p in pieces] or [st["size"]])
         cap = usable / (base / 72.0)
-        out.append(max(1, math.ceil(_para_width_em(seg, pieces, base) / cap - 1e-9)))
+        out.append(max(1, math.ceil(para_width_em(seg, pieces, base) / cap - 1e-9)))
     return out or [1]
 
 def line_pitch_em(family: Optional[str]) -> float:
@@ -460,6 +471,38 @@ def chart_color_map(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
     explicit = {str(k): str(v).upper() for k, v in (chart.get("color_map") or {}).items()}
     base = chart_palette(plan, chart) or LIMITS["defaults"]["palette"]
     return [explicit.get(name, base[i % len(base)]) for i, name in enumerate(items)]
+
+def chart_type_name(chart: Dict[str, Any]) -> str:
+    """plan 图表声明 → python-pptx XL_CHART_TYPE 成员名。图表“种类契约”的唯一来源：
+    charts.add_chart 据此建图，verify.py 据此比对成品里由 python-pptx 从 XML 读回的类型。"""
+    kind, stacked, horiz = chart["kind"], chart.get("stacked"), chart.get("horizontal")
+    if kind == "bar":
+        shape = "BAR" if horiz else "COLUMN"
+        return f"{shape}_STACKED_100" if stacked == "percent" else f"{shape}_STACKED" if stacked else f"{shape}_CLUSTERED"
+    if kind == "area":
+        return "AREA_STACKED" if stacked else "AREA"
+    return {"line": "LINE", "pie": "PIE", "donut": "DOUGHNUT"}.get(kind, "XY_SCATTER")
+
+def _chart_numbers(chart: Dict[str, Any]) -> List[float]:
+    return [v for s in (chart.get("data") or {}).get("series") or [] for v in s.get("values") or []
+            if isinstance(v, (int, float)) and not isinstance(v, bool)]
+
+def chart_min_value(chart: Dict[str, Any]) -> Optional[float]:
+    """坐标轴契约：数据最小值（无数值为 None）。"""
+    values = _chart_numbers(chart)
+    return min(values) if values else None
+
+def chart_non_negative(chart: Dict[str, Any]) -> bool:
+    """坐标轴契约：全部数据 ≥ 0 时，柱/面积的值轴从 0 起。charts 设轴、verify 核轴共用。"""
+    low = chart_min_value(chart)
+    return low is not None and low >= 0
+
+def legend_label(spec: Dict[str, Any], item: str, values: List[Any], i: int, show_value: bool) -> str:
+    """图例契约：标签 = 类别/系列名，饼/环可附与直标同源的读数（柱线图的图例只列名）。"""
+    if show_value and i < len(values):
+        read = f"{float(values[i]):g}%" if spec.get("stacked") == "percent" else f"{float(values[i]):g}" + chart_unit(spec)
+        return f"{item} · {read}"
+    return str(item)
 
 def chart_flags(chart: Dict[str, Any]) -> Dict[str, bool]:
     """原生图例与直标的**有效**开关：compile、checks、verify 只读这里，没有第二份缺省。
@@ -687,7 +730,7 @@ def flatten(page: Dict[str, Any]) -> List[Dict[str, Any]]:
     walk(page.get("elements") or [], None)
     return out
 
-def _union(boxes: List[Box]) -> Optional[Box]:
+def union_box(boxes: List[Box]) -> Optional[Box]:
     if not boxes:
         return None
     x0 = min(b[0] for b in boxes)
@@ -709,9 +752,10 @@ def all_elements(page: Dict[str, Any]) -> List[Dict[str, Any]]:
     walk(page.get("elements") or [])
     return out
 
-def page_geometry(page: Dict[str, Any]) -> Dict[str, Box]:
-    """解析每页全部元素的盒子：显式坐标、path 点集、group 子元素并集。锚点在这里解析。"""
-    by_id: Dict[str, Dict[str, Any]] = {str(el.get("id")): el for el in all_elements(page)}
+def page_geometry(page: Dict[str, Any], elems: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Box]:
+    """解析每页全部元素的盒子：显式坐标、path 点集、group 子元素并集。锚点在这里解析。
+    elems：调用方已有的 all_elements(page)，传入则不再遍历。"""
+    by_id: Dict[str, Dict[str, Any]] = {str(el.get("id")): el for el in (all_elements(page) if elems is None else elems)}
     boxes: Dict[str, Box] = {}
 
     def resolve(eid: str, stack: Tuple[str, ...]) -> Optional[Box]:
@@ -732,7 +776,7 @@ def page_geometry(page: Dict[str, Any]) -> Dict[str, Box]:
                 box = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
         elif kind == "group":
             kids = [resolve(str(c.get("id")), stack + (eid,)) for c in el.get("elements") or []]
-            box = _union([b for b in kids if b is not None])
+            box = union_box([b for b in kids if b is not None])
         else:
             box = explicit_box(el)
         if box is not None:
@@ -761,7 +805,16 @@ def resolve_points(el: Dict[str, Any], boxes: Dict[str, Box]) -> List[Tuple[floa
             out.append(xy)
     return out
 
-def _intersection(a: Box, b: Box) -> Tuple[float, float]:
+def page_views(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """每页遍历一次、几何解析一次：{"elems": all_elements, "items": flatten, "boxes": page_geometry}。
+    只读视图，生命周期 = 一次 CLI 运行内对**同一份未被修改的 plan**；plan 变了就重建，不跨运行保存。"""
+    views = []
+    for page in plan.get("pages") or []:
+        elems = all_elements(page)
+        views.append({"elems": elems, "items": flatten(page), "boxes": page_geometry(page, elems)})
+    return views
+
+def intersection(a: Box, b: Box) -> Tuple[float, float]:
     ax, ay, aw, ah = a
     bx, by, bw, bh = b
     ix = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
@@ -769,7 +822,7 @@ def _intersection(a: Box, b: Box) -> Tuple[float, float]:
     return ix, iy
 
 def substantive_overlap(a: Box, b: Box) -> bool:
-    ix, iy = _intersection(a, b)
+    ix, iy = intersection(a, b)
     if min(ix, iy) < LIMITS["geometry"]["overlap_min_edge_in"]:
         return False
     area = ix * iy
@@ -904,7 +957,7 @@ def resolve_bg(page: Dict[str, Any], target: Dict[str, Any]) -> Optional[str]:
         below = explicit_box(el)
         if below is None or el.get("type") not in ("shape", "divider", "image"):
             continue
-        ix, iy = _intersection(below, box)
+        ix, iy = intersection(below, box)
         cover = ix * iy / area
         if el["type"] == "image" and cover >= 0.6:
             return None
@@ -927,7 +980,7 @@ def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]
         return None, None
     if w <= 0 or h <= 0 or not px_w or not px_h:
         return None, None
-    left, right, top, bottom = _crop_geometry(px_w, px_h, w, h, focus)
+    left, right, top, bottom = crop_geometry(px_w, px_h, w, h, focus)
     loss = 1 - (1 - left - right) * (1 - top - bottom)
     # 有效分辨率按"最终留在画面里的那部分像素"算：裁得越紧，同样的框里 ppi 越高。
     return min(px_w * (1 - left - right) / w, px_h * (1 - top - bottom) / h), loss
@@ -950,7 +1003,7 @@ def backdrop_image(page: Dict[str, Any], target: Dict[str, Any]) -> Optional[Tup
         below = explicit_box(el)
         if below is None:
             continue
-        ix, iy = _intersection(below, box)
+        ix, iy = intersection(below, box)
         cover = ix * iy / area
         if el.get("type") == "image" and cover >= 0.6:
             found, scrim = el, False
@@ -977,7 +1030,7 @@ def zone_probe(path: Path, img_el: Dict[str, Any], text_box: Box, page_backgroun
         with Image.open(path) as src:
             src = src.convert("RGB")
             pw, ph = src.size
-            l, r, t, b = _crop_geometry(pw, ph, img_box[2], img_box[3], img_el.get("crop_focus"))
+            l, r, t, b = crop_geometry(pw, ph, img_box[2], img_box[3], img_el.get("crop_focus"))
             x0, y0 = max(img_box[0], text_box[0]), max(img_box[1], text_box[1])
             x1 = min(img_box[0] + img_box[2], text_box[0] + text_box[2])
             y1 = min(img_box[1] + img_box[3], text_box[1] + text_box[3])
@@ -1037,7 +1090,7 @@ def corner_adj(radius_in: float, w: float, h: float) -> int:
     short = max(min(w, h), 1e-6)
     return int(round(min(max(radius_in / short, 0.0), 0.5) * 100000))
 
-def _crop_geometry(src_w: float, src_h: float, w: float, h: float, focus: Optional[Dict[str, float]]):
+def crop_geometry(src_w: float, src_h: float, w: float, h: float, focus: Optional[Dict[str, float]]):
     fx = 0.5 if not focus else float(focus.get("x", 0.5))
     fy = 0.5 if not focus else float(focus.get("y", 0.5))
     src_ratio, dst_ratio = src_w / src_h, w / h

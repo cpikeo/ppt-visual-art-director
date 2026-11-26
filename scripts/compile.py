@@ -28,8 +28,8 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import show, write_atomic, place_atomic, temp_beside, EMU, LIST_INDENT_IN, list_indent_for, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, _crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_geometry, page_numbers, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
-from ooxml import stabilize_package, _apply_duotone, _apply_fill_alpha, _apply_gradient, _apply_stroke, _set_corner_radius, _set_run_font, _strip_style
+from model import show, write_atomic, place_atomic, temp_beside, EMU, list_indent_for, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, crop_geometry, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_numbers, page_views, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from ooxml import stabilize_package, apply_duotone, apply_fill_alpha, apply_gradient, apply_stroke, set_corner_radius, set_run_font, strip_style
 
 
 # ---------------------------------------------------------------- 建对象
@@ -95,7 +95,7 @@ def add_text(slide, plan, page, el, top_level=True):
         for piece in pieces:
             run = para.add_run()
             run.text = piece.get("text", "")
-            _set_run_font(
+            set_run_font(
                 run,
                 piece.get("font") or st["family"],
                 float(piece.get("font_size") or st["size"]),
@@ -117,20 +117,20 @@ def add_shape(slide, page, el):
     shape = slide.shapes.add_shape(kinds[el.get("shape_kind") or "rect"],
                                    Inches(box[0]), Inches(box[1]), Inches(box[2]), Inches(box[3]))
     shape.name = f"{page['id']}.{el['id']}"
-    _strip_style(shape)
+    strip_style(shape)
     shape.shadow.inherit = False
     if el.get("gradient"):
-        _apply_gradient(shape, el["gradient"])
+        apply_gradient(shape, el["gradient"])
     elif el.get("color"):
         shape.fill.solid()
         shape.fill.fore_color.rgb = RGBColor.from_string(str(el["color"]).lstrip("#").upper())
         if el.get("fill_alpha") and float(el["fill_alpha"]) < 1:
-            _apply_fill_alpha(shape, float(el["fill_alpha"]))
+            apply_fill_alpha(shape, float(el["fill_alpha"]))
     else:
         shape.fill.background()
-    _apply_stroke(shape, el.get("stroke"))
+    apply_stroke(shape, el.get("stroke"))
     if el.get("corner_in") is not None:
-        _set_corner_radius(shape, float(el["corner_in"]), box)
+        set_corner_radius(shape, float(el["corner_in"]), box)
     if shape.has_text_frame:
         shape.text_frame.text = ""
     return shape
@@ -152,17 +152,17 @@ def add_path(slide, page, el, boxes):
                                   close=bool(el.get("closed")))
         shape = builder.convert_to_shape()
     shape.name = name
-    _strip_style(shape)
+    strip_style(shape)
     shape.shadow.inherit = False
     has_fill = hasattr(shape, "fill")
     if el.get("closed") and el.get("color") and has_fill:
         shape.fill.solid()
         shape.fill.fore_color.rgb = RGBColor.from_string(str(el["color"]).lstrip("#").upper())
         if el.get("fill_alpha") and float(el["fill_alpha"]) < 1:
-            _apply_fill_alpha(shape, float(el["fill_alpha"]))
+            apply_fill_alpha(shape, float(el["fill_alpha"]))
     elif has_fill:
         shape.fill.background()
-    _apply_stroke(shape, el.get("stroke"), str(el.get("arrow") or "none"))
+    apply_stroke(shape, el.get("stroke"), str(el.get("arrow") or "none"))
     return shape
 
 def add_image(slide, page, el, asset_root: Path):
@@ -177,7 +177,7 @@ def add_image(slide, page, el, asset_root: Path):
     box = explicit_box(el)
     pic = slide.shapes.add_picture(str(path), Inches(box[0]), Inches(box[1]), Inches(box[2]), Inches(box[3]))
     pic.name = f"{page['id']}.{el['id']}"
-    l, r, t, b = _crop_geometry(src_w, src_h, box[2], box[3], el.get("crop_focus"))
+    l, r, t, b = crop_geometry(src_w, src_h, box[2], box[3], el.get("crop_focus"))
     if any(v > 0 for v in (l, r, t, b)):
         pic.crop_left, pic.crop_right, pic.crop_top, pic.crop_bottom = l, r, t, b
     # 先写透明度，再写双色调：a:blip 的子元素有固定次序，反过来插会得到非法顺序。
@@ -186,7 +186,7 @@ def add_image(slide, page, el, asset_root: Path):
         if blip is not None:
             etree.SubElement(blip, qn("a:alphaModFix")).set("amt", str(int(round(float(el["alpha"]) * 100000))))
     if el.get("duotone"):
-        _apply_duotone(pic, el["duotone"])
+        apply_duotone(pic, el["duotone"])
     return pic
 
 def add_page_number(slide, plan, page, index):
@@ -208,7 +208,7 @@ def add_page_number(slide, plan, page, index):
     para.alignment = PP_ALIGN.RIGHT
     run = para.add_run()
     run.text = str(cfg["start"] + index)
-    _set_run_font(run, (plan.get("fonts") or {}).get("body") or LIMITS["defaults"]["fonts"]["body"],
+    set_run_font(run, (plan.get("fonts") or {}).get("body") or LIMITS["defaults"]["fonts"]["body"],
                   LIMITS["page_number"]["font_pt"], ink, False)
     return shape
 
@@ -382,7 +382,8 @@ def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
     stabilize_package(path, replace={"docProps/app.xml": xml.encode("utf-8")})
 
 
-def build(plan: Dict[str, Any], asset_root: Path, out: Path, force: bool = False) -> None:
+def build(plan: Dict[str, Any], asset_root: Path, out: Path, force: bool = False, views: Optional[List[Dict[str, Any]]] = None) -> None:
+    views = page_views(plan) if views is None else views
     from pptx import Presentation
     from pptx.util import Inches
     from pptx.dml.color import RGBColor
@@ -404,7 +405,7 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path, force: bool = False
         background = slide.background.fill
         background.solid()
         background.fore_color.rgb = RGBColor.from_string(page_bg(page).lstrip("#"))
-        boxes = page_geometry(page)
+        boxes = views[idx]["boxes"]
         built = [build_element(slide, plan, page, el, boxes, asset_root) for el in page["elements"]]
         holder = slide.shapes.title
         if holder is not None and not holder.name.startswith(f"{page['id']}."):
@@ -507,8 +508,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     try:
-        rep.extend(validate(plan, asset_root, args.production))
-        rep.extend(design_signals(plan))
+        views = page_views(plan)   # 遍历与几何解析一次，validate / design_signals / build 共用（plan 在此之后不再被修改）
+        rep.extend(validate(plan, asset_root, args.production, views))
+        rep.extend(design_signals(plan, views))
     except Exception as exc:   # 校验层遇到未预料的输入：按文档化退出码 3 报告，不抛 Traceback、不写文件
         print(f"[HARD] E-RUNTIME 校验期失败：{type(exc).__name__}: {str(exc)[:200]}（plan 里可能有非法数值或结构；未写出文件）")
         return 3
@@ -521,7 +523,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     try:
-        build(plan, asset_root, out_path, args.force)
+        build(plan, asset_root, out_path, args.force, views)
     except FileExistsError:
         print(f"[HARD] E-EXIST {out_path} 在编译期间已被创建；未覆盖（确认要替换再加 --force）")
         return 2

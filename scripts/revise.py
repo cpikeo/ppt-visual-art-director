@@ -410,7 +410,7 @@ def inspect_deck(pptx: Path) -> Dict[str, Any]:
     from pptx import Presentation
 
     pptx = Path(pptx)
-    prs = Presentation(str(pptx))
+    prs = Presentation(str(pptx))   # 必须独立解析：复用待改的 prs 做“改前快照”会让保留核对把活对象的惰性归一化当成改动（见 dev/AUDIT.md）
     out: Dict[str, Any] = {
         "file": str(pptx),
         "canvas_in": [inch(prs.slide_width), inch(prs.slide_height)],
@@ -1037,7 +1037,7 @@ def post_check(after: Dict[str, Any], f: M.Report) -> None:
                 opaque = bool(up_fill) or up_kind in ("picture", "chart", "table")
                 if not opaque:
                     continue
-                ix, iy = M._intersection(glyph, up_box)
+                ix, iy = M.intersection(glyph, up_box)
                 area = ix * iy
                 if area >= 0.35 and area >= 0.3 * max(glyph[2] * glyph[3], 1e-6):
                     f.soft("W-COVER", f"第 {page['index']} 页 {name}",
@@ -1595,7 +1595,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         ops = spec.get("ops") or []
         if not ops:
             raise M.BadOp("edit.json 里没有 ops")
-        bad = M._xml_illegal(spec)
+        bad = M.xml_illegal(spec)
         if bad:
             raise M.BadOp(f"edit.json 含 XML 不允许的控制字符：{'、'.join(bad)}（否则会被写成 _x0001_ 乱码）")
     except (OSError, ValueError, M.BadOp) as exc:

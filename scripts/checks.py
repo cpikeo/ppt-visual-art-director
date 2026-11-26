@@ -7,14 +7,16 @@ from __future__ import annotations
 import hashlib
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
-from model import chart_data_problems, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, _intersection, _union, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, flatten, image_probe, page_geometry, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
+from model import page_views, chart_data_problems, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, intersection, union_box, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, image_probe, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 
-def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -> Report:
+def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, views: Optional[List[Dict[str, Any]]] = None) -> Report:
+    """views：model.page_views(plan)；传入则与 design_signals/compile 共用一次遍历与几何解析。"""
     rep = Report()
+    views = page_views(plan) if views is None else views
     w, h = canvas(plan)
     tol = LIMITS["canvas"]["bound_tolerance_in"]
     pages = plan.get("pages") or []
@@ -25,7 +27,7 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
     if rhythm and len(rhythm) != len(pages):
         rep.soft("W-RHYTHM", "整稿", f"rhythm 有 {len(rhythm)} 条，页数 {len(pages)}；按页一一对应")
     brief = plan.get("brief") or {}
-    uses_images = any(el.get("type") == "image" for p in pages for el in all_elements(p))
+    uses_images = any(el.get("type") == "image" for v in views for el in v["elems"])
     if uses_images and not brief.get("art"):
         rep.info("I-ART", "brief", "本稿有图像，但没有写艺术指导五参数（光/景别/材质/色域/颗粒）：图的选法没有共同世界")
     if brief.get("art") and not uses_images:
@@ -42,11 +44,12 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
             rep.hard("E-ID", pid, f"页面 id 重复：{pid}")
         seen_pages.add(pid)
 
+        view = views[pi]
         elements = page.get("elements") or []
         if not elements:
             rep.soft("W-EMPTY", pid, "本页没有任何元素：成品只有页码，确认这是有意的空页")
         ids: set = set()
-        for el in all_elements(page):
+        for el in view["elems"]:
             eid = el.get("id", "?")
             if eid in ids:
                 rep.hard("E-ID", f"{pid}/{eid}", f"元素 id 在本页重复（含 group 子元素）：{eid}")
@@ -58,11 +61,11 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
         _check_depth(rep, pid, page, ids)
         _check_design_intent(rep, pid, page, ids, production)
 
-        boxes = page_geometry(page)
+        boxes = view["boxes"]
         if focus and focus in ids:
-            _check_dominance(rep, pid, page, focus, boxes)
+            _check_dominance(rep, pid, page, focus, boxes, view["items"])
 
-        for item in flatten(page):
+        for item in view["items"]:
             el = item["el"]
             eid = el.get("id", "?")
             eloc = f"{pid}/{eid}"
@@ -96,7 +99,7 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
                 if not kids:
                     rep.hard("E-GEOM", eloc, "group 没有子元素")
                 declared = explicit_box(el)
-                computed = _union([boxes[str(c.get("id"))] for c in kids if str(c.get("id")) in boxes] or [])
+                computed = union_box([boxes[str(c.get("id"))] for c in kids if str(c.get("id")) in boxes] or [])
                 if declared and computed and any(abs(a - b) > 0.05 for a, b in zip(declared, computed)):
                     rep.info("I-GROUP", eloc, "group 的几何由子元素推出，声明的 x/y/w/h 未采用")
 
@@ -113,7 +116,7 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
             elif kind == "legend":
                 check_legend(plan, page, el, eloc, rep)
 
-        elems = all_elements(page)
+        elems = view["elems"]
         has_legend_el = any(e.get("type") == "legend" for e in elems)
         # 手绘图例色块的识别：小方块 + 右侧标签 + 颜色不在本页任何图表的颜色映射里。
         # 出现即提示——手绘色块没有数据对应关系，是"扇区与图例错色"的高发形态。
@@ -138,7 +141,7 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
 
         if pid not in pn_cfg["hide"]:
             box = pn_box(plan, page)
-            for item in flatten(page):
+            for item in view["items"]:
                 el = item["el"]
                 if el.get("overlap_allowed"):
                     continue  # 承载层在下，页码本来就压在它上面
@@ -146,7 +149,7 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
                 if gb is None:
                     continue
                 gb = rot_box(gb, el.get("rotation"))
-                ix, iy = _intersection(gb, (box["x"], box["y"], box["w"], box["h"]))
+                ix, iy = intersection(gb, (box["x"], box["y"], box["w"], box["h"]))
                 if ix <= 0.02 or iy <= 0.02:
                     continue
                 where = f"{pid}/{el.get('id')}"
@@ -158,10 +161,9 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False) -
                     rep.soft("W-PAGE", where, "色块压到页码角区：确认页码在它上面可读，必要时换角区")
 
     # 跨元素：实质重叠（叠放顺序即声明顺序）。同一 group 内部的叠放是设计许可的，不查。
-    for page in pages:
+    for page, view in zip(pages, views):
         pid = page.get("id")
-        items = flatten(page)
-        boxes = page_geometry(page)
+        items, boxes = view["items"], view["boxes"]
         for i, lower in enumerate(items):
             lbox = boxes.get(lower["el"].get("id"))
             if lbox is None or lower["el"].get("overlap_allowed") or lower["el"]["type"] == "path":
@@ -624,9 +626,8 @@ def M_pending(page: Dict[str, Any]) -> List[str]:
     return pending_fields(page)
 
 
-def _check_dominance(rep: Report, pid: str, page: Dict[str, Any], focus: str, boxes: Dict[str, Any]) -> None:
+def _check_dominance(rep: Report, pid: str, page: Dict[str, Any], focus: str, boxes: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
     """focus_element 说它是主角，那尺度上它要真的压得住：与同页最重的非承载元素比较。"""
-    items = flatten(page)
     weights: Dict[str, float] = {}
     for it in items:
         el = it["el"]
@@ -649,7 +650,7 @@ def _check_dominance(rep: Report, pid: str, page: Dict[str, Any], focus: str, bo
                  f"放大主角、缩小或灰化配角，或改 focus_element；若本页确为并列，删掉 focus_element")
 
 
-def design_signals(plan: Dict[str, Any]) -> Report:
+def design_signals(plan: Dict[str, Any], views: Optional[List[Dict[str, Any]]] = None) -> Report:
     """整稿层面的模式信号：指出"这一处该由你看一眼"，不是评分，也不下审美结论。
 
     只报能说出位置与可核对事实的东西：连续同构、标题下装饰线、无功能英文标签、
@@ -667,13 +668,13 @@ def design_signals(plan: Dict[str, Any]) -> Report:
     if vague:
         rep.soft("W-CLAIM", "整稿", f"{vague} 没有写 claim：页题是话题还是论断？说不清就是未决")
 
+    views = page_views(plan) if views is None else views
     prints: List[Tuple] = []
     rule_pages: List[str] = []
     label_pages: List[str] = []
     image_use: Dict[str, List[str]] = {}
-    for page in pages:
-        boxes = page_geometry(page)
-        items = flatten(page)
+    for page, view in zip(pages, views):
+        boxes, items = view["boxes"], view["items"]
         sig = []
         for item in items:
             el, box = item["el"], boxes.get(str(item["el"].get("id")))
@@ -683,9 +684,9 @@ def design_signals(plan: Dict[str, Any]) -> Report:
                         round(box[2] / 0.5), round(box[3] / 0.5)))
         prints.append(tuple(sorted(sig)))
 
-        titles = [(el, boxes.get(str(el.get("id")))) for el in all_elements(page)
+        titles = [(el, boxes.get(str(el.get("id")))) for el in view["elems"]
                   if el.get("type") == "title" and boxes.get(str(el.get("id")))]
-        for el in all_elements(page):
+        for el in view["elems"]:
             box = boxes.get(str(el.get("id")))
             if box is None:
                 continue
@@ -724,10 +725,10 @@ def design_signals(plan: Dict[str, Any]) -> Report:
         rep.soft("W-IMG-REUSE", "整稿", f"{detail}：同一素材重复出现，读者会以为是在填充版面")
 
     first = pages[0]
-    first_full = [el for el in all_elements(first) if el.get("type") == "image"]
+    first_full = [el for el in views[0]["elems"] if el.get("type") == "image"]
     for el in first_full:
-        box = page_geometry(first).get(str(el.get("id")))
-        centered = [t for t in all_elements(first) if t.get("type") == "title" and t.get("align") == "center"]
+        box = views[0]["boxes"].get(str(el.get("id")))
+        centered = [t for t in views[0]["elems"] if t.get("type") == "title" and t.get("align") == "center"]
         if box and box[2] * box[3] >= 0.7 * canvas_area and centered:
             rep.info("I-OPEN", str(first.get("id")), "开场是满幅图＋居中标题：这是默认做法，先确认它不是习惯")
             break

@@ -285,7 +285,7 @@ class Ctx:
                               "x": 0, "y": 0, "w": w, "h": 1}
         el.update(kw)
         st = self._style(el, bg)
-        em = M._para_width_em(content, [], size)
+        em = M.para_width_em(content, [], size)
         inset = st["pad"][0]
 
         def last_em(width: float) -> Tuple[int, float]:
@@ -318,7 +318,7 @@ class Ctx:
             with Image.open(path) as im:
                 im = im.convert("L")
                 pw, ph = im.size
-                l, r, t, b = M._crop_geometry(pw, ph, W, H, image.get("focus"))
+                l, r, t, b = M.crop_geometry(pw, ph, W, H, image.get("focus"))
                 vx0, vy0, vx1, vy1 = pw * l, ph * t, pw * (1 - r), ph * (1 - b)
                 x, y, w, h = box
                 crop = im.crop((int(vx0 + (vx1 - vx0) * x / W), int(vy0 + (vy1 - vy0) * y / H),
@@ -949,12 +949,8 @@ def unlanded_text(p: Dict[str, Any], elements: List[Dict[str, Any]]) -> List[str
     含 note（口径、示意图声明）这类不该丢的限定语。逐字比对，不做模糊匹配。"""
     def squash(t: str) -> str:
         return "".join(str(t).split())
-    def walk(els: List[Dict[str, Any]]):
-        for e in els:
-            yield e
-            yield from walk(e.get("elements") or [])
     landed = squash("".join(str(e.get("content", "")) + "".join(str(r.get("text", "")) for r in e.get("runs") or [])
-                            for e in walk(elements)))
+                            for e in M.all_elements({"elements": elements})))
     return [k for k in LANDING_KEYS if isinstance(p.get(k), str) and p[k].strip() and squash(p[k]) not in landed]
 
 
@@ -1034,12 +1030,6 @@ def _emit(out: Path, data: Dict[str, Any], force: bool) -> bool:
         print(f"[HARD] E-RUNTIME 写出失败，未留下半成品：{exc}")
         return False
     return True
-
-
-def schema_errors(plan: Dict[str, Any]) -> List[str]:
-    from jsonschema import Draft202012Validator
-    errs = sorted(Draft202012Validator(M.SCHEMA).iter_errors(plan), key=lambda e: list(map(str, e.absolute_path)))
-    return [f"{'/'.join(map(str, e.absolute_path)) or '(根)'}: {e.message[:300]}" for e in errs]
 
 
 def schema_fields(name: str) -> str:
@@ -1137,7 +1127,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         print(f"[HARD] E-OUTLINE 无法生成 plan：{type(exc).__name__}: {exc}")
         return 2
-    bad = schema_errors(plan)
+    bad = M.schema_errors(plan)
     if bad:   # 在 init 就拦：不写出一份注定编译不过的 plan（路径相对生成后的 plan；字段表见 `fields`）
         for e in bad:
             print(f"[HARD] E-SCHEMA {e}")

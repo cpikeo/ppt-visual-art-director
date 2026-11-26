@@ -34,7 +34,6 @@ sys.path.insert(0, str(HERE))
 
 import model as M  # noqa: E402
 import checks as K  # noqa: E402
-import charts as H  # noqa: E402
 import chart_audit as A  # noqa: E402
 import spatial  # noqa: E402
 
@@ -72,7 +71,7 @@ def _collect(shapes) -> Dict[str, Any]:
     return {"index": index, "order": order}
 
 
-def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: M.Report) -> Dict[str, Any]:
+def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: M.Report, views: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     from pptx import Presentation
 
     prs = Presentation(str(pptx))
@@ -81,13 +80,14 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: M.Repo
     if len(prs.slides) != len(pages):
         f.add("HARD", "V-PAGES", "整稿", f"成品 {len(prs.slides)} 页 ≠ plan {len(pages)} 页")
 
+    views = M.page_views(plan) if views is None else views
     for index, page in enumerate(pages):
         if index >= len(prs.slides):
             break
         pid = page["id"]
         slide = prs.slides[index]
         book = _collect(slide.shapes)
-        boxes = M.page_geometry(page)
+        boxes = views[index]["boxes"]
 
         expected_top = [f"{pid}.{el['id']}" for el in page["elements"]]
         actual_top = [n for n in book["order"].get("slide", []) if n != "_page_number"]
@@ -460,7 +460,7 @@ def verify_image(plan, el, shape, name, facts, asset_root: Path, f: M.Report) ->
                 f.add("HARD", "V-ASSET", name, f"内嵌像素 {embedded.size} ≠ 原件 {original.size}")
     except Exception as exc:  # 解码失败就是失败：静默放行等于没核对
         f.add("HARD", "V-ASSET", name, f"无法解码内嵌图片或素材原件，像素核对无法完成：{type(exc).__name__}")
-    want_crop = M._crop_geometry(shape.image.size[0], shape.image.size[1],
+    want_crop = M.crop_geometry(shape.image.size[0], shape.image.size[1],
                                  float(el["w"]), float(el["h"]), el.get("crop_focus"))
     got_crop = (shape.crop_left, shape.crop_right, shape.crop_top, shape.crop_bottom)
     if any(abs(a - b) > 0.01 for a, b in zip(got_crop, want_crop)):
@@ -491,8 +491,7 @@ def _series_from_xml(shape) -> List[Dict[str, Any]]:
     """跨 plot 读取全部系列：组合图里柱与线分属两个 plot，按名称核对才可靠。"""
     out = []
     for ser in shape.chart._chartSpace.iter(qn("c:ser")):
-        name_el = ser.find(qn("c:tx")).find(".//" + qn("c:v")) if ser.find(qn("c:tx")) is not None else None
-        name = name_el.text if name_el is not None else ""
+        name = M.ser_name(ser)
         values = []
         for holder in (qn("c:val"), qn("c:yVal")):
             node = ser.find(holder)
@@ -552,8 +551,9 @@ def verify_chart(plan, page, el, shape, name, f: M.Report) -> None:
         f.add("HARD", "V-CHART", name, "该对象不是原生图表")
         return
     obj = shape.chart
-    if obj.chart_type != H._chart_type(spec):
-        f.add("HARD", "V-CHART", name, f"图表类型 {obj.chart_type} ≠ {H._chart_type(spec)}")
+    want_type = M.chart_type_name(spec)
+    if obj.chart_type.name != want_type:   # python-pptx 从成品 XML 读回的类型 vs plan 契约；不经过生成器
+        f.add("HARD", "V-CHART", name, f"图表类型 {obj.chart_type.name} ≠ {want_type}")
     combo = spec.get("combo_line_series") or []
     plots = len(obj.plots)
     want_plots = 2 if combo else 1
@@ -627,14 +627,6 @@ def _labels_on(chart_space) -> bool:
     return False
 
 
-def _ser_name(ser) -> str:
-    tx = ser.find(qn("c:tx"))
-    if tx is None:
-        return ""
-    node = tx.find(".//" + qn("c:v"))
-    return node.text if node is not None and node.text else ""
-
-
 def verify_legend(plan, page, el, shape, name: str, f: M.Report) -> None:
     """自定义图例逐块核对：色块必须等于颜色映射，标签必须等于类别/系列名。
 
@@ -678,7 +670,7 @@ def verify_legend(plan, page, el, shape, name: str, f: M.Report) -> None:
         if ink is not None and M.contrast_ratio(ink, surface) < M.LABEL_INK_MIN:
             f.add("HARD", "V-LABEL-INK", name,
                   f"图例标签「{item}」墨色 {ink} 对承载面 {surface} 仅 {M.contrast_ratio(ink, surface):.2f}:1")
-        want = H._legend_label(spec, str(item), values, i, show_value)
+        want = M.legend_label(spec, str(item), values, i, show_value)
         got_text = tx.text_frame.text
         if _norm_key(got_text) != _norm_key(want):
             f.add("HARD", "V-TEXT", name, f"图例标签「{got_text}」≠「{want}」")
@@ -711,7 +703,7 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
     elif kind == "scatter":
         # 散点的颜色在 marker 上，不在系列线上；读成品 marker，与调色板逐系列对账。
         for ser in obj._chartSpace.iter(qn("c:ser")):
-            sname = _ser_name(ser)
+            sname = M.ser_name(ser)
             if sname not in order:
                 continue
             want = palette[order[sname]] if order[sname] < len(palette) else None
@@ -722,7 +714,7 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
                 f.add("HARD", "V-CHART", name, f"散点系列「{sname}」marker 边线 {mk['line']} ≠ 调色板 {want}")
     else:
         for ser in obj._chartSpace.iter(qn("c:ser")):
-            sname = _ser_name(ser)
+            sname = M.ser_name(ser)
             if sname not in order:
                 continue
             spPr = ser.find(qn("c:spPr"))
@@ -771,7 +763,7 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
         got = getattr(va, attr, None)
         if got is None or abs(float(got) - float(cfg[key])) > 1e-6:
             f.add("HARD", "V-CHART", name, f"数值轴 {key} {got} ≠ plan {cfg[key]}")
-    if cfg.get("min") is None and spec.get("kind") in ("bar", "area") and H._all_non_negative(spec):
+    if cfg.get("min") is None and spec.get("kind") in ("bar", "area") and M.chart_non_negative(spec):
         got = getattr(va, "minimum_scale", None)
         if got is None or abs(float(got)) > 1e-9:
             f.add("HARD", "V-CHART", name, f"柱/面积图数值轴起点 {got}：未声明截轴时必须从 0 起，否则差异被无声放大")
@@ -791,7 +783,7 @@ def verify_chart_style(plan, page, el, shape, name, f: M.Report) -> None:
     combo = spec.get("combo_line_series") or []
     if combo:
         line = obj._chartSpace.find(".//" + qn("c:lineChart"))
-        got = [_ser_name(ser) for ser in line.findall(qn("c:ser"))] if line is not None else []
+        got = [M.ser_name(ser) for ser in line.findall(qn("c:ser"))] if line is not None else []
         if sorted(got) != sorted(str(c) for c in combo):
             f.add("HARD", "V-CHART", name, f"折线层系列 {got} ≠ plan {combo}")
 
@@ -814,7 +806,7 @@ def _verify_labels(plan, page, el, obj, name: str, f: M.Report) -> None:
     combo = set(spec.get("combo_line_series") or [])
     unit = M.chart_unit(spec)
     for ser in obj._chartSpace.iter(qn("c:ser")):
-        sname = _ser_name(ser)
+        sname = M.ser_name(ser)
         entry = entries[0] if kind in ("pie", "donut") else by_name.get(sname)
         want_on = bool(spec.get("combo_line_labels")) if sname in combo else M.chart_flags(spec)["data_labels"]
         dl = ser.find(qn("c:dLbls"))
@@ -830,7 +822,7 @@ def _verify_labels(plan, page, el, obj, name: str, f: M.Report) -> None:
         got_pos = None if pos is None else pos.get("val")
         if got_pos != entry["position"]:
             f.add("SOFT", "V-CHART", name, f"系列「{sname}」直标位置 {got_pos} ≠ {entry['position']}")
-        ink = A._ink(dl.find(qn("c:txPr")))
+        ink = A.text_ink(dl.find(qn("c:txPr")))
         if ink != entry["ink"]:
             f.add("HARD", "V-LABEL-INK", name, f"系列「{sname}」直标墨色 {ink} ≠ 决策表 {entry['ink']}")
         plate = A._srgb(dl.find(qn("c:spPr")))
@@ -848,7 +840,7 @@ def _verify_labels(plan, page, el, obj, name: str, f: M.Report) -> None:
                                                f"（{'饼图外置直标要带类别名' if kind == 'pie' else '环带内只留数值，类别交给图例'}）")
         for k, want in enumerate(entry["points"] or []):
             lbl = next((d for d in dl.findall(qn("c:dLbl")) if d.find(qn("c:idx")).get("val") == str(k)), None)
-            got = A._ink(lbl.find(qn("c:txPr"))) if lbl is not None else None
+            got = A.text_ink(lbl.find(qn("c:txPr"))) if lbl is not None else None
             if got != want:
                 f.add("HARD", "V-LABEL-INK", name, f"环图第 {k + 1} 个扇区标签墨色 {got} ≠ 决策表 {want}")
             fmt = None if lbl is None else lbl.find(qn("c:numFmt"))
@@ -1127,7 +1119,7 @@ def expected_text(el: Dict[str, Any], page: Optional[Dict[str, Any]] = None) -> 
         spec = target["chart"]
         values = list(((spec.get("data") or {}).get("series") or [{}])[0].get("values") or [])
         show_value = bool(el.get("show_value")) and spec.get("kind") in ("pie", "donut")
-        return [H._legend_label(spec, str(item), values, i, show_value)
+        return [M.legend_label(spec, str(item), values, i, show_value)
                 for i, item in enumerate(M.chart_items(spec))]
     chart = el.get("chart") or {}
     if kind != "chart":
@@ -1641,8 +1633,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # 两层各自出结论，不合并：合并之后"渲染没跑"会被"对象都对"盖掉。
     obj_rep = M.Report()
-    facts.update(verify_objects(plan, pptx, asset_root, obj_rep))
-    for issue in K.design_signals(plan).items:
+    views = M.page_views(plan)   # 一次遍历 + 几何解析，对象核验与设计信号共用
+    facts.update(verify_objects(plan, pptx, asset_root, obj_rep, views))
+    for issue in K.design_signals(plan, views).items:
         obj_rep.items.append(issue)
     facts["structure"] = verify_structure(plan, pptx, facts, obj_rep)
 

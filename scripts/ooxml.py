@@ -17,7 +17,7 @@ _BLIP_AFTER_DUOTONE = ("fillOverlay", "grayscale", "hsl", "lum", "tint")
 # ---------------------------------------------------------------- 绘图底件
 
 
-def _strip_style(shape) -> None:
+def strip_style(shape) -> None:
     """删掉 p:style：主题的 effectRef 会带来投影，LibreOffice 与 PowerPoint 表现还不一致。
     形状的填充与描边全部由 plan 显式给出，不需要主题引用。"""
     style = shape._element.find(qn("p:style"))
@@ -29,13 +29,13 @@ def _alpha_on(color_node, alpha: float) -> None:
         color_node.remove(old)
     etree.SubElement(color_node, qn("a:alpha")).set("val", str(int(round(alpha * 100000))))
 
-def _apply_fill_alpha(shape, alpha: float) -> None:
+def apply_fill_alpha(shape, alpha: float) -> None:
     solid = shape.fill._xPr.find(qn("a:solidFill"))
     if solid is None:
         return
     _alpha_on(solid[0], alpha)
 
-def _apply_gradient(shape, grad: Dict[str, Any]) -> None:
+def apply_gradient(shape, grad: Dict[str, Any]) -> None:
     """两停线性渐变：两端各自可声明透明度。用于压图蒙版、光带与大面积色场过渡。"""
     from pptx.dml.color import RGBColor
 
@@ -61,7 +61,7 @@ def _apply_gradient(shape, grad: Dict[str, Any]) -> None:
     lin.set("scaled", "0")
     grad_fill.insert(1, lin)
 
-def _set_corner_radius(shape, radius_in: float, box: Box) -> None:
+def set_corner_radius(shape, radius_in: float, box: Box) -> None:
     """默认 16.7% 常常过圆或过方；圆角半径按英寸声明，按短边换算后写入 adj。"""
     adj = corner_adj(radius_in, box[2], box[3])
     prst = shape._element.spPr.find(qn("a:prstGeom"))
@@ -74,7 +74,7 @@ def _set_corner_radius(shape, radius_in: float, box: Box) -> None:
     gd.set("name", "adj")
     gd.set("fmla", f"val {adj}")
 
-def _apply_duotone(pic, duo: Dict[str, Any]) -> None:
+def apply_duotone(pic, duo: Dict[str, Any]) -> None:
     """把图压进整稿色域：暗部→一个色、亮部→另一个色。原生可编辑，随时可摘。
 
     a:blip 的子元素有固定次序（alphaModFix 在 duotone 之前）。插错位置时 PowerPoint
@@ -96,7 +96,7 @@ def _apply_duotone(pic, duo: Dict[str, Any]) -> None:
             return
     blip.append(node)
 
-def _apply_stroke(shape, stroke: Optional[Dict[str, Any]], arrow: str = "none") -> None:
+def apply_stroke(shape, stroke: Optional[Dict[str, Any]], arrow: str = "none") -> None:
     from pptx.util import Pt
     from pptx.dml.color import RGBColor
 
@@ -119,7 +119,7 @@ def _apply_stroke(shape, stroke: Optional[Dict[str, Any]], arrow: str = "none") 
         node.set("w", "med")
         node.set("len", "med")
 
-def _ensure_family(font, family: str) -> None:
+def ensure_family(font, family: str) -> None:
     """图表文字也要写东亚字体：只写 latin 时，中文会被渲染器换掉，整稿字族就断了。"""
     font.name = family
     rPr = getattr(font, "_rPr", None)
@@ -167,7 +167,7 @@ def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = N
         else:
             rPr.attrib.pop("spc", None)
 
-def _set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0) -> None:
+def set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0) -> None:
     """新建对象一律连东亚字族一起写：只写 latin 时中文会被渲染器换掉，整稿字族就断了。
     同时写 lang：缺省时中文在 PowerPoint 里被当成未标注语言，拼写检查满屏红线，断行规则也不稳。"""
     set_run_attrs(run, font=family, font_ea=family, size=size, color=color, bold=bold, spacing=spacing)

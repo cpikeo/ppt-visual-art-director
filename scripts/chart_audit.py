@@ -19,7 +19,7 @@ from typing import List, Optional, Tuple
 
 from lxml import etree
 
-from model import INSIDE_POSITIONS, LABEL_INK_MIN, LIMITS, allowed_label_positions, contrast_ratio, gray_conflicts, qn
+from model import ser_name, INSIDE_POSITIONS, LABEL_INK_MIN, LIMITS, allowed_label_positions, contrast_ratio, gray_conflicts, qn
 
 Finding = Tuple[str, str, str]  # (HARD|SOFT|INFO, code, message)
 
@@ -37,7 +37,7 @@ def _val(node, tag: str, default: Optional[str] = None) -> Optional[str]:
     return default if hit is None else hit.get("val")
 
 
-def _ink(txpr) -> Optional[str]:
+def text_ink(txpr) -> Optional[str]:
     """txPr 里的墨色：defRPr 优先，其次 run 属性。"""
     if txpr is None:
         return None
@@ -55,12 +55,6 @@ def _on(node, tag: str) -> bool:
 def _shown(lbl) -> bool:
     return lbl is not None and _val(lbl, "c:delete", "0") not in ("1", "true") and any(
         _on(lbl, t) for t in ("c:showVal", "c:showCatName", "c:showPercent", "c:showSerName"))
-
-
-def _ser_name(ser) -> str:
-    tx = ser.find(qn("c:tx"))
-    node = None if tx is None else tx.find(".//" + qn("c:v"))
-    return node.text if node is not None and node.text else ""
 
 
 def marker_of(ser) -> dict:
@@ -142,7 +136,7 @@ def audit_labels(chart_space, surface: str) -> List[Finding]:
                  if etree.QName(p).localname in ("barChart", "areaChart") and tag == "lineChart"
                  for s in p.findall(qn("c:ser"))]
         for ser in plot.findall(qn("c:ser")):
-            name, seen = _ser_name(ser), set()
+            name, seen = ser_name(ser), set()
             for idx in range(max(_count(ser), 1)):
                 lbl, owner = _label_for(ser, plot_dlbls, idx)
                 if not _shown(lbl):
@@ -155,7 +149,7 @@ def audit_labels(chart_space, surface: str) -> List[Finding]:
                     eff = "ctr" if grouping in ("stacked", "percentStacked") else "outEnd"
                 else:
                     eff = _DEFAULT_POS[tag]
-                ink = _ink(lbl.find(qn("c:txPr"))) or _ink(owner.find(qn("c:txPr")) if owner is not None else None)
+                ink = text_ink(lbl.find(qn("c:txPr"))) or text_ink(owner.find(qn("c:txPr")) if owner is not None else None)
                 if ink is None:
                     if "ink" not in seen:
                         seen.add("ink")
@@ -194,10 +188,10 @@ def audit_structure(chart_space, surface: str) -> List[Finding]:
     items: List[Tuple[str, Optional[str]]] = []
     legend = chart.find(qn("c:legend"))
     if legend is not None:
-        items.append(("图例", _ink(legend.find(qn("c:txPr")))))
+        items.append(("图例", text_ink(legend.find(qn("c:txPr")))))
     for ax in chart.iter(qn("c:catAx"), qn("c:valAx")):
         if _val(ax, "c:delete", "0") not in ("1", "true"):
-            items.append(("轴标签", _ink(ax.find(qn("c:txPr")))))
+            items.append(("轴标签", text_ink(ax.find(qn("c:txPr")))))
     title = chart.find(qn("c:title"))
     if title is not None:
         rpr = title.find(".//" + qn("a:rPr"))
@@ -220,8 +214,8 @@ def audit_series_surface(chart_space, surface: str, kind: str) -> List[Finding]:
     for plot in _plots(chart_space):
         tag = etree.QName(plot).localname
         for ser in plot.findall(qn("c:ser")):
-            colors = [(_fill(ser, tag, None), _ser_name(ser))]
-            colors += [(_fill(ser, tag, int(_val(d, "c:idx") or 0)), f"{_ser_name(ser)}#{_val(d, 'c:idx')}") for d in ser.findall(qn("c:dPt"))]
+            colors = [(_fill(ser, tag, None), ser_name(ser))]
+            colors += [(_fill(ser, tag, int(_val(d, "c:idx") or 0)), f"{ser_name(ser)}#{_val(d, 'c:idx')}") for d in ser.findall(qn("c:dPt"))]
             for color, label in colors:
                 if not color or color in seen:
                     continue
@@ -246,7 +240,7 @@ def audit_gray(chart_space, kind: str) -> List[Finding]:
         for ser in plot.findall(qn("c:ser")):
             color = _fill(ser, tag, None)
             if color:
-                named.append((_ser_name(ser) or f"#{len(named) + 1}", color))
+                named.append((ser_name(ser) or f"#{len(named) + 1}", color))
     if len(named) < 2:
         return []
     pairs = gray_conflicts([c for _, c in named])
@@ -293,7 +287,7 @@ def audit_markers(chart_space, kind: str) -> List[Finding]:
         if tag not in ("scatterChart", "lineChart"):
             continue
         for ser in plot.findall(qn("c:ser")):
-            name, mk = _ser_name(ser), marker_of(ser)
+            name, mk = ser_name(ser), marker_of(ser)
             if tag == "scatterChart":
                 color = mk["fill"] or mk["line"]
                 if mk["symbol"] == "none" or color is None:

@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from lxml import etree
 
-from model import (LIMITS, chart_flags, PT_EMU, chart_color_map, chart_items, chart_label_plan, chart_mode,
+from model import (ser_name, chart_min_value, chart_non_negative, legend_label, chart_type_name, LIMITS, chart_flags, PT_EMU, chart_color_map, chart_items, chart_label_plan, chart_mode,
                    chart_style, chart_surface, chart_unit, contrast_ratio, explicit_box, mix_toward, qn)
-from ooxml import _ensure_family, _set_run_font, _strip_style
+from ooxml import ensure_family, set_run_font, strip_style
 
 
 def _deemphasize(bg: str, kind: str) -> str:
@@ -55,23 +55,8 @@ def _flip_category_axis(obj) -> None:
     scaling.insert(0, node)
 
 def _chart_type(chart: Dict[str, Any]):
-    from pptx.enum.chart import XL_CHART_TYPE as XL
-    kind, stacked, horiz = chart["kind"], chart.get("stacked"), chart.get("horizontal")
-    if kind == "bar":
-        if stacked == "percent":
-            return XL.BAR_STACKED_100 if horiz else XL.COLUMN_STACKED_100
-        if stacked:
-            return XL.BAR_STACKED if horiz else XL.COLUMN_STACKED
-        return XL.BAR_CLUSTERED if horiz else XL.COLUMN_CLUSTERED
-    if kind == "line":
-        return XL.LINE
-    if kind == "area":
-        return XL.AREA_STACKED if stacked else XL.AREA
-    if kind == "pie":
-        return XL.PIE
-    if kind == "donut":
-        return XL.DOUGHNUT
-    return XL.XY_SCATTER
+    from pptx.enum.chart import XL_CHART_TYPE
+    return getattr(XL_CHART_TYPE, chart_type_name(chart))
 
 def add_chart(slide, plan, page, el):
     from pptx.util import Inches, Pt
@@ -107,7 +92,7 @@ def add_chart(slide, plan, page, el):
     obj = frame.chart
     if kind == "scatter":
         _scatter_marker_only(obj)
-    _ensure_family(obj.font, family)
+    ensure_family(obj.font, family)
     obj.font.size = Pt(LIMITS["chart"]["font_pt"]["axis"])
 
     series = chart["data"]["series"]
@@ -197,7 +182,7 @@ def add_chart(slide, plan, page, el):
         if line_plot is not None and chart.get("combo_line_labels"):
             plan_by_name = {e["name"]: e for e in chart_label_plan(plan, chart, bg)}
             for ser in line_plot.findall(qn("c:ser")):
-                entry = plan_by_name.get(_ser_label(ser), {})
+                entry = plan_by_name.get(ser_name(ser), {})
                 _attach(ser, _build_dlbls(entry.get("ink", style["body"]), _label_format(chart), "t",
                                           plate=entry.get("plate")))
 
@@ -210,7 +195,7 @@ def add_chart(slide, plan, page, el):
         for para in chart_title.text_frame.paragraphs:
             para.alignment = PP_ALIGN.LEFT
             for run in para.runs:
-                _set_run_font(run, family, LIMITS["chart"]["font_pt"]["title"], style["title"], False)
+                set_run_font(run, family, LIMITS["chart"]["font_pt"]["title"], style["title"], False)
         _left_align_chart_title(obj)
     else:
         obj.has_title = False
@@ -223,7 +208,7 @@ def _style_legend(obj, style, family) -> None:
     obj.legend.position = XL_LEGEND_POSITION.BOTTOM
     obj.legend.include_in_layout = False
     obj.legend.font.size = Pt(LIMITS["chart"]["font_pt"]["legend"])
-    _ensure_family(obj.legend.font, family)
+    ensure_family(obj.legend.font, family)
     obj.legend.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
 
 def _style_axes(obj, chart, style, family, kind: str) -> None:
@@ -247,16 +232,16 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
             va.visible = False
             va.has_major_gridlines = False
         va.tick_labels.font.size = Pt(LIMITS["chart"]["font_pt"]["axis"])
-        _ensure_family(va.tick_labels.font, family)
+        ensure_family(va.tick_labels.font, family)
         va.tick_labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
         if axis_cfg.get("min") is not None:
             va.minimum_scale = float(axis_cfg["min"])
-        elif kind in ("bar", "area") and _all_non_negative(chart):
+        elif kind in ("bar", "area") and chart_non_negative(chart):
             # 柱/面积的长度即数值：自动轴会在数据挤在高位时把起点抬离 0（PowerPoint 的 5/6 规则），
             # 差异被放大而页面上没有任何说明。要截轴必须显式写 value_axis.min 与 note。
             va.minimum_scale = 0.0
         elif kind == "bar" and not chart.get("stacked") and chart.get("data_labels") is not False:
-            low = _min_value(chart)
+            low = chart_min_value(chart)
             if low is not None and low < 0 and axis_on:
                 # 负柱的直标落在柱端之下，类别标签贴着绘图区底边：自动轴常只留半格，二者相撞。
                 va.minimum_scale = _nice_floor(low * 1.25)
@@ -271,7 +256,7 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
         ca = obj.category_axis
         ca.has_major_gridlines = False
         ca.tick_labels.font.size = Pt(LIMITS["chart"]["font_pt"]["axis"])
-        _ensure_family(ca.tick_labels.font, family)
+        ensure_family(ca.tick_labels.font, family)
         ca.tick_labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
         ca.format.line.color.rgb = RGBColor.from_string(style["rule"].lstrip("#"))
         if kind == "bar" and chart.get("horizontal"):
@@ -294,7 +279,7 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
         title_frame.text = str(text)
         for para in title_frame.paragraphs:
             for run in para.runs:
-                _set_run_font(run, family, LIMITS["chart"]["font_pt"]["legend"], style["body"], False)
+                set_run_font(run, family, LIMITS["chart"]["font_pt"]["legend"], style["body"], False)
 
 def _inset_pie_plot(obj) -> None:
     """饼图带类别名的外侧直标需要环绕空间：自动布局会把饼撑满，标签被挤成竖排（实测 LibreOffice）。
@@ -312,12 +297,6 @@ def _inset_pie_plot(obj) -> None:
         etree.SubElement(manual, qn("c:" + tag)).set("val", val)
 
 
-def _min_value(chart: Dict[str, Any]) -> Optional[float]:
-    values = [v for s in (chart.get("data") or {}).get("series") or [] for v in s.get("values") or []
-              if isinstance(v, (int, float)) and not isinstance(v, bool)]
-    return min(values) if values else None
-
-
 def _nice_floor(v: float) -> float:
     """不大于 v（负数）的整齐刻度：1、2、2.5、5、10 × 10^n。"""
     import math
@@ -327,12 +306,6 @@ def _nice_floor(v: float) -> float:
         if k * mag >= m:
             return -k * mag
     return -10 * mag
-
-
-def _all_non_negative(chart: Dict[str, Any]) -> bool:
-    values = [v for s in (chart.get("data") or {}).get("series") or [] for v in s.get("values") or []
-              if isinstance(v, (int, float)) and not isinstance(v, bool)]
-    return bool(values) and min(values) >= 0
 
 
 def _split_combo(obj, combo: set, names: List[str], colors: List[str]):
@@ -384,10 +357,6 @@ def _label_format(chart: Dict[str, Any]) -> str:
     # 中文单位紧贴数字（12万），西文单位按排印惯例留一个空格（12 ms）。
     sep = "" if ord(unit[0]) >= 0x2E80 else " "
     return base + '"' + sep + unit + '"'  # 长单位也要写进直标；不再静默丢弃
-
-def _ser_label(ser) -> str:
-    node = ser.find(qn("c:tx")).find(".//" + qn("c:v")) if ser.find(qn("c:tx")) is not None else None
-    return node.text if node is not None and node.text else ""
 
 # c:ser 里 dLbls 之后的兄弟（CT_BarSer / CT_LineSer / CT_AreaSer / CT_PieSer / CT_ScatterSer 的并集）。
 _AFTER_SER_DLBLS = ("trendline", "errBars", "cat", "val", "xVal", "yVal", "smooth", "shape", "extLst")
@@ -487,13 +456,6 @@ def _add_line_marker(ser, colors: List[str]) -> None:
     else:
         ser.append(marker)
 
-def _legend_value(spec: Dict[str, Any], value: Any) -> str:
-    """图例标签里的读数：与直标同源的单位写法，只在饼/环上启用（柱线图的图例只列系列名）。"""
-    unit = chart_unit(spec)
-    if spec.get("stacked") == "percent":
-        return f"{float(value):g}%"
-    return f"{float(value):g}" + unit
-
 def add_legend(slide, plan, page, el):
     """自定义图例：色块与标签由被引用图表的**同一份**颜色映射生成。
 
@@ -531,7 +493,7 @@ def add_legend(slide, plan, page, el):
         for i, item in enumerate(items):
             cx = box[0] + i * col
             children.append(_swatch(slide, name, i, cx, box[1] + box[3] / 2 - swatch / 2, swatch, colors[i]))
-            children.append(_swatch_label(slide, family, name, i, _legend_label(spec, item, values, i, show_value),
+            children.append(_swatch_label(slide, family, name, i, legend_label(spec, item, values, i, show_value),
                                           cx + swatch + gap, box[1], col - swatch - gap, box[3], size, ink,
                                           str(el.get("align") or "left")))
     else:
@@ -540,17 +502,12 @@ def add_legend(slide, plan, page, el):
             top = box[1] + i * row
             sy = top + max((row - swatch) / 2, 0)
             children.append(_swatch(slide, name, i, box[0], sy, swatch, colors[i]))
-            children.append(_swatch_label(slide, family, name, i, _legend_label(spec, item, values, i, show_value),
+            children.append(_swatch_label(slide, family, name, i, legend_label(spec, item, values, i, show_value),
                                           box[0] + swatch + gap, top, box[2] - swatch - gap, row, size, ink,
                                           str(el.get("align") or "left")))
     group = slide.shapes.add_group_shape([c for c in children if c is not None])
     group.name = name
     return group
-
-def _legend_label(spec: Dict[str, Any], item: str, values: List[Any], i: int, show_value: bool) -> str:
-    if show_value and i < len(values):
-        return f"{item} · {_legend_value(spec, values[i])}"
-    return str(item)
 
 def _swatch(slide, name: str, idx: int, x: float, y: float, size: float, color: str):
     from pptx.util import Inches
@@ -559,7 +516,7 @@ def _swatch(slide, name: str, idx: int, x: float, y: float, size: float, color: 
 
     shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(size), Inches(size))
     shape.name = f"{name}#sw{idx}"
-    _strip_style(shape)
+    strip_style(shape)
     shape.shadow.inherit = False
     shape.fill.solid()
     shape.fill.fore_color.rgb = RGBColor.from_string(str(color).lstrip("#").upper())
@@ -586,7 +543,7 @@ def _swatch_label(slide, family: str, name: str, idx: int, text: str, x: float, 
     para.line_spacing = 1.1
     run = para.add_run()
     run.text = text
-    _set_run_font(run, family, size, ink, False)
+    set_run_font(run, family, size, ink, False)
     return frame
 
 def add_table(slide, plan, page, el, style, family):
@@ -627,7 +584,7 @@ def add_table(slide, plan, page, el, style, family):
         for para in cell.text_frame.paragraphs:
             para.alignment = align_map[align]
             for run in para.runs:
-                _set_run_font(run, family, body_pt, ink, bold)
+                set_run_font(run, family, body_pt, ink, bold)
 
     for j, head in enumerate(headers):
         paint(table.cell(0, j), head, style["title"], True, aligns[j])

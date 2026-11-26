@@ -29,7 +29,7 @@
     "min_ppi": 72,
     "max_crop_loss": 0.72,
     "zone": {
-      "_readme": "文字下方图像的静态量测（最终合成结果：裁切→duotone→alpha）。对比：samples×samples 个 BOX 样本的线性相对亮度 Y，达标占比下限 min_ok_share。纹理：texture_samples 边长的灰度（sRGB 编码值，Rec.709 权重）减去 texture_blur 半径 box 模糊后的 RMS；平滑渐变≈0，碎细节大。max_texture 的校准依据见 dev/CALIBRATION.md（3 张真实图的 8 个落字区 + 4 组合成样本）：安静区 0.8–2.6，细节区 ≥ 8.5；它是 provisional 阈值，换视觉世界后应重新校准。",
+      "_readme": "文字下方图像的静态量测（最终合成结果：裁切→duotone→alpha）。对比：samples×samples 个 BOX 样本的线性相对亮度 Y，达标占比下限 min_ok_share。纹理：texture_samples 边长的灰度（sRGB 编码值，Rec.709 权重）减去 texture_blur 半径 box 模糊后的 RMS；平滑渐变≈0，碎细节大。max_texture 的校准依据：作者在 3 张真实图的 8 个落字区 + 4 组合成样本上的实测（原始数据未随包提供，dev/ 内亦无复现脚本，故不可独立复核）：安静区 0.8–2.6，细节区 ≥ 8.5；它是 provisional 阈值，换视觉世界后应重新校准。",
       "min_ok_share": 0.9,
       "max_texture": 8.0,
       "samples": 40,
