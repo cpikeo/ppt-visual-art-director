@@ -188,7 +188,12 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, v
                 if ubox is None:
                     continue
                 ubox = rot_box(ubox, upper["el"].get("rotation"))
-                if substantive_overlap(lbox, ubox):
+                # 文字被后声明的图压住：图是不透明的，哪怕只盖住文字框的一角，字也读不全。
+                # 通用阈值按「占较小者 25%」算，会放过这种擦边遮挡（回归：dev/tests test_checks_text_clipped_by_image）。
+                clipped = (lower["el"]["type"] in TEXT_TYPES and upper["el"]["type"] == "image"
+                           and float(upper["el"].get("alpha", 1.0)) >= 0.95
+                           and min(intersection(lbox, ubox)) > 0.1 and intersection(lbox, ubox)[0] * intersection(lbox, ubox)[1] >= 0.1)
+                if clipped or substantive_overlap(lbox, ubox):
                     rep.hard("E-OVERLAP", f"{pid}/{upper['el'].get('id')}",
                              f"与先声明的 {lower['el'].get('id')} 实质重叠；若后者是承载层（背景图/蒙版/色块），"
                              f"在 {lower['el'].get('id')} 上声明 overlap_allowed，否则移开")
@@ -329,10 +334,10 @@ def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
     except Exception as exc:
         rep.hard("E-IMG", loc, f"素材无法解码（仅支持 PNG/JPEG/WebP，且像素数在安全上限内）：{path.name}（{type(exc).__name__}）")
         return
-    ppi, loss = image_probe(path, ew, eh, el.get("crop_focus"))
+    ppi, loss = image_probe(path, ew, eh, el.get("crop_focus"), el.get("crop_zoom"))
     if ppi is not None and ppi < LIMITS["image"]["min_ppi"]:
         rep.soft("W-PPI", loc, f"有效 {ppi:.0f} ppi < {LIMITS['image']['min_ppi']}，投影会发虚")
-    if loss is not None and loss > LIMITS["image"]["max_crop_loss"]:
+    if loss is not None and loss > LIMITS["image"]["max_crop_loss"] and not el.get("crop_zoom"):   # 声明了 crop_zoom 的局部放大是有意裁切，由 W-PPI 管清晰度
         rep.soft("W-CROP", loc, f"最终裁切丢掉了原图 {loss:.0%}，画幅或落位框大概选错了")
 
 def _check_fusion(rep: Report, pid: str, page: Dict[str, Any], view: Dict[str, Any], asset_root: Path) -> None:

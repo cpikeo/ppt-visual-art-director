@@ -970,7 +970,7 @@ def resolve_bg(page: Dict[str, Any], target: Dict[str, Any]) -> Optional[str]:
         base = color if alpha >= 0.999 else mix_toward(base, color, alpha)
     return base
 
-def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]]):
+def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]], zoom: Optional[float] = None):
     """返回（有效 ppi, 被裁掉的原图比例）。裁掉太多说明画幅选错，不是"裁切很紧"。"""
     try:
         from PIL import Image
@@ -980,7 +980,7 @@ def image_probe(path: Path, w: float, h: float, focus: Optional[Dict[str, float]
         return None, None
     if w <= 0 or h <= 0 or not px_w or not px_h:
         return None, None
-    left, right, top, bottom = crop_geometry(px_w, px_h, w, h, focus)
+    left, right, top, bottom = crop_geometry(px_w, px_h, w, h, focus, zoom)
     loss = 1 - (1 - left - right) * (1 - top - bottom)
     # 有效分辨率按"最终留在画面里的那部分像素"算：裁得越紧，同样的框里 ppi 越高。
     return min(px_w * (1 - left - right) / w, px_h * (1 - top - bottom) / h), loss
@@ -1013,7 +1013,7 @@ def image_signature(path: Path, el: Dict[str, Any]) -> Optional[Dict[str, float]
             src.draft("RGB", (768, 768))   # JPEG 解码时直接降采样：只要整体统计，不需要全分辨率
             src = src.convert("RGB")
             pw, ph = src.size
-            l, r, t, b = crop_geometry(pw, ph, box[2], box[3], el.get("crop_focus"))
+            l, r, t, b = crop_geometry(pw, ph, box[2], box[3], el.get("crop_focus"), el.get("crop_zoom"))
             x0, y0 = int(l * pw), int(t * ph)
             crop = src.crop((x0, y0, max(int((1 - r) * pw), x0 + 1), max(int((1 - b) * ph), y0 + 1)))
             data = crop.resize((48, 48), Image.BOX).tobytes()
@@ -1079,7 +1079,7 @@ def zone_probe(path: Path, img_el: Dict[str, Any], text_box: Box, page_backgroun
         with Image.open(path) as src:
             src = src.convert("RGB")
             pw, ph = src.size
-            l, r, t, b = crop_geometry(pw, ph, img_box[2], img_box[3], img_el.get("crop_focus"))
+            l, r, t, b = crop_geometry(pw, ph, img_box[2], img_box[3], img_el.get("crop_focus"), img_el.get("crop_zoom"))
             x0, y0 = max(img_box[0], text_box[0]), max(img_box[1], text_box[1])
             x1 = min(img_box[0] + img_box[2], text_box[0] + text_box[2])
             y1 = min(img_box[1] + img_box[3], text_box[1] + text_box[3])
@@ -1139,18 +1139,23 @@ def corner_adj(radius_in: float, w: float, h: float) -> int:
     short = max(min(w, h), 1e-6)
     return int(round(min(max(radius_in / short, 0.0), 0.5) * 100000))
 
-def crop_geometry(src_w: float, src_h: float, w: float, h: float, focus: Optional[Dict[str, float]]):
+def crop_geometry(src_w: float, src_h: float, w: float, h: float, focus: Optional[Dict[str, float]],
+                  zoom: Optional[float] = None):
+    """cover 裁切窗（左右上下各裁掉的比例）。`zoom`（≥1，`crop_zoom`）在 cover 窗内再等比放大：
+    同一张素材既做整体、又做局部细节。裁窗在源图里的左缘 = (1 − 窗宽) × focus，即 focus 点在窗内的相对位置
+    不随放大改变——cover 窗只是 zoom=1 的特例，所以只有这一份算法，compile / verify / 量测共用。"""
     fx = 0.5 if not focus else float(focus.get("x", 0.5))
     fy = 0.5 if not focus else float(focus.get("y", 0.5))
+    z = max(float(zoom), 1.0) if zoom else 1.0
     src_ratio, dst_ratio = src_w / src_h, w / h
-    l = r = t = b = 0.0
+    win_w = win_h = 1.0
     if src_ratio > dst_ratio:
-        trim = 1 - (dst_ratio / src_ratio)
-        l, r = trim * fx, trim * (1 - fx)
+        win_w = dst_ratio / src_ratio
     elif src_ratio < dst_ratio:
-        trim = 1 - (src_ratio / dst_ratio)
-        t, b = trim * fy, trim * (1 - fy)
-    return l, r, t, b
+        win_h = src_ratio / dst_ratio
+    win_w, win_h = win_w / z, win_h / z
+    l, t = (1 - win_w) * fx, (1 - win_h) * fy
+    return l, 1 - l - win_w, t, 1 - t - win_h
 
 def rot_box(box: Box, rotation: Any) -> Box:
     """旋转后的外接框。声明的框是没转过的，页角与遮挡要按真实占位算。

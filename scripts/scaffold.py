@@ -547,7 +547,15 @@ def _compare_scaled(c: Ctx, p: Dict[str, Any], head: List[Dict[str, Any]], vals:
     big_pt = c.fit_pt("number", str(p[keys[big_i]]["number"]), bw, pal["bg"], c.sz["number"] * 2.0,
                       c.sz["number"] * 0.6, line_spacing=1.0, letter_spacing_pt=-4)
     ratio = vals[1 - big_i] / vals[big_i]
-    small_pt = max(SCALE_FLOOR_PT, int(round(big_pt * ratio / 2.0)) * 2)
+    small_w = col(starts[1 - big_i], spans[1 - big_i])[1]
+    while True:
+        small_pt = max(SCALE_FLOOR_PT, int(round(big_pt * ratio / 2.0)) * 2)
+        # 较小者必须放得进自己的 4 栏：放不下（两数接近时按比例的字号比窄栏还宽）就整体等比收小，
+        # 否则它会折行、框高暴涨，与标签和标题实质重叠（E-OVERLAP）。
+        if small_pt <= c.fit_pt("number", str(p[keys[1 - big_i]]["number"]), small_w, pal["bg"], small_pt, SCALE_FLOOR_PT,
+                                 line_spacing=1.0, letter_spacing_pt=-4 if small_pt > 100 else -2) or big_pt <= SCALE_FLOOR_PT * 2:
+            break
+        big_pt -= 2
     sizes = {big_i: big_pt, 1 - big_i: small_pt}
     els: List[Dict[str, Any]] = []
     labels, nums, bodies = [], {}, []
@@ -663,6 +671,10 @@ def r_split_image(c: Ctx, p: Dict[str, Any]):
     x0, w0 = (MX, W - iw - MX - 0.55) if side == "right" else (iw + 0.55, W - iw - MX - 0.55)
     els = [_image_el(dict(p["image"], role=p["image"].get("role", "subject")), img_x, 0, iw, H)]
     foot = H - 1.15 if p.get("note") else H - MY
+    if side == "left" and not p.get("note"):
+        # 文字在右栏时正文右缘越过页码框：底边止于页码保留框之上，而不是压进去
+        pn = M.LIMITS["page_number"]
+        foot = min(foot, H - pn["margin_in"]["y"] - pn["box_in"]["h"] - 0.12)
     body = None
     if p.get("body"):
         body = c.text("b", "body", x0, 0, w0, p["body"], pal["bg"], font_size=c.sz["body"] + 2, color=pal["ink2"], valign="bottom")

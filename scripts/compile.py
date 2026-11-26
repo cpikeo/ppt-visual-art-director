@@ -177,7 +177,7 @@ def add_image(slide, page, el, asset_root: Path):
     box = explicit_box(el)
     pic = slide.shapes.add_picture(str(path), Inches(box[0]), Inches(box[1]), Inches(box[2]), Inches(box[3]))
     pic.name = f"{page['id']}.{el['id']}"
-    l, r, t, b = crop_geometry(src_w, src_h, box[2], box[3], el.get("crop_focus"))
+    l, r, t, b = crop_geometry(src_w, src_h, box[2], box[3], el.get("crop_focus"), el.get("crop_zoom"))
     if any(v > 0 for v in (l, r, t, b)):
         pic.crop_left, pic.crop_right, pic.crop_top, pic.crop_bottom = l, r, t, b
     # 先写透明度，再写双色调：a:blip 的子元素有固定次序，反过来插会得到非法顺序。

@@ -461,7 +461,7 @@ def verify_image(plan, el, shape, name, facts, asset_root: Path, f: M.Report) ->
     except Exception as exc:  # 解码失败就是失败：静默放行等于没核对
         f.add("HARD", "V-ASSET", name, f"无法解码内嵌图片或素材原件，像素核对无法完成：{type(exc).__name__}")
     want_crop = M.crop_geometry(shape.image.size[0], shape.image.size[1],
-                                 float(el["w"]), float(el["h"]), el.get("crop_focus"))
+                                 float(el["w"]), float(el["h"]), el.get("crop_focus"), el.get("crop_zoom"))
     got_crop = (shape.crop_left, shape.crop_right, shape.crop_top, shape.crop_bottom)
     if any(abs(a - b) > 0.01 for a, b in zip(got_crop, want_crop)):
         f.add("HARD", "V-STYLE", name, f"裁切 {tuple(round(v, 3) for v in got_crop)} ≠ {tuple(round(v, 3) for v in want_crop)}")

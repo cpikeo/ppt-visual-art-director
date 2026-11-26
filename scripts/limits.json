@@ -27,10 +27,10 @@
 
   "image": {
     "min_ppi": 72,
-    "fusion": {"_readme": "同页图像的“世界一致性”：对最终裁切（含 duotone）的图量 L*（感知明度）、b*（冷暖）、C*（色度），页内最大差超限给 W-FUSION；页写了 composition.exception（破格理由）则降为 I-FUSION。provisional：依据是仓库 dev/calibration（不随安装包分发）对 7 张俯视陶艺摄影的实测（同族图 ΔL≤20、Δb≤13、ΔC≤10；有意并置的暖木台面与冷灰灰泥 Δb≈20、ΔC≈21），换视觉世界后应重新校准。", "max_dL": 28, "max_db": 18, "max_dC": 18, "min_images": 2, "min_area_sq_in": 0.8},
+    "fusion": {"_readme": "同页图像的“世界一致性”：对最终裁切（含 duotone）的图量 L*（感知明度）、b*（冷暖）、C*（色度），页内最大差超限给 W-FUSION；页写了 composition.exception（破格理由）则降为 I-FUSION。provisional：依据是作者对 7 张俯视陶艺摄影的实测（原始图未随仓库分发，不可独立复核；dev/calibrate_image.py 可对自备图重算同一指纹）（同族图 ΔL≤20、Δb≤13、ΔC≤10；有意并置的暖木台面与冷灰灰泥 Δb≈20、ΔC≈21），换视觉世界后应重新校准。", "max_dL": 28, "max_db": 18, "max_dC": 18, "min_images": 2, "min_area_sq_in": 0.8},
     "max_crop_loss": 0.72,
     "zone": {
-      "_readme": "文字下方图像的静态量测（最终合成结果：裁切→duotone→alpha）。对比：samples×samples 个 BOX 样本的线性相对亮度 Y，达标占比下限 min_ok_share。纹理：texture_samples 边长的灰度（sRGB 编码值，Rec.709 权重）减去 texture_blur 半径 box 模糊后的 RMS；平滑渐变≈0，碎细节大。max_texture 的校准依据：作者在 3 张真实图的 8 个落字区 + 4 组合成样本上的实测（原始数据未随包提供，dev/ 内亦无复现脚本，故不可独立复核）：安静区 0.8–2.6，细节区 ≥ 8.5；它是 provisional 阈值，换视觉世界后应重新校准。",
+      "_readme": "文字下方图像的静态量测（最终合成结果：裁切→duotone→alpha）。对比：samples×samples 个 BOX 样本的线性相对亮度 Y，达标占比下限 min_ok_share。纹理：texture_samples 边长的灰度（sRGB 编码值，Rec.709 权重）减去 texture_blur 半径 box 模糊后的 RMS；平滑渐变≈0，碎细节大。max_texture 的校准依据：作者在 3 张真实图的 8 个落字区 + 4 组合成样本上的实测（原始数据未随包提供，故不可独立复核；dev/calibrate_image.py 可对自备图重算落字区的对比与纹理，用来重新校准）：安静区 0.8–2.6，细节区 ≥ 8.5；它是 provisional 阈值，换视觉世界后应重新校准。",
       "min_ok_share": 0.9,
       "max_texture": 8.0,
       "samples": 40,
