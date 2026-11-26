@@ -76,7 +76,11 @@ def verify_objects(plan: Dict[str, Any], pptx: Path, asset_root: Path, f: M.Repo
 
     prs = Presentation(str(pptx))
     pages = plan["pages"]
-    facts: Dict[str, Any] = {"slides": len(prs.slides), "expected_slides": len(pages), "images": {}}
+    facts: Dict[str, Any] = {"slides": len(prs.slides), "expected_slides": len(pages), "images": {},
+                             "canvas_emu": [int(prs.slide_width), int(prs.slide_height)]}
+    if (int(prs.slide_width), int(prs.slide_height)) != M.CANVAS_EMU:
+        f.add("HARD", "V-CANVAS", "整稿", f"页面尺寸 {prs.slide_width}×{prs.slide_height} EMU ≠ 16:9 标准画布 "
+              f"{M.CANVAS_EMU[0]}×{M.CANVAS_EMU[1]}（1280×720 px）")
     if len(prs.slides) != len(pages):
         f.add("HARD", "V-PAGES", "整稿", f"成品 {len(prs.slides)} 页 ≠ plan {len(pages)} 页")
 
@@ -1311,7 +1315,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
     from PIL import Image
 
     doc = pymupdf.open(str(pdf))
-    w_in, h_in = M.canvas(plan)
+    w_in, h_in = M.canvas()
     dpi = M.LIMITS["preview"]["dpi"]
     facts: Dict[str, Any] = {"pages": doc.page_count, "dpi": dpi, "pngs": [], "fonts": {}, "text_checks": 0}
     if doc.page_count != len(plan["pages"]):

@@ -1,6 +1,6 @@
 # 编译、核验（对象层）、改稿的必需依赖，均为宽松许可（MIT / BSD / HPND）。
 # 渲染核验的可选依赖在 requirements-render.txt，默认不安装。
-python-pptx>=1.0.2,<2
-jsonschema>=4.18,<5
-Pillow>=10,<14   # 实测：12.3.0、13.0.0 通过 dev/tests（44 项）；10、11 未测（下限沿用旧声明）
-lxml>=5
+python-pptx>=1.0.2,<2   # 实测：1.0.2
+jsonschema>=4.18,<5   # 实测：4.26.0
+Pillow>=10,<14   # 实测：13.0.0（dev/tests，见 dev/AUDIT.md）；10–12 未测，下限沿用旧声明
+lxml>=5   # 实测：6.1.3

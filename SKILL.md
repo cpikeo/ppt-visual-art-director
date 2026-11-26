@@ -1,7 +1,7 @@
 ---
 name: ppt-visual-art-director
 description: 做 / 改 / 评审 PPT（汇报、路演、发布、复盘、融资）。先定受众、洞察与原创视觉概念，再由 Plan 契约确定性编译为原生可编辑 PPTX，看真实渲染后定点修正；也用于诊断与定点改稿。不适用于纯文案、Word/PDF 排版。
-version: 20.6.0
+version: 21.0.0
 ---
 
 # PPT 视觉艺术指导
@@ -32,14 +32,17 @@ version: 20.6.0
 
 风格词（高级、极简、科技感）不是方案；概念须能追溯到洞察、换主题就不成立。十一种配方与 `free` 只是起点，关系不在配方里就用 `free`（`free` 是原创构图的主要出口）。原则与判断框架见 `design.md`。
 
+**交付前的四问**（答不出就回到上一层，不靠加装饰）：这页的第一眼是什么、凭什么？删掉每个图形元素后重心与读序还成立吗？图、背景、字是不是同一个“场”（同光向、同明度结构、同一种边界语言）？概念换成另一个主题还成立吗——成立就是风格词，重写。
+
 ## 三、命令
 
-`plan.json` 是设计与机器之间唯一的契约（`scripts/plan.schema.json`；语义见 `build.md` `elements.md`）。坐标英寸、原点左上（16:9 = 13.333 × 7.5），字号 pt，叠放即声明顺序。
+`plan.json` 是设计与机器之间唯一的契约（`scripts/plan.schema.json`；语义见 `build.md` `elements.md`）。坐标英寸、原点左上；**画布唯一：16:9 = 1280×720 px = 13.333…×7.5 in（96 px = 1 in）**，字号 pt，叠放即声明顺序。
 
 ```bash
 pip install -r requirements.txt                                       # 渲染核验另见 requirements-render.txt
 python scripts/scaffold.py system --seed "#B4421E" --mood warm        # 色彩系统 + 字号阶梯（只读）
 python scripts/scaffold.py fields [root|page|element|chart|…]        # 紧凑字段表（只读）
+python scripts/scaffold.py canvas                                     # 16:9 坐标契约：px/in 对照、12 栏、安全区、分割线（只读）
 python scripts/scaffold.py init outline.json plan.json [--assets DIR] # outline → plan 初稿（写出前先过 schema；seed/mood/fonts 写在 outline 的 design 下）
 python scripts/scaffold.py migrate old.json new.json                 # 旧 plan → schema_version 2
 python scripts/compile.py plan.json out.pptx [--assets DIR] [--production]   # 校验+编译；--production：draft 即阻断

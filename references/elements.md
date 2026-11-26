@@ -4,7 +4,7 @@
 
 ## 坐标与元素
 
-- `x y w h` 为英寸，原点左上，y 向下；`font_size` 为 pt。16:9 = 13.333 × 7.5；4:3 = 10 × 7.5。
+- `x y w h` 为英寸，原点左上，y 向下；`font_size` 为 pt。画布只有一种：16:9 = 13.333… × 7.5 in = 1280 × 720 px（96 px = 1 in，`model.px()` 换算；页面精确 12192000 × 6858000 EMU）。
 - 元素类型：`title` `body` `text` `number` `caption` `footer`（文字），`image` `chart` `legend` `shape` `divider` `path` `group`。
 - **页标题**：页内第一个顶层 `title` 元素编译为版式（Title Only）的原生标题占位符，位置与样式显式写出，不继承母版；其余 `title`、组内 `title` 与其它文字是普通文本框。页内没有 `title` 时不留空占位符。要让大纲、读屏、幻灯片导航读到页标题，每页写一个 `title`。
 - `path` 与 `group` 不写 `x y w h`（由点集或子元素推出）。元素 `id` 页内唯一；成品对象名为 `<页 id>.<元素 id>`，页码对象为 `_page_number`。

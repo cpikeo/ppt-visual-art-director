@@ -28,7 +28,7 @@ from lxml import etree
 
 from charts import add_chart, add_legend
 from checks import design_signals, validate
-from model import show, write_atomic, place_atomic, temp_beside, EMU, list_indent_for, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, crop_geometry, MASK_PRESETS, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_numbers, page_views, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
+from model import CANVAS_EMU, show, write_atomic, place_atomic, temp_beside, EMU, list_indent_for, deck_palette, guard_paths, LIMITS, Report, TEXT_TYPES, crop_geometry, MASK_PRESETS, canvas, default_asset_root, explicit_box, load_plan, package_problems, parse_xml, is_dark, page_bg, page_numbers, page_views, paragraph_runs, pn_box, pn_ink, qn, resolve_asset, resolve_points, text_style, utf8_stdio, alt_text
 from ooxml import stabilize_package, apply_duotone, apply_fill_alpha, apply_gradient, apply_stroke, set_corner_radius, set_run_font, strip_style
 
 
@@ -291,8 +291,9 @@ def _reorder(slide, built: List[Any]) -> None:
         tree.append(c)
 
 def _fit_master_to_canvas(prs, old_w: int) -> None:
-    """python-pptx 默认模板是 4:3（10 in 宽）。只改页面尺寸不改母版时，母版与版式里的占位符仍是 4:3 几何：
-    用户在 PowerPoint 里新建页、重置版式，标题与页码会落在页面左侧 3/4。这里把横向几何按比例铺到新宽度。"""
+    """python-pptx 自带模板的母版是 10 in 宽（模板遗留，不是我们支持的画布）。只改页面尺寸不改母版时，
+    母版与版式里的占位符仍是旧几何：用户在 PowerPoint 里新建页、重置版式，标题与页码会落在页面左侧 3/4。
+    这里把横向几何按比例铺到 16:9 画布宽度。"""
     ratio = prs.slide_width / float(old_w)
     if abs(ratio - 1.0) < 1e-6:
         return
@@ -399,11 +400,11 @@ def _style_master(prs, plan: Dict[str, Any]) -> None:
 
 
 def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
-    """python-pptx 自带的 docProps/app.xml 是模板遗留：写着 4:3、0 页、Macintosh PowerPoint。
+    """python-pptx 自带的 docProps/app.xml 是模板遗留：写着 On-screen Show (4:3)、0 页、Macintosh PowerPoint。
     重写成与成品一致的最小件；不声称由任何 Office 产品生成。"""
     pages = plan.get("pages") or []
     notes = sum(1 for p in pages if p.get("speaker_notes"))
-    fmt = "Widescreen" if (plan.get("aspect_ratio") or "16:9") == "16:9" else "On-screen Show (4:3)"
+    fmt = "Widescreen"
     xml = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
            '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" '
            'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
@@ -416,14 +417,11 @@ def _normalize_app_props(path: Path, plan: Dict[str, Any]) -> None:
 def build(plan: Dict[str, Any], asset_root: Path, out: Path, force: bool = False, views: Optional[List[Dict[str, Any]]] = None) -> None:
     views = page_views(plan) if views is None else views
     from pptx import Presentation
-    from pptx.util import Inches
     from pptx.dml.color import RGBColor
 
-    w, h = canvas(plan)
     prs = Presentation()
     old_w = prs.slide_width
-    prs.slide_width = Inches(w)
-    prs.slide_height = Inches(h)
+    prs.slide_width, prs.slide_height = CANVAS_EMU   # 精确 12192000×6858000；不经 Inches() 取整
     _fit_master_to_canvas(prs, old_w)
     _set_theme_fonts(prs, plan)
     _set_theme_colors(prs, plan)
@@ -476,7 +474,7 @@ def write_error_deck(out: Path, message: str, force: bool = False) -> None:
     from pptx import Presentation
     from pptx.util import Inches, Pt
     prs = Presentation()
-    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    prs.slide_width, prs.slide_height = CANVAS_EMU
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     box = slide.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(11.7), Inches(5.9))
     tf = box.text_frame
@@ -571,7 +569,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"[HARD] E-RUNTIME 运行期失败：{type(exc).__name__}: {str(exc)[:200]}\n{note}")
         return 3
 
-    print(f"\n已写出 {out_path}（{len(plan['pages'])} 页，{canvas(plan)[0]}×{canvas(plan)[1]} in）"
+    print(f"\n已写出 {out_path}（{len(plan['pages'])} 页，{canvas()[0]:.3f}×{canvas()[1]:.3f} in = 1280×720 px）"
           f"  警告 {rep.count('SOFT')}，提示 {rep.count('INFO')}")
     if args.report:
         write_atomic(Path(args.report), json.dumps({

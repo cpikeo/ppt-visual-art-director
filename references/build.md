@@ -8,7 +8,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 
 | 位置 | 必填 | 类型／枚举的坑 |
 | --- | --- | --- |
-| 根 | `deck_id` `title` `audience` `goal` `core_claim` `brief` `pages` | `aspect_ratio` 只有 `16:9`／`4:3` |
+| 根 | `deck_id` `title` `audience` `goal` `core_claim` `brief` `pages` | 画布固定 16:9（1280×720 px），无 `aspect_ratio` 字段；旧稿带该字段先 `scaffold.py migrate` |
 | `brief` | `insight` `concept` `veto` | `veto` 与 `motif` 都是**数组**（`motif` 写成字符串会被拒）；`art` 要填就五个键 `light` `lens` `material` `gamut` `grain` 齐填 |
 | `page` | `id` `role` `focus` `elements` | `role` 只有六个值：`open` `build` `breathe` `turn` `hold` `close`（叙事动作，不是自定义标签；页面职责写进 `composition_rationale`）；`evidence` 是**字符串数组**；`rhythm` 条数要等于页数 |
 | `page_numbers.hide` | — | 是**页 id 的字符串数组**，不是页码数字 |

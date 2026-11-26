@@ -19,7 +19,7 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, v
     """views：model.page_views(plan)；传入则与 design_signals/compile 共用一次遍历与几何解析。"""
     rep = Report()
     views = page_views(plan) if views is None else views
-    w, h = canvas(plan)
+    w, h = canvas()
     tol = LIMITS["canvas"]["bound_tolerance_in"]
     pages = plan.get("pages") or []
     assets = plan.get("assets") or {}
@@ -717,7 +717,7 @@ def design_signals(plan: Dict[str, Any], views: Optional[List[Dict[str, Any]]] =
     pages = plan.get("pages") or []
     if len(pages) < 2:
         return rep
-    w, h = canvas(plan)
+    w, h = canvas()
     canvas_area = max(w * h, 1e-6)
 
     vague = [p.get("id") for p in pages if p.get("role") not in ("open", "breathe")

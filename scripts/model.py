@@ -219,8 +219,25 @@ def xml_illegal(node: Any, path: str = "") -> List[str]:
 # ---------------------------------------------------------------- 度量模型
 
 
-def canvas(plan: Dict[str, Any]) -> Tuple[float, float]:
-    return tuple(LIMITS["canvas"][plan.get("aspect_ratio") or LIMITS["canvas"]["default"]])  # type: ignore
+CANVAS_PX: Tuple[int, int] = (LIMITS["canvas"]["width_px"], LIMITS["canvas"]["height_px"])
+CANVAS_EMU: Tuple[int, int] = (LIMITS["canvas"]["width_emu"], LIMITS["canvas"]["height_emu"])
+PX_PER_IN: int = LIMITS["canvas"]["px_per_in"]
+# 画布英寸尺寸：由 EMU 推出，全链路（scaffold 网格、compile 页面、checks 出界、verify 渲染页尺寸）唯一来源。
+CANVAS_IN: Tuple[float, float] = (CANVAS_EMU[0] / EMU, CANVAS_EMU[1] / EMU)
+
+
+def canvas() -> Tuple[float, float]:
+    return CANVAS_IN
+
+
+def px(inches: float) -> float:
+    """英寸 → 1280×720 设计像素（96 px/in）。"""
+    return inches * PX_PER_IN
+
+
+def is_canvas_emu(width: int, height: int) -> bool:
+    """已有 PPTX 的页面尺寸是否就是 16:9 标准画布（容差 1000 EMU ≈ 0.001 in，吸收各家取整）。"""
+    return abs(width - CANVAS_EMU[0]) <= 1000 and abs(height - CANVAS_EMU[1]) <= 1000
 
 def _em_width(ch: str) -> float:
     if ch in " \u00a0\t":
@@ -673,7 +690,7 @@ def page_numbers(plan: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 def pn_box(plan: Dict[str, Any], page: Dict[str, Any]) -> Dict[str, float]:
-    w, h = canvas(plan)
+    w, h = canvas()
     box = LIMITS["page_number"]["box_in"]
     mx, my = LIMITS["page_number"]["margin_in"]["x"], LIMITS["page_number"]["margin_in"]["y"]
     corner = page_numbers(plan)["corner"]
@@ -1533,6 +1550,11 @@ def migrate_plan(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     ver = new.get("schema_version", 1)
     if ver > SCHEMA_VERSION:
         raise ValueError(f"schema_version={ver} 比本工具（{SCHEMA_VERSION}）新，拒绝降级迁移")
+    if "aspect_ratio" in new:
+        ratio = new.pop("aspect_ratio")
+        if ratio != "16:9":
+            raise ValueError(f"aspect_ratio={ratio!r}：本技能只支持 16:9（1280×720 px），旧稿须先按 16:9 重做版面，不做自动转换")
+        notes.append("aspect_ratio 字段已移除（16:9 是唯一画布，不再是可配置项）")
     for page in new.get("pages") or []:
         pid = page.get("id", "?")
         if page.get("composition_rationale") in LEGACY_GRAMMARS:

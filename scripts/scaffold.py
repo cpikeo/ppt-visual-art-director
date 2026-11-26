@@ -177,9 +177,11 @@ def design_system(seed: str, mood: str = "auto", scene: str = "meeting",
 
 # ---------------------------------------------------------------- 网格与度量
 
-W, H = 13.333, 7.5
+W, H = M.canvas()   # 16:9 唯一画布（1280×720 px @96 px/in），来自 limits.json
 MX, MY, GUT, COLS = 0.8, 0.7, 0.25, 12
 COL_W = (W - 2 * MX - GUT * (COLS - 1)) / COLS
+_PN = M.LIMITS["page_number"]
+PN_LEFT = W - _PN["margin_in"]["x"] - _PN["box_in"]["w"]   # 页码框左缘：页脚文字不得越过
 TOP = MY + 0.34          # 页内内容起点：母题短横线在 MY，页题从这里开始
 FOOT = H - 1.0           # 页脚上沿：note 与页码在它下面
 FIT_SAFETY = 0.86        # 自适应大字号时的宽度安全系数：渲染实测，大字（≥60pt）的真实宽度比估算宽 10–15%
@@ -701,7 +703,7 @@ def r_split_image(c: Ctx, p: Dict[str, Any]):
     if body is not None:
         els.append(body)
     if p.get("note"):
-        nw = min(w0, 11.85 - x0) if side == "left" else w0   # 文字在右侧时页码也在右下角：note 止于页码框之前
+        nw = min(w0, PN_LEFT - 0.14 - x0) if side == "left" else w0   # 文字在右侧时页码也在右下角：note 止于页码框之前
         els.append(c.text("note", "caption", x0, H - 0.85, nw, p["note"], pal["bg"], font_size=c.sz["caption"],
                           color=pal["muted"]))
     return els, dark
@@ -1081,6 +1083,23 @@ def schema_fields(name: str) -> str:
     return "\n".join(f"{k}{'*' if k in req else ''}: {brief(v)}" for k, v in node.get("properties", {}).items())
 
 
+def canvas_spec() -> Dict[str, Any]:
+    """16:9 画布的坐标契约（只读）：同一份几何同时给英寸（plan 的单位）与 1280×720 设计像素，AI 做空间构成时直接取用。"""
+    def both(v: float) -> Dict[str, float]:
+        return {"in": round(v, 3), "px": round(M.px(v), 1)}
+    cols = [{"col": i + 1, "x": both(MX + i * (COL_W + GUT)), "w": both(COL_W)} for i in range(COLS)]
+    return {
+        "canvas": {"px": list(M.CANVAS_PX), "in": [round(W, 4), round(H, 4)], "emu": list(M.CANVAS_EMU), "px_per_in": M.PX_PER_IN,
+                   "note": "plan 坐标单位是英寸；px = in × 96；1 pt = 1.333 px"},
+        "margins": {"x": both(MX), "y": both(MY)},
+        "grid_12": {"gutter": both(GUT), "col_w": both(COL_W), "cols": cols},
+        "content_top": both(TOP), "footer_top": both(FOOT),
+        "page_number_left": both(PN_LEFT),
+        "split_lines_x": {"thirds": [both(W / 3), both(2 * W / 3)], "five_seven": both(W * 5 / 12), "golden": [both(W * 0.382), both(W * 0.618)]},
+        "split_lines_y": {"thirds": [both(H / 3), both(2 * H / 3)], "golden": [both(H * 0.382), both(H * 0.618)]},
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     M.utf8_stdio()
     ap = argparse.ArgumentParser(description="设计系统与版式配方")
@@ -1098,11 +1117,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     s3.add_argument("plan")
     s3.add_argument("out")
     s3.add_argument("--force", action="store_true")
+    sub.add_parser("canvas", help="16:9 画布坐标契约：1280×720 px 与英寸对照、12 栏网格、安全区、分割线（只读）")
     s4 = sub.add_parser("fields", help="plan.schema.json 的紧凑字段表（root/page/element/chart/…），代替通读 schema")
     s4.add_argument("node", nargs="?", default="root")
     a = ap.parse_args(argv)
     if a.cmd == "fields":
         print(schema_fields(a.node))
+        return 0
+    if a.cmd == "canvas":
+        for key, value in canvas_spec().items():
+            print(f"{key}: {json.dumps(value, ensure_ascii=False)}")
         return 0
     if a.cmd == "system":
         try:

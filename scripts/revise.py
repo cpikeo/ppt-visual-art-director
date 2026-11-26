@@ -406,6 +406,15 @@ def has_macros(pptx: Path, prs) -> bool:
         return False
 
 
+def canvas_problem(data: Dict[str, Any]) -> Optional[str]:
+    """本技能只处理 16:9（1280×720 px）画布。定点编辑不改页面尺寸、不重排，所以非 16:9 的稿在这里拒收。"""
+    if M.is_canvas_emu(*data["canvas_emu"]):
+        return None
+    w, h = data["canvas_in"]
+    return (f"页面 {w}×{h} in（{w / h:.4f}:1）不是 16:9（1280×720 px）。"
+            "本技能只支持 16:9；请先在 PowerPoint 里把页面改成“宽屏（16:9）”并人工复核版面后再来")
+
+
 def inspect_deck(pptx: Path) -> Dict[str, Any]:
     from pptx import Presentation
 
@@ -414,6 +423,7 @@ def inspect_deck(pptx: Path) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "file": str(pptx),
         "canvas_in": [inch(prs.slide_width), inch(prs.slide_height)],
+        "canvas_emu": [int(prs.slide_width), int(prs.slide_height)],
         "slides": len(prs.slides),
         "masters": len(prs.slide_masters),
         "layouts": sum(len(m.slide_layouts) for m in prs.slide_masters),
@@ -1017,7 +1027,7 @@ def post_check(after: Dict[str, Any], f: M.Report) -> None:
 
     新建稿由 compile 的 E-OVERLAP 守；改动稿不走 plan，所以这里补同一道闸。
     """
-    w_in, h_in = after.get("canvas_in") or (13.333, 7.5)
+    w_in, h_in = after["canvas_in"]
     for page in after["pages"]:
         objects = page["objects"]
         boxes = [(o.get("name"), o.get("kind"), o.get("box_in"), o.get("fill"), o) for o in objects]
@@ -1549,6 +1559,10 @@ def inspect_cli(argv: List[str]) -> int:
     if rep.blocked:
         return _blocked(rep)
     data = inspect_deck(src)
+    problem = canvas_problem(data)
+    if problem:
+        print(f"[HARD] E-CANVAS {problem}")
+        return 2
     print(to_markdown(data))
     if args.json:
         M.write_atomic(Path(args.json), json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8"), args.force)
@@ -1607,6 +1621,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     before = inspect_deck(src)
+    problem = canvas_problem(before)
+    if problem:
+        print(f"[HARD] E-CANVAS {problem}")
+        return 2
     before_parts = structure(src)
     before_slides = slide_part_names(src)
     log: List[Dict[str, Any]] = []
