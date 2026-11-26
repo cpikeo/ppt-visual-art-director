@@ -419,7 +419,7 @@ def inspect_deck(pptx: Path) -> Dict[str, Any]:
     from pptx import Presentation
 
     pptx = Path(pptx)
-    prs = Presentation(str(pptx))   # 必须独立解析：复用待改的 prs 做“改前快照”会让保留核对把活对象的惰性归一化当成改动（见 dev/AUDIT.md）
+    prs = Presentation(str(pptx))   # 必须独立解析：复用待改的 prs 做“改前快照”会让保留核对把活对象的惰性归一化当成改动
     out: Dict[str, Any] = {
         "file": str(pptx),
         "canvas_in": [inch(prs.slide_width), inch(prs.slide_height)],

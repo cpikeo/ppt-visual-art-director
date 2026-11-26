@@ -30,10 +30,10 @@
 
   "image": {
     "min_ppi": 72,
-    "fusion": {"_readme": "同页图像的“世界一致性”：对最终裁切（含 duotone）的图量 L*（感知明度）、b*（冷暖）、C*（色度），页内最大差超限给 W-FUSION；页写了 composition.exception（破格理由）则降为 I-FUSION。provisional：依据是作者对 7 张俯视陶艺摄影的实测（原始图未随仓库分发，不可独立复核；本仓库没有重算融合指纹的工具，status=UNVERIFIED，见 evidence.image.fusion）（同族图 ΔL≤20、Δb≤13、ΔC≤10；有意并置的暖木台面与冷灰灰泥 Δb≈20、ΔC≈21），换视觉世界后应重新校准。", "max_dL": 28, "max_db": 18, "max_dC": 18, "min_images": 2, "min_area_sq_in": 0.8},
+    "fusion": {"_readme": "同页图像的“世界一致性”：对最终裁切（含 duotone）的图量 L*（感知明度）、b*（冷暖）、C*（色度），页内最大差超限给 W-FUSION；页写了 composition.exception（破格理由）则降为 I-FUSION。provisional：依据是作者对 7 张俯视陶艺摄影的实测（原始图未随仓库分发，不可独立复核；本仓库没有重算融合指纹的工具，status=UNVERIFIED，见 dev/evidence.json）（同族图 ΔL≤20、Δb≤13、ΔC≤10；有意并置的暖木台面与冷灰灰泥 Δb≈20、ΔC≈21），换视觉世界后应重新校准。", "max_dL": 28, "max_db": 18, "max_dC": 18, "min_images": 2, "min_area_sq_in": 0.8},
     "max_crop_loss": 0.72,
     "zone": {
-      "_readme": "文字下方图像的静态量测（最终合成结果：裁切→duotone→alpha）。对比：samples×samples 个 BOX 样本的线性相对亮度 Y，达标占比下限 min_ok_share。纹理：texture_samples 边长的灰度（sRGB 编码值，Rec.709 权重）减去 texture_blur 半径 box 模糊后的 RMS；平滑渐变≈0，碎细节大。max_texture 的校准依据：作者在 3 张真实图的 8 个落字区 + 4 组合成样本上的实测（原始数据未随包提供，故不可独立复核；dev/calibrate_image.py 可对自备图重算落字区的对比与纹理，--synthetic 给出合成样本上的检出率，见 evidence.image.zone）：安静区 0.8–2.6，细节区 ≥ 8.5；它是 provisional 阈值，换视觉世界后应重新校准。",
+      "_readme": "文字下方图像的静态量测（最终合成结果：裁切→duotone→alpha）。对比：samples×samples 个 BOX 样本的线性相对亮度 Y，达标占比下限 min_ok_share。纹理：texture_samples 边长的灰度（sRGB 编码值，Rec.709 权重）减去 texture_blur 半径 box 模糊后的 RMS；平滑渐变≈0，碎细节大。max_texture 的校准依据：作者在 3 张真实图的 8 个落字区 + 4 组合成样本上的实测（原始数据未随包提供，故不可独立复核；证据登记见 dev/evidence.json）：安静区 0.8–2.6，细节区 ≥ 8.5；它是 provisional 阈值，换视觉世界后应重新校准。",
       "min_ok_share": 0.9,
       "max_texture": 8.0,
       "samples": 40,
@@ -121,25 +121,6 @@
     "苹方": ["pingfang"],
     "noto sans cjk sc": ["notosanscjk"],
     "noto serif cjk sc": ["notoserifcjk"]
-  },
-  "evidence": {
-    "_readme": "阈值证据登记（审计用，运行时不读取）。status：STANDARD＝取自公开标准或确定性定义；VERIFIED-SYNTHETIC＝仅在合成标注样本上验证过量测链路，不代表真实素材；PROVISIONAL＝作者经验值，原始样本未随仓库分发，无法独立复核；UNVERIFIED＝没有实测依据，只是工程取值。凡非 STANDARD 的阈值，输出的 W-/V- 提示只是线索，误报与漏报未知。dev/tests 会检查：每个阈值分组必须有登记。",
-    "canvas": {"status": "STANDARD", "basis": "PowerPoint 标准宽屏 12192000×6858000 EMU；1280×720 px @96 px/in", "scope": "唯一画布 16:9", "check": "dev/tests test_canvas_*"},
-    "type": {"status": "UNVERIFIED", "basis": "min_pt 取会议室可读性经验（正文 14 pt≈19 px）；line_pitch_em 为字体度量近似", "scope": "中文为主的汇报稿", "false_positive": "未知", "false_negative": "未知：W-FIT 是估算，以渲染为准；本轮无 LibreOffice，未对照渲染"},
-    "geometry": {"status": "UNVERIFIED", "basis": "overlap_area/ratio 为工程取值，回归样例见 dev/tests（擦边遮挡）", "scope": "编译期 E-OVERLAP", "false_positive": "未知", "false_negative": "未知"},
-    "contrast": {"status": "STANDARD", "basis": "WCAG 2.x：正文 4.5:1，大字（≥24 pt）3:1", "scope": "文字对纯色底", "note": "对图像底的达标占比 min_ok_share=0.9 属 image.zone，不属本组"},
-    "image": {
-      "min_ppi": {"status": "UNVERIFIED", "basis": "72 ppi 为屏幕展示下限的经验值；投影/印刷需更高", "scope": "屏幕展示"},
-      "fusion": {"status": "PROVISIONAL", "basis": "作者 7 张俯视陶艺摄影（未分发，不可复核）；同族 ΔL≤20、Δb≤13、ΔC≤10", "scope": "同一视觉世界的静物摄影；换世界须重校", "false_positive": "未知", "false_negative": "未知；只量 L*/b*/C*，不判断好看"},
-      "zone": {"status": "VERIFIED-SYNTHETIC", "basis": "dev/calibrate_image.py --synthetic：12×3 合成样本，安静 texture 0–0.12、高频细节 26–35、硬亮暗交界 8.9–10.2；max_texture=8.0 对三类均给出预期检出（报告 dev/reports/calibration_synthetic.json）", "scope": "仅合成样本。类间距 >3 倍，2–20 之间任一阈值都同样通过，因此不能证明 8.0 是最优值；硬边会被纹理规则一并标出（texture≈9–10）", "false_positive": "合成安静样本 0/12；真实摄影未知", "false_negative": "合成高频样本 0/12 漏报；真实摄影未知"},
-      "max_crop_loss": {"status": "UNVERIFIED", "basis": "工程取值"}
-    },
-    "space": {"status": "PROVISIONAL", "basis": "作者 3 套真实作品（未分发）；dead_zone/sparse_ink/rhythm_run 为经验值", "scope": "V-SPACE 只在有 LibreOffice 渲染时运行；本轮环境无 LibreOffice，未执行", "false_positive": "未知", "false_negative": "未知"},
-    "package": {"status": "UNVERIFIED", "basis": "防解压炸弹的保守工程上限；不是实测分布", "scope": "输入安全"},
-    "chart": {"status": "UNVERIFIED", "basis": "min_series_delta_lstar=9.5 等为配色经验值；字号取会议室可读性", "scope": "原生图表", "false_positive": "未知", "false_negative": "未知"},
-    "page_number": {"status": "STANDARD", "basis": "确定性布局参数（页码框与边距），由 compile/verify 共用", "scope": "16:9"},
-    "preview": {"status": "UNVERIFIED", "basis": "dpi=110 与空白判定 blank_ink_ratio 为工程取值；仅在有 LibreOffice 时使用"},
-    "render_check": {"status": "UNVERIFIED", "basis": "容差为工程取值；本轮环境无 LibreOffice，未执行"}
   },
   "defaults": {
     "fonts": {"heading": "微软雅黑", "body": "微软雅黑"},

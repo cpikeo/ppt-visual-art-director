@@ -788,6 +788,25 @@ def r_close(c: Ctx, p: Dict[str, Any]):
 
 
 TEXT_KINDS = ("title", "body", "text", "number", "caption", "footer")
+COLOR_ALIASES = ("color", "ink", "fill")   # outline 速记：最终 plan 只有 color；ink（文字墨色）、fill（形状填充）是别名
+
+
+def _alias_conflict(el: Dict[str, Any]) -> Optional[str]:
+    """color / ink / fill 指向同一个最终字段：同时写多个即冲突，拒绝而不静默覆盖。"""
+    used = [k for k in COLOR_ALIASES if k in el]
+    return f"同时写了 {' 与 '.join(used)}：三者最终都是 plan 的 color，只留一个" if len(used) > 1 else None
+
+
+def _alias_errors(els: Any, where: str) -> List[str]:
+    """递归（含 group.elements）收集颜色别名冲突。"""
+    out: List[str] = []
+    for j, e in enumerate(els if isinstance(els, list) else [], 1):
+        if isinstance(e, dict):
+            msg = _alias_conflict(e)
+            if msg:
+                out.append(f"{where}第 {j} 个元素{msg}")
+            out += _alias_errors(e.get("elements"), f"{where}第 {j} 个元素组内")
+    return out
 
 
 def r_free(c: Ctx, p: Dict[str, Any]):
@@ -796,7 +815,8 @@ def r_free(c: Ctx, p: Dict[str, Any]):
     每个元素是普通 plan 元素，外加这些**可选**速记（写了才换算，其余键原样交给 schema）：
       cols:[起列, 跨列]       → x, w（12 栏网格）；要出血或错网格就直接写 x, w
       size: 档位名|pt          → 档位取 title/body/number/caption/hero；  fit:[最大pt, 最小pt] → 取不折行的最大字号
-      ink / color 写调色名（形状底色用 color，没有 fill 字段）（ink ink2 muted quiet accent rule bg bg_alt）→ 换成当前明暗场的色值
+      color（别名 ink＝文字墨色、fill＝形状填充；三者只能写一个，最终都落为 plan 的 color）可写调色名
+        （ink ink2 muted quiet accent rule bg bg_alt）→ 换成当前明暗场的色值；组内子元素同样生效
       bottom: y                → 以该 y 为文字底边（valign=bottom），不依赖框高估算
       y 缺省且给了 after:元素id → 紧接该元素下方，gap 缺省 0.2 in
       h 缺省（文字）            → 由 model.fit_height_in 估出
@@ -811,11 +831,16 @@ def r_free(c: Ctx, p: Dict[str, Any]):
         return pal[v] if isinstance(v, str) and v in pal else v
 
     def paint(el: Dict[str, Any]) -> Dict[str, Any]:
-        """调色名在所有会写颜色的地方一致生效：color/fill、runs、描边、渐变，以及组内子元素（递归）。"""
+        """调色名在所有会写颜色的地方一致生效；ink / fill 规范化为 color 并删除（递归含组内子元素），最终 plan 不残留别名。"""
+        msg = _alias_conflict(el)
+        if msg:
+            raise ValueError(f"元素 {el.get('id', '?')}{msg}")
         el = dict(el)
-        for key in ("color", "fill"):
-            if key in el:
-                el[key] = tok(el[key])
+        alias = next((k for k in ("ink", "fill") if k in el), None)
+        if alias:
+            el["color"] = el.pop(alias)
+        if "color" in el:
+            el["color"] = tok(el["color"])
         if isinstance(el.get("runs"), list):
             el["runs"] = [dict(r, color=tok(r["color"])) if isinstance(r, dict) and "color" in r else r for r in el["runs"]]
         if isinstance(el.get("stroke"), dict) and "color" in el["stroke"]:
@@ -829,7 +854,7 @@ def r_free(c: Ctx, p: Dict[str, Any]):
     out: List[Dict[str, Any]] = []
     by_id: Dict[str, Dict[str, Any]] = {}
     for i, spec in enumerate(p["els"], 1):
-        el = {k: v for k, v in spec.items() if k not in ("cols", "rows", "size", "fit", "ink", "bottom", "right", "after", "gap")}
+        el = {k: v for k, v in spec.items() if k not in ("cols", "rows", "size", "fit", "bottom", "right", "after", "gap")}
         el.setdefault("id", f"e{i}")
         kind = el.setdefault("type", "text")
         el = paint(el)
@@ -837,8 +862,6 @@ def r_free(c: Ctx, p: Dict[str, Any]):
             # 暗场上的图表用暗场数据色序列（与 chart 配方同一来源），作者可用 chart.palette 覆盖
             el["chart"] = dict(el["chart"])
             el["chart"].setdefault("palette", c.system["data_dark" if dark else "data"])
-        if "ink" in spec:
-            el["color"] = tok(spec["ink"])
         if "cols" in spec:
             el["x"], el["w"] = (round(v, 3) for v in gcol(*spec["cols"]))
         if "rows" in spec:
@@ -918,6 +941,7 @@ def validate_outline(outline: Dict[str, Any]) -> List[str]:
             if p.get(k) in (None, "", []):
                 errs.append(f"第 {i} 页（{r}）缺少 {k}")
         if r == "free":
+            errs += _alias_errors(p.get("els"), f"第 {i} 页（free）")
             for j, e in enumerate(p.get("els") or [], 1):
                 if not isinstance(e, dict):
                     errs.append(f"第 {i} 页（free）第 {j} 个元素必须是对象")

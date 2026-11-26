@@ -9,7 +9,7 @@ schema 校验是硬阻断（`E-SCHEMA`），下面这些**在文档正文里读�
 | 位置 | 必填 | 类型／枚举的坑 |
 | --- | --- | --- |
 | 根 | `deck_id` `title` `audience` `goal` `core_claim` `brief` `pages` | 画布固定 16:9（1280×720 px），无 `aspect_ratio` 字段；旧稿带该字段先 `scaffold.py migrate` |
-| `brief` | `insight` `concept` `veto` | `veto` 与 `motif` 都是**数组**（`motif` 写成字符串会被拒）；`art` 要填就五个键 `light` `lens` `material` `gamut` `grain` 齐填 |
+| `brief` | `insight` `concept` `veto` | `veto` 与 `motif` 都是**数组**（`motif` 写成字符串会被拒）；`art` 写就五键 `light` `lens` `material` `gamut` `grain` 齐填（缺项、空值、未知键都是 `E-SCHEMA`）；纯排版稿整个省略 |
 | `page` | `id` `role` `focus` `elements` | `role` 只有六个值：`open` `build` `breathe` `turn` `hold` `close`（叙事动作，不是自定义标签；页面职责写进 `composition_rationale`）；`evidence` 是**字符串数组**；`rhythm` 条数要等于页数 |
 | `page_numbers.hide` | — | 是**页 id 的字符串数组**，不是页码数字 |
 | `element` | `id` `type` | `additionalProperties: false`：拼错的键直接被拒；`x y w h` 除 `path`／`group` 外都要写 |
@@ -56,7 +56,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 
 **`free` 的页级网格**：`grid` 缺省 12 栏 × 6 行（边距 x 0.8 / y 0.7，沟槽 0.25 / 0.2）；写整数 N 即 N 栏（如 5、8）；写对象 `{cols, rows, margin, margin_y, gutter, gutter_y}` 自定；写 `"none"` 则本页不用网格（再用 `cols`/`rows` 报 `E-OUTLINE`）。网格是选出来的构图工具，不同页可以不同。
 
-**`free` 的元素速记**（都可选，写了才换算，其余键原样交给 schema）：`cols:[起列,跨列]`→`x w`（按本页网格）；`rows:[起行,跨行]`→`y h`；`right:x`→以该 x 为右边；`size`＝档位名（`title body number caption hero`）或 pt；`fit:[最大pt,最小pt]`＝取不折行的最大字号；`ink`/`color`/`fill` 可写调色名（`ink ink2 muted quiet accent rule bg bg_alt`，组内子元素同样生效）；`bottom:y` 以该 y 为文字底边；`after:元素id`+`gap` 紧接上一元素下方；文字缺 `h` 由 `fit_height_in` 估出。要出血或错网格，直接写 `x w`。页级 `bg` 可写调色名或 `#hex`（如整页强调色场）。
+**`free` 的元素速记**（都可选，写了才换算，其余键原样交给 schema）：`cols:[起列,跨列]`→`x w`（按本页网格）；`rows:[起行,跨行]`→`y h`；`right:x`→以该 x 为右边；`size`＝档位名（`title body number caption hero`）或 pt；`fit:[最大pt,最小pt]`＝取不折行的最大字号；`color` 是最终 plan 唯一的颜色字段；`ink`（文字墨色）、`fill`（形状填充）只是 outline 别名，转换后一律落为 `color` 并删除；三者同时写两个以上 → `E-OUTLINE`（不静默覆盖）。值可写调色名（`ink ink2 muted quiet accent rule bg bg_alt`）或 `#hex`，组内子元素同样生效；`bottom:y` 以该 y 为文字底边；`after:元素id`+`gap` 紧接上一元素下方；文字缺 `h` 由 `fit_height_in` 估出。要出血或错网格，直接写 `x w`。页级 `bg` 可写调色名或 `#hex`（如整页强调色场）。
 
 每页的 `eyebrow` 是眉题（小号、位于母题横线右侧）。outline 缺字段或 `recipe` 写错时，`scaffold.py init` 以 `E-OUTLINE` 逐条说明并退出 2，不写文件。
 
@@ -68,7 +68,7 @@ outline = plan 的根字段（`deck_id` `title` `audience` `goal` `core_claim` `
 | --- | --- | --- | --- |
 | `schema_version` | 根 | 缺省=1（旧稿）；当前 2。旧稿 `scaffold.py migrate` 升级，不就地改写 | schema 枚举 |
 | `design_state` | 页 | `draft` 待判断／`judged` AI 已判断／`confirmed` 人已确认；缺省按 judged（旧稿） | `W-PENDING`；`--production` 下 `E-PENDING` |
-| `composition.strategy / focus_mode / grid / axes / exception / source / recipe` | 页 | 构图语法、焦点策略（single dual multi none）、网格规格、对齐轴、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | 仅一致性：`W-FOCUS` |
+| `composition.strategy / focus_mode / grid / axes / exception / source / recipe` | 页 | 构图语法（`strategy`：`grid editorial asymmetric type_led image_led data_led diagram_led modular free layered diagonal interlock bleed`；仅后四者被 `E-OVERLAP` 读取，用来许可图片层叠）、焦点策略（single dual multi none）、网格规格、对齐轴、破格理由、来源（recipe/author/user）。**语义记录**，机器不评价好坏 | 仅一致性：`W-FOCUS` |
 | `composition.temperament / negative_space{role,where} / hero_ratio` | 页 | 空间气质（7 选 1）、空白的功能（5 选 1）、主角对最强配角的最低视觉重量倍数。`hero_ratio` 抬高 `W-DOMINANT` 阈值；`temperament` `negative_space` 由 `verify.py` 对真实渲染量测（`V-SPACE` `V-RHYTHM`）；`negative_space.role=focus` 无 `focus_element` → `W-FOCUS` | 编译：`W-DOMINANT` `W-FOCUS`；核验：`V-SPACE` `V-RHYTHM` |
 | `concept` | 页 | 一句话视觉概念（这页的尺度/视角/裁切在论证什么），先于构图填写；机器不评价 | — |
 | `composition.reading_path` | 页 | 阅读顺序（元素 id） | `E-REF` 引用必须存在 |
