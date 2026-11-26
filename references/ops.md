@@ -38,6 +38,10 @@
 | `V-ORPHAN` | 文本元素折行后末行只剩一个字（`limits.json` → `render_check.orphan_min_chars`，现为 4：短说明里的孤字最显眼）；图表轴与表格单元格不判。改文案或框宽；配方内的步骤、对照、大数字正文已在编译期做估算防护（`Ctx.widow_w`），渲染兜底仍是这条 |
 | `V-SPACE` `V-RHYTHM` | 渲染量测（`scripts/spatial.py`，阈值 `limits.json` → `space`）：声明的 `temperament` 与实际占用/空白不符、未声明功能的整页过疏或大块空白、`negative_space.role=focus` 的空白离主角过远、连续 3 页版面分区几乎相同。SOFT，只指出位置；接受就写理由，不靠调阈值 |
 | `V-NOTES` `V-ALT` | 成品备注/替代文字与 plan 不一致；重新编译 |
+| `E-GEOM` `E-ID` `E-PAGE` `E-SHAPE` `E-TEXT` `E-SRC` | 结构类硬错误：元素缺坐标或 group 无子元素；页 id 重复；文字/图表压到页码保留框；shape 无填充无描边；文本为空；改稿找不到原稿。按提示改 plan 或路径 |
+| `W-PT` `W-BOUND` `W-PAGE` `W-RHYTHM` `W-ANCHOR` `W-REF` `W-SHAPE` | 字号低于 `type.min_pt`；改动后出画布；`page_numbers.hide` 里不是页 id；`rhythm` 条数≠页数；锚点相关；锚点目标宽或高为 0；闭合路径写了箭头（忽略） |
+| `I-ART` `I-GRID` `I-GROUP` `I-PAGE` `I-LABEL` `I-AXIS` | 提示级：有图却没写 `brief.art`；`grid=none` 没写破格理由；group 几何由子元素推出；图片压到页码角区；直标色非显式 RGB 未核对对比；读不到数值轴显示状态 |
+| `V-OBJ` `V-ORDER` `V-PAGES` `V-PAGENO` `V-ASSET` `V-ROT` `V-RENDER` | verify 的对象层与环境：成品缺对象；叠放顺序≠声明；页数≠plan；声明隐藏的页码仍在；找不到素材原件无法比对内嵌字节；旋转未生效；**`V-RENDER`＝没有 LibreOffice，渲染核对未做（状态 PARTIAL，不是通过）** |
 
 ## 报告字段
 

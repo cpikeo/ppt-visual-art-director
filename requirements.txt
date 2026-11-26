@@ -2,5 +2,5 @@
 # 渲染核验的可选依赖在 requirements-render.txt，默认不安装。
 python-pptx>=1.0.2,<2
 jsonschema>=4.18,<5
-Pillow>=10,<13
+Pillow>=10,<14   # 实测：12.3.0、13.0.0 通过 dev/tests（44 项）；10、11 未测（下限沿用旧声明）
 lxml>=5

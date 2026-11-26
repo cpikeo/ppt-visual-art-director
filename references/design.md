@@ -94,6 +94,8 @@
 
 信息设计、排版、色彩见 `craft.md`。
 
+**页面视觉状态**（跨页节奏的词汇，不是新字段）：秩序页＝`temperament: architectural｜dense`，网格稳定；张力页＝`dramatic`＋`hero_ratio`，选一个主手段；沉浸页＝`immersive`，字落进图的安静区（`negative_space.role: image_text`）；细节页＝`detail` 局部放大（`crop_zoom`），整稿同类手法最多两三次；转场页＝`role: turn｜breathe`，尺度或明暗必须变。高潮、停顿、密集、舒展的排布由内容决定，不套固定顺序。整稿的统一来自锁定的字族、墨阶、图像世界与母题，页与页可以改变尺度、密度和重心。
+
 ## 五、不规则构成与图像融合
 
 先写一句**页面视觉概念**（`page.concept`：这页的尺度、视角或裁切在论证什么），再选构图；不是先套版式再填图。构图词（`composition.strategy`）：`layered` 层叠穿插、`diagonal` 对角牵引、`interlock` 图文互锁、`bleed` 出血穿越，另有 `free`。破格必须有依据：删掉斜边、重叠或裁切，页面的重心与阅读顺序还说得清吗？说不清就是装饰。

@@ -341,9 +341,14 @@ def check_image(el, loc, ew, eh, assets, asset_root: Path, rep: Report) -> None:
         rep.soft("W-CROP", loc, f"最终裁切丢掉了原图 {loss:.0%}，画幅或落位框大概选错了")
 
 def _check_fusion(rep: Report, pid: str, page: Dict[str, Any], view: Dict[str, Any], asset_root: Path) -> None:
-    """同页多图是否属于同一个世界：只报可计算的差（明度、冷暖、色度），有意的并置用 composition.exception 声明。"""
+    """同页多图是否属于同一个世界：只报可计算的差（明度、冷暖、色度），有意的并置用 composition.exception 声明。
+
+    承载层（image_role=background）的职责就是做暗场/亮场、把前景托出来（design.md：明度依次后退），
+    它与主体之间的明度、色度差是设计，不是不一致；所以明度 L* 与色度 C* 只在非承载层之间比，
+    冷暖 b*（光色气候）仍然全部参与。承载层之外不足两张图时，L*/C* 不判定。
+    """
     cfg = LIMITS["image"]["fusion"]
-    sigs: List[Tuple[str, Dict[str, float]]] = []
+    sigs: List[Tuple[str, bool, Dict[str, float]]] = []
     for item in view["items"]:
         el = item["el"]
         if el.get("type") != "image" or el.get("image_role") in ("icon", "texture"):
@@ -354,13 +359,18 @@ def _check_fusion(rep: Report, pid: str, page: Dict[str, Any], view: Dict[str, A
             continue
         sig = image_signature(path, el)
         if sig is not None:
-            sigs.append((str(el.get("id")), sig))
+            sigs.append((str(el.get("id")), el.get("image_role") == "background", sig))
     if len(sigs) < cfg["min_images"]:
         return
-    spread = {k: max(s[k] for _i, s in sigs) - min(s[k] for _i, s in sigs) for k in ("L", "b", "C")}
-    over = [f"{name} 差 {spread[k]:.0f}（上限 {cfg[lim]}）" for k, name, lim in
+    fg = [s for _i, bg, s in sigs if not bg]
+
+    def spread(k: str, pool: List[Dict[str, float]]) -> float:
+        return max(s[k] for s in pool) - min(s[k] for s in pool) if len(pool) >= cfg["min_images"] else 0.0
+
+    sp = {"L": spread("L", fg), "b": spread("b", [s for _i, _bg, s in sigs]), "C": spread("C", fg)}
+    over = [f"{name} 差 {sp[k]:.0f}（上限 {cfg[lim]}）" for k, name, lim in
             (("L", "明度 L*", "max_dL"), ("b", "冷暖 b*", "max_db"), ("C", "色度 C*", "max_dC"))
-            if spread[k] > cfg[lim]]
+            if sp[k] > cfg[lim]]
     if not over:
         return
     declared = str((page.get("composition") or {}).get("exception") or "").strip()

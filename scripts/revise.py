@@ -1590,8 +1590,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     from pptx import Presentation
     try:
-        prs = Presentation(str(src))
         spec = M.strict_json_loads(ops_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:   # 与 plan、outline 同一条 JSON 规则（重复键、NaN、过深嵌套）→ E-SCHEMA
+        print(f"[HARD] E-SCHEMA edit.json 无法解析：{type(exc).__name__}: {exc}")
+        return 2
+    try:
+        prs = Presentation(str(src))
         ops = spec.get("ops") or []
         if not ops:
             raise M.BadOp("edit.json 里没有 ops")

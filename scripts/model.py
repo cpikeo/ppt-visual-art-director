@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -999,8 +1000,38 @@ def _lab(rgb: Tuple[int, int, int]) -> Tuple[float, float, float]:
     fx, fy, fz = f(x), f(y), f(z)
     return 116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)
 
+# ---- 像素解码：同一进程里同一张图只解码一次 ----------------------------------------------------
+# 编译期 zone_probe（每个落字区一次）与 image_signature（每张图一次）原先各自 Image.open + convert，
+# 同一张 PNG 在一次 compile 里被整幅解码十几次（cProfile：ImagingDecoder.decode 占 compile 约 1/4）。
+# 缓存键含 mtime_ns 与大小，文件变了就失效；超过 _RGB_CACHE_MAX_PIXELS 的大图不缓存（避免吃内存）。
+# 调用方只读（crop / resize / convert 都产生新对象），不得就地修改，也不得 close。
+_RGB_CACHE: "collections.OrderedDict[Tuple[str, int, int, Optional[Tuple[int, int]]], Any]" = collections.OrderedDict()
+_RGB_CACHE_SLOTS = 3
+_RGB_CACHE_MAX_PIXELS = 16_000_000
+
+
+@contextmanager
+def rgb_view(path: Path, draft: Optional[Tuple[int, int]] = None):
+    from PIL import Image
+    st = Path(path).stat()
+    key = (str(path), st.st_mtime_ns, st.st_size, draft)
+    img = _RGB_CACHE.get(key)
+    if img is None:
+        with Image.open(path) as src:
+            if draft:
+                src.draft("RGB", draft)
+            img = src.convert("RGB")
+        if img.size[0] * img.size[1] <= _RGB_CACHE_MAX_PIXELS:
+            _RGB_CACHE[key] = img
+            while len(_RGB_CACHE) > _RGB_CACHE_SLOTS:
+                _RGB_CACHE.popitem(last=False)
+    else:
+        _RGB_CACHE.move_to_end(key)
+    yield img
+
+
 def image_signature(path: Path, el: Dict[str, Any]) -> Optional[Dict[str, float]]:
-    """最终裁切（含 duotone）后图像的整体指纹：感知明度 L*、冷暖 b*（正=暖黄）、色度 C*、清晰度（高通 RMS）。
+    """最终裁切（含 duotone）后图像的整体指纹：感知明度 L*、冷暖 b*（正=暖黄）、色度 C*。
 
     只描述“这些图是不是同一个世界”的可计算部分，不评价好看；读不了图返回 None。
     """
@@ -1008,17 +1039,13 @@ def image_signature(path: Path, el: Dict[str, Any]) -> Optional[Dict[str, float]
     if box is None:
         return None
     try:
-        from PIL import Image, ImageChops, ImageFilter, ImageStat
-        with Image.open(path) as src:
-            src.draft("RGB", (768, 768))   # JPEG 解码时直接降采样：只要整体统计，不需要全分辨率
-            src = src.convert("RGB")
+        from PIL import Image
+        with rgb_view(path, draft=(768, 768)) as src:   # JPEG 解码时直接降采样：只要整体统计，不需要全分辨率
             pw, ph = src.size
             l, r, t, b = crop_geometry(pw, ph, box[2], box[3], el.get("crop_focus"), el.get("crop_zoom"))
             x0, y0 = int(l * pw), int(t * ph)
             crop = src.crop((x0, y0, max(int((1 - r) * pw), x0 + 1), max(int((1 - b) * ph), y0 + 1)))
             data = crop.resize((48, 48), Image.BOX).tobytes()
-            gray = crop.convert("L").resize((128, 128), Image.BOX)
-            sharp = ImageStat.Stat(ImageChops.difference(gray, gray.filter(ImageFilter.BoxBlur(3)))).rms[0]
     except Exception:
         return None
     duo = el.get("duotone")
@@ -1032,7 +1059,7 @@ def image_signature(path: Path, el: Dict[str, Any]) -> Optional[Dict[str, float]
             px = tuple(round(dk[k] + (lt[k] - dk[k]) * g) for k in range(3))  # type: ignore[index]
         L, a, bb = _lab(px)
         sl, sa, sb, sc = sl + L, sa + a, sb + bb, sc + math.hypot(a, bb)
-    return {"L": sl / n, "a": sa / n, "b": sb / n, "C": sc / n, "sharp": sharp}
+    return {"L": sl / n, "a": sa / n, "b": sb / n, "C": sc / n}
 
 def backdrop_image(page: Dict[str, Any], target: Dict[str, Any]) -> Optional[Tuple[Dict[str, Any], bool]]:
     """文字落在哪张图上：返回（图片元素，图与文字之间是否隔着色块/渐变蒙版）；没有图则 None。
@@ -1076,8 +1103,7 @@ def zone_probe(path: Path, img_el: Dict[str, Any], text_box: Box, page_backgroun
         return None
     try:
         from PIL import Image
-        with Image.open(path) as src:
-            src = src.convert("RGB")
+        with rgb_view(path) as src:
             pw, ph = src.size
             l, r, t, b = crop_geometry(pw, ph, img_box[2], img_box[3], img_el.get("crop_focus"), img_el.get("crop_zoom"))
             x0, y0 = max(img_box[0], text_box[0]), max(img_box[1], text_box[1])
