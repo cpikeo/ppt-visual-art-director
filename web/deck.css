@@ -1,0 +1,58 @@
+/* PPT Visual Art Director · Web Presentation runtime (engine only; deck look lives in the deck's own <style>)
+   Contract: 1280×720 stage, scaled by --dk-s. Motion tokens are CSS variables so a deck can retune rhythm in one place. */
+:root{--dk-ease-out:cubic-bezier(.16,1,.3,1);--dk-ease-io:cubic-bezier(.76,0,.24,1);--dk-ease-soft:cubic-bezier(.33,1,.68,1);
+  --dk-micro:160ms;--dk-base:520ms;--dk-scene:760ms;--dk-ui:#f3f0e8;--dk-ui-bg:rgba(12,14,16,.78);--dk-accent:#e0592a}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0b0c0e;overflow:hidden;overscroll-behavior:none}
+body{font-family:var(--dk-font,system-ui,"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif);-webkit-font-smoothing:antialiased}
+.dk-viewport{position:fixed;inset:0 0 var(--dk-bar,0px) 0;display:grid;place-items:center;overflow:hidden}
+.dk-stage{position:relative;width:1280px;height:720px;flex:none;transform:scale(var(--dk-s,1));transform-origin:center center;overflow:hidden;background:var(--dk-stage-bg,#111);contain:layout paint}
+.dk-fit{width:calc(1280px*var(--dk-s,1));height:calc(720px*var(--dk-s,1));display:grid;place-items:center;position:relative}
+.dk-fit>.dk-stage{position:absolute;left:50%;top:50%;margin:-360px 0 0 -640px}
+.slide{position:absolute;inset:0;width:1280px;height:720px;overflow:hidden;visibility:hidden;will-change:transform,opacity}
+.slide.is-active,.slide.is-leaving{visibility:visible}
+.slide.is-active{z-index:2}.slide.is-leaving{z-index:1}
+.dk-pending{visibility:hidden}
+/* chrome */
+.dk-progress{position:fixed;left:0;top:0;height:3px;width:100%;background:rgba(255,255,255,.08);z-index:50}
+.dk-progress i{display:block;height:100%;width:0;background:var(--dk-accent);transition:width var(--dk-base) var(--dk-ease-out)}
+.dk-bar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;align-items:center;gap:10px;padding:8px 14px;color:var(--dk-ui);background:var(--dk-ui-bg);backdrop-filter:blur(8px);font:500 13px/1 system-ui,sans-serif;transition:opacity .3s,transform .3s}
+.dk-bar.is-idle{opacity:0;transform:translateY(100%);pointer-events:none}
+.dk-bar button{all:unset;cursor:pointer;min-width:34px;height:34px;display:grid;place-items:center;border-radius:6px;color:inherit}
+.dk-bar button:hover,.dk-bar button:focus-visible{background:rgba(255,255,255,.14);outline:2px solid var(--dk-accent);outline-offset:-2px}
+.dk-dots{flex:1;display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap}
+.dk-dots button{min-width:0;width:32px;height:32px}
+.dk-dots button::before{content:"";width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.35);transition:transform .2s,background .2s}
+.dk-dots button[aria-current=true]::before{background:var(--dk-accent);transform:scale(1.5)}
+.dk-count{font-variant-numeric:tabular-nums;min-width:56px;text-align:center}
+.dk-overview{position:fixed;inset:0;z-index:60;background:rgba(8,9,10,.94);display:none;overflow:auto;padding:28px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px;align-content:start}
+.dk-overview.is-open{display:grid}
+.dk-thumb{all:unset;cursor:pointer;display:block;color:var(--dk-ui);font:500 12px system-ui}
+.dk-thumb>span{display:block;aspect-ratio:16/9;background:#1a1d20;border:2px solid transparent;border-radius:6px;overflow:hidden;position:relative}
+.dk-thumb[aria-current=true]>span,.dk-thumb:focus-visible>span{border-color:var(--dk-accent)}
+.dk-thumb>span>.dk-clone{position:absolute;left:0;top:0;width:1280px;height:720px;transform-origin:0 0;pointer-events:none;visibility:visible}
+.dk-thumb em{display:block;margin-top:6px;font-style:normal;opacity:.8}
+.dk-panel{position:fixed;right:14px;top:14px;bottom:60px;width:min(360px,calc(100vw - 28px));z-index:55;background:var(--dk-ui-bg);color:var(--dk-ui);backdrop-filter:blur(10px);border-radius:10px;padding:16px;display:none;flex-direction:column;gap:10px;font:14px/1.55 system-ui,"Noto Sans CJK SC",sans-serif;overflow:auto}
+.dk-panel.is-open{display:flex}
+.dk-panel h2{margin:0;font:600 12px system-ui;letter-spacing:.08em;text-transform:uppercase;opacity:.65}
+.dk-timer{font:600 30px/1 ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.dk-help{position:fixed;inset:auto 14px 60px auto;z-index:58;background:var(--dk-ui-bg);color:var(--dk-ui);padding:12px 16px;border-radius:10px;font:13px/1.8 system-ui,sans-serif;display:none}
+.dk-help.is-open{display:block}.dk-help kbd{background:rgba(255,255,255,.16);border-radius:4px;padding:1px 6px;font:inherit;font-weight:600}
+.dk-black{position:fixed;inset:0;background:#000;z-index:70;display:none}.dk-black.is-open{display:block}
+.dk-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media (max-width:1000px){.dk-bar{padding:6px 8px;gap:4px}.dk-dots{display:none}.dk-count{flex:1;text-align:left}}
+@media (prefers-reduced-motion:reduce){.dk-progress i,.dk-bar{transition:none}}
+/* export / print: every slide is a vector page at its final state */
+html.dk-export,html.dk-export body{overflow:visible;height:auto}
+html.dk-export .dk-bar,html.dk-export .dk-progress,html.dk-export .dk-panel,html.dk-export .dk-help,html.dk-export .dk-overview{display:none!important}
+@page{size:1280px 720px;margin:0}
+@media print{
+  html,body{overflow:visible;height:auto;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .dk-bar,.dk-progress,.dk-panel,.dk-help,.dk-overview,.dk-black,.dk-live{display:none!important}
+  .dk-viewport,.dk-fit{position:static;display:block;width:auto;height:auto}
+  .dk-stage{position:static;transform:none;margin:0;width:1280px;height:auto;overflow:visible;contain:none}
+  .slide{position:relative;visibility:visible!important;display:block;break-after:page;page-break-after:always;transform:none!important;opacity:1!important;clip-path:none!important;overflow:hidden;width:1280px;height:720px}
+  .slide:last-child{break-after:auto;page-break-after:auto}
+  .dk-pending{visibility:visible!important}
+}
+aside.notes,.dk-clone aside.notes{display:none}

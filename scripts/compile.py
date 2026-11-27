@@ -519,6 +519,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--assets", default=None, help="素材目录；缺省为 plan 同级 assets/ 或 plan 所在目录")
     parser.add_argument("--report", default=None, help="把诊断写成 JSON")
     parser.add_argument("--force", action="store_true", help="允许替换已存在的输出文件")
+    parser.add_argument("--web", action="store_true", help="plan 来自 Web 演示导出（web_export.mjs）：版面权威是浏览器里已验收的 HTML，E-OVERLAP / E-PAGE 降为 SOFT（W-*-WEB）；其余校验不变")
     parser.add_argument("--production", action="store_true", help="生产模式：设计判断仍是待判断（draft / 占位符 / 缺构图理由）即阻断；默认草稿模式只提示")
     args = parser.parse_args(argv)
 
@@ -540,6 +541,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         views = page_views(plan)   # 遍历与几何解析一次，validate / design_signals / build 共用（plan 在此之后不再被修改）
         rep.extend(validate(plan, asset_root, args.production, views))
         rep.extend(design_signals(plan, views))
+        if args.web:
+            for it in rep.items:
+                if it.level == "HARD" and it.code in ("E-OVERLAP", "E-PAGE"):
+                    it.level, it.code = "SOFT", it.code.replace("E-", "W-") + "-WEB"
     except Exception as exc:   # 校验层遇到未预料的输入：按文档化退出码 3 报告，不抛 Traceback、不写文件
         print(f"[HARD] E-RUNTIME 校验期失败：{type(exc).__name__}: {str(exc)[:200]}（plan 里可能有非法数值或结构；未写出文件）")
         return 3

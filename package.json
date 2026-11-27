@@ -1,0 +1,13 @@
+{
+  "name": "ppt-visual-art-director",
+  "version": "22.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Web Presentation design intelligence: runtime, audit, PDF/PPTX export (Python engine in scripts/).",
+  "scripts": {
+    "audit": "node scripts/web_export.mjs audit",
+    "pdf": "node scripts/web_export.mjs pdf",
+    "pptx": "node scripts/web_export.mjs pptx"
+  },
+  "dependencies": { "playwright": "^1.65.1" }
+}
