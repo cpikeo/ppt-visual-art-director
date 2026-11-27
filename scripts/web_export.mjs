@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Web Presentation → audit / PDF / PPTX.   node scripts/web_export.mjs <audit|pdf|plan|pptx> deck.html [out] [--assets DIR] [--shots DIR]
+/* Web Presentation → audit / shots / PDF / PPTX.   node scripts/web_export.mjs <audit|shots|pdf|plan|pptx> deck.html [out] [--assets DIR] [--shots DIR] [--mode pixel|vector] [--dpr 2|3]
    Deterministic: DOM (final state, motion off) → per-element strategy (native text/shape/image/chart | raster | skip) → plan.json → compile.py.
    Never screenshots a whole slide into a PPTX. Everything downgraded is written to the report, not hidden. */
 import { chromium } from 'playwright';
@@ -11,7 +11,7 @@ const argv = process.argv.slice(2), [cmd, deckArg] = argv, rest = argv.slice(2);
 const FORCE = argv.includes('--force');   // 唯一覆盖开关：只由用户显式给出，绝不由脚本自行追加（compile.py 同口径）
 const outArg = rest[0] && !rest[0].startsWith('--') ? rest[0] : undefined;
 const opt = (k, d) => { const i = rest.indexOf(k); return i >= 0 ? rest[i + 1] : d; };
-if (!cmd || !deckArg) { console.error('usage: web_export.mjs <audit|pdf|plan|pptx> deck.html [out] [--assets DIR] [--shots DIR] [--force]'); process.exit(2); }
+if (!cmd || !deckArg) { console.error('usage: web_export.mjs <audit|shots|pdf|plan|pptx> deck.html [out] [--assets DIR] [--shots DIR] [--mode pixel|vector] [--dpr 2|3] [--force]'); process.exit(2); }
 const deckPath = path.resolve(deckArg), deckUrl = pathToFileURL(deckPath).href;
 const J = (o) => JSON.stringify(o, null, 2);
 const die = (errs) => { console.error(J({ status: 'ERROR', errors: errs })); process.exit(2); };
@@ -38,6 +38,7 @@ function placeAtomic(tmp, dest) {
   finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
 }
 function writeAtomic(dest, data) { const t = tmpBeside(dest); fs.writeFileSync(t, data, { flag: 'wx' }); placeAtomic(t, dest); }
+function writeAtomicForce(dest, data) { const t = tmpBeside(dest); fs.writeFileSync(t, data, { flag: 'wx' }); fs.renameSync(t, dest); }
 function copyAtomic(src, dest) { const t = tmpBeside(dest); fs.copyFileSync(src, t, fs.constants.COPYFILE_EXCL); placeAtomic(t, dest); }
 const inside = (root, p) => { const r = path.relative(fs.realpathSync(root), fs.realpathSync(p)); return r !== '' && !r.startsWith('..') && !path.isAbsolute(r); };
 const SUPPORTED_IMG = ['png', 'jpg', 'jpeg', 'webp'];   // 原生图片：compile.py / python-pptx 能无损嵌入的格式；其余走元素级栅格并记降级
@@ -189,6 +190,10 @@ function extractSlide(idx, cfg) {
     if (el.dataset.chart) {
       let chart; try { chart = JSON.parse(el.dataset.chart); } catch (e) { flag(el.id, 'E-CHART', 'invalid data-chart JSON'); items.push({ skipped: 'dropped', id: 'c' + idx + '_' + (el.id || ++n), type: 'chart', strategy: 'native-chart', src: 'data-chart', reason: 'invalid data-chart JSON: ' + String(e.message).slice(0, 80) }); return; }
       const id = 'c' + idx + '_' + (el.id || ++n);
+      // 图表契约只在 HTML 侧解析一次（web/chart.js → contract.js ← limits.json）：缺省值显式写进 plan，PPTX 侧不再另行推导
+      const DC = window.DeckChart, R = DC && DC.resolve(chart, { mode: DC.mode(el) });
+      if (!R) flag(el.id, 'W-CHART-CONTRACT', 'chart.js/contract.js not loaded: plan carries raw chart (PPTX falls back to model.py defaults)');
+      else if (chart.kind !== 'table') chart = { ...chart, legend: R.legend, data_labels: R.data_labels, palette: R.palette, color_map: R.color_map, ...(R.unit && !chart.unit ? { unit: R.unit } : {}), ...(R.axis_min != null ? { value_axis: { ...(chart.value_axis || {}), min: R.axis_min } } : {}) };
       items.push({ item: { id, type: 'chart', ...inch(rel(el.getBoundingClientRect())), chart, alt: el.dataset.alt || chart.title || 'chart', overlap_allowed: true }, strategy: 'native-chart', src: 'data-chart' }); return;
     }
     const why = top ? '' : needsRaster(el, cs);
@@ -223,7 +228,7 @@ async function buildPlan(browser, assetsDir) {
   const count = await page.evaluate(() => window.Deck.count);
   fs.mkdirSync(assetsDir, { recursive: true });
   await page.addStyleTag({ content: `html.dk-iso,html.dk-iso body,html.dk-iso .dk-stage,html.dk-iso .dk-viewport,html.dk-iso .dk-fit{background:transparent!important}html.dk-iso .slide{background:transparent!important}html.dk-iso .slide *{visibility:hidden!important}html.dk-iso .slide [data-dk-iso],html.dk-iso .slide [data-dk-iso] *{visibility:visible!important}html.dk-iso .slide [data-dk-iso=self] *{visibility:hidden!important}` });
-  const assets = {}, pages = [], manifest = [], report = { flags: [], logs };
+  const assets = {}, pages = [], manifest = [], pageInfo = [], report = { flags: [], logs };
   let aid = 0;
   for (let i = 0; i < count; i++) {
     await page.evaluate((k) => window.Deck.show(k), i);
@@ -256,41 +261,98 @@ async function buildPlan(browser, assetsDir) {
         await page.evaluate(([id, mode]) => { document.documentElement.classList.add('dk-iso'); document.querySelector(`[data-dk-eid="${id}"]`).setAttribute('data-dk-iso', mode); }, [it._raster, it._mode]);
         const file = `${it._raster}.png`, clip = { x: Math.max(0, it.x * 96), y: Math.max(0, it.y * 96), width: Math.min(1280, (it.x + it.w) * 96) - Math.max(0, it.x * 96), height: Math.min(720, (it.y + it.h) * 96) - Math.max(0, it.y * 96) };
         await page.screenshot({ path: path.join(assetsDir, file), clip, omitBackground: true });
+        const rf = ex.flags.find(f => f.id === it._raster);
+        it._rinfo = { dpr: 2, px_w: Math.round(clip.width * 2), px_h: Math.round(clip.height * 2), scope: it._mode === 'tree' ? 'element + descendants' : 'element only', why: rf ? rf.msg : undefined };
         await page.evaluate(() => { document.documentElement.classList.remove('dk-iso'); document.querySelectorAll('[data-dk-iso]').forEach(e => e.removeAttribute('data-dk-iso')); });
         const id = it.id; assets[id] = { source: 'rasterized from web deck (element-level)', rights: 'cleared', generated: false, reference: it._raster }; it.image_id = id;
         it.x = +(clip.x / 96).toFixed(4); it.y = +(clip.y / 96).toFixed(4); it.w = +(clip.width / 96).toFixed(4); it.h = +(clip.height / 96).toFixed(4);
         fs.renameSync(path.join(assetsDir, file), path.join(assetsDir, id + '.png'));
       }
-      const sel = ex.marks[it._raster || it._eid];
+      const rinfo = it._rinfo, sel = ex.marks[it._raster || it._eid];
       const textLen = typeof it.content === 'string' ? it.content.replace(/\s+/g, '').length : 0;
       for (const k of Object.keys(it)) if (k.startsWith('_') || it[k] === undefined) delete it[k];
-      els.push(it); manifest.push({ page: i + 1, page_id: ex.id, id: it.id, type: it.type, strategy: e.strategy, result, src: e.src, ...(sel ? { sel } : {}), ...(reason ? { reason } : {}), ...(textLen ? { text_len: textLen } : {}), x: it.x, y: it.y, w: it.w, h: it.h });
+      els.push(it); manifest.push({ page: i + 1, page_id: ex.id, id: it.id, type: it.type, strategy: e.strategy, result, src: e.src, ...(sel ? { sel } : {}), ...(reason || rinfo?.why ? { reason: reason || rinfo.why } : {}), ...(rinfo ? { raster: { dpr: rinfo.dpr, px_w: rinfo.px_w, px_h: rinfo.px_h, scope: rinfo.scope } } : {}), ...(textLen ? { text_len: textLen, text: it.content } : {}), ...(it.type === 'chart' ? { chart: chartSummary(it.chart) } : {}), x: it.x, y: it.y, w: it.w, h: it.h });
     }
     // 保留了原生对象但丢了属性（阴影/装饰/渐变降级）的元素：结果记为 downgraded，进入验收的降级清单
     ex.flags.filter(f => /^W-(SHADOW|DECOR|GRADIENT)/.test(f.code)).forEach(f => { const m = manifest.find(x => x.page === i + 1 && x.id === f.id && x.result === 'native'); if (m) { m.result = 'downgraded'; m.reason = f.code + ' ' + f.msg; } });
     ex.flags.forEach(f => report.flags.push({ page: i + 1, ...f }));
+    pageInfo.push({ page: i + 1, page_id: ex.id, title: ex.title, notes_declared: !!ex.notes, notes_len: ex.notes.length });
     pages.push({ id: ex.id, role: ex.role, focus: ex.focus || `【待判断】${ex.title}`, composition_rationale: ex.rationale || undefined, concept: ex.concept || undefined, background: ex.bg, speaker_notes: ex.notes || undefined, design_state: ex.focus ? 'judged' : 'draft', composition: { strategy: 'free', source: 'author' }, elements: els });
   }
   const plan = { schema_version: 2, deck_id: meta.deck_id || path.basename(deckPath, '.html'), title: meta.title || 'Untitled', audience: meta.audience || '未声明', goal: meta.goal || '未声明', core_claim: meta.core_claim || '未声明',
     brief: meta.brief || { insight: '未声明', concept: '未声明', veto: ['未声明'] }, page_numbers: { hide: pages.map(p => p.id) }, fonts: meta.fonts, palette: meta.palette, assets, pages };
   Object.keys(plan).forEach(k => plan[k] === undefined && delete plan[k]);
   await page.context().close();
-  return { plan, manifest, report };
+  return { plan, manifest, report, pageInfo };
 }
+
+function chartSummary(c) {   // 逐图核验用：HTML 声明经契约解析后的数据、颜色、标签、图例、单位、轴起点
+  const d = c.data || {};
+  return { kind: c.kind, horizontal: c.horizontal, stacked: c.stacked, categories: d.categories, series: (d.series || []).map(x => ({ name: x.name, values: x.values })), headers: d.headers, rows: d.rows ? d.rows.length : undefined,
+    legend: c.legend, data_labels: c.data_labels, palette: c.palette, color_map: c.color_map, unit: c.unit, axis_min: c.value_axis?.min, highlight: c.highlight_category };
+}
+
+/* 固定环境的静态终态渲染：同一 Chromium、1280×720 视口、固定 DPR、reduced-motion、字体与图片就绪、动画终态。
+   pdf（pixel）与 shots（基准）共用这一个函数，所以两者的差异只可能来自 PDF 封装/光栅化本身。 */
+async function renderStatic(browser, dpr, onPage) {
+  const { ctx, page, logs } = await open(browser, { dpr, q: 'export' });
+  try {
+    await page.addStyleTag({ content: '*{caret-color:transparent!important}' });
+    const count = await page.evaluate(() => window.Deck.count);
+    const env = await page.evaluate(() => ({ ua: navigator.userAgent, dpr: devicePixelRatio, vw: innerWidth, vh: innerHeight, fonts: [...new Set([...document.querySelectorAll('.slide *')].map(e => getComputedStyle(e).fontFamily.split(',')[0].replace(/["']/g, '').trim()))] }));
+    for (let i = 0; i < count; i++) {
+      await page.evaluate((k) => window.Deck.show(k), i);
+      await page.evaluate(async () => { await document.fonts.ready; await Promise.all([...document.images].map(im => im.decode().catch(() => 0))); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); });
+      const png = await page.screenshot({ type: 'png', animations: 'disabled', caret: 'hide', scale: 'device', clip: { x: 0, y: 0, width: 1280, height: 720 } });
+      await onPage(i, png);
+    }
+    return { count, env: { ...env, browser: browser.version() }, logs };
+  } finally { await ctx.close(); }
+}
+const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
+const DPR = Number(opt('--dpr', '2')), MODE = opt('--mode', 'pixel');
+if (![1, 2, 3].includes(DPR) || !['pixel', 'vector'].includes(MODE)) die(['--dpr 只能是 1|2|3，--mode 只能是 pixel|vector']);
 
 const browser = await chromium.launch();
 try {
-  if (cmd === 'pdf') {
-    if (!outArg) die(['pdf 需要输出路径: web_export.mjs pdf deck.html out.pdf']);
-    const errs = guardOut('PDF', outArg, '.pdf', [deckPath]); if (errs.length) die(errs);
-    const dest = path.resolve(outArg), tmp = tmpBeside(dest), { page, logs } = await open(browser, { q: 'export' });
+  if (cmd === 'shots') {   // HTML 基准图：与 pdf pixel 同一渲染函数，另起一个干净的浏览器上下文
+    const dir = path.resolve(opt('--shots', 'html-baseline'));
+    fs.mkdirSync(dir, { recursive: true });
+    const exist = fs.readdirSync(dir).filter(f => /^slide-\d+\.png$/.test(f));
+    if (exist.length && !FORCE) die([`${dir} 已有基准图，未覆盖；换目录或加 --force`]);
+    const pages = [];
+    const r = await renderStatic(browser, DPR, async (i, png) => { const name = `slide-${String(i + 1).padStart(2, '0')}.png`; const t = tmpBeside(path.join(dir, name), '.png'); fs.writeFileSync(t, png, { flag: 'wx' }); placeAtomic(t, path.join(dir, name)); pages.push({ page: i + 1, file: name, sha256: sha(png) }); });
+    writeAtomicForce(path.join(dir, 'baseline.json'), J({ dpr: DPR, ...r.env, pages }));
+    console.log(J({ status: 'DONE', shots: dir, pages: r.count, dpr: DPR, console: r.logs }));
+  } else if (cmd === 'pdf') {
+    if (!outArg) die(['pdf 需要输出路径: web_export.mjs pdf deck.html out.pdf [--mode pixel|vector] [--dpr 2|3]']);
+    const reportPath = path.resolve(outArg).replace(/\.pdf$/i, '.pdf-report.json');
+    const errs = [...guardOut('PDF', outArg, '.pdf', [deckPath]), ...guardOut('PDF report', reportPath, '.json', [deckPath])]; if (errs.length) die(errs);
+    const dest = path.resolve(outArg), tmp = tmpBeside(dest), tmpRep = tmpBeside(reportPath), work = fs.mkdtempSync(path.join(path.dirname(dest), '.pdf-'));
     try {
-      await page.emulateMedia({ media: 'print' });
-      await page.pdf({ path: tmp, width: '1280px', height: '720px', printBackground: true, preferCSSPageSize: true });
+      let report;
+      if (MODE === 'pixel') {
+        /* 像素一致 PDF：逐页终态无损 PNG → 16:9 图像页。PDF 是高分辨率图像页：文字不可选中、不可矢量编辑。 */
+        const pages = [], names = [];
+        const r = await renderStatic(browser, DPR, async (i, png) => { const n = `p${String(i + 1).padStart(3, '0')}.png`; fs.writeFileSync(path.join(work, n), png); names.push(n); pages.push({ page: i + 1, png_sha256: sha(png), px_w: 1280 * DPR, px_h: 720 * DPR }); });
+        fs.writeFileSync(path.join(work, 'index.html'), `<!doctype html><meta charset=utf-8><style>@page{size:1280px 720px;margin:0}html,body{margin:0;background:#fff}img{display:block;width:1280px;height:720px;break-after:page;image-rendering:pixelated}img:last-child{break-after:auto}</style>${names.map(n => `<img src="${n}">`).join('')}`);
+        const ctx = await browser.newContext(); const pg = await ctx.newPage();
+        await pg.goto(pathToFileURL(path.join(work, 'index.html')).href, { waitUntil: 'load' });
+        await pg.evaluate(() => Promise.all([...document.images].map(im => im.decode())));
+        await pg.pdf({ path: tmp, width: '1280px', height: '720px', printBackground: true, preferCSSPageSize: true }); await ctx.close();
+        report = { mode: 'pixel', dpr: DPR, claim: 'raster-identical image pages (lossless PNG at DPR×); text is NOT selectable and NOT vector-editable', pages, ...r.env, console: r.logs };
+      } else {
+        const { page, logs } = await open(browser, { q: 'export' });
+        await page.emulateMedia({ media: 'print' });
+        await page.pdf({ path: tmp, width: '1280px', height: '720px', printBackground: true, preferCSSPageSize: true });
+        report = { mode: 'vector', claim: 'high-fidelity vector (selectable text). NOT guaranteed pixel-identical to the screen: print layout is a different pipeline; see web_verify.py for the measured difference', console: logs, browser: browser.version() };
+      }
       if (fs.readFileSync(tmp).subarray(0, 5).toString() !== '%PDF-') throw new Error('生成物不是有效 PDF');
-      placeAtomic(tmp, dest);
-    } finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
-    console.log(J({ status: 'DONE', pdf: outArg, console: logs }));
+      report.pdf_sha256 = sha(fs.readFileSync(tmp)); report.pdf_bytes = fs.statSync(tmp).size;
+      fs.writeFileSync(tmpRep, J(report));
+      placeAtomic(tmp, dest); placeAtomic(tmpRep, reportPath);
+      console.log(J({ status: 'DONE', pdf: outArg, report: reportPath, mode: MODE, dpr: MODE === 'pixel' ? DPR : undefined, pdf_sha256: report.pdf_sha256 }));
+    } finally { for (const f of [tmp, tmpRep]) if (fs.existsSync(f)) fs.unlinkSync(f); fs.rmSync(work, { recursive: true, force: true }); }
   } else if (cmd === 'plan' || cmd === 'pptx') {
     if (!outArg) die([`${cmd} 需要输出路径`]);
     const out = path.resolve(outArg), outDir = path.dirname(out), assetsDir = path.resolve(opt('--assets', path.join(outDir, 'assets')));
@@ -302,9 +364,9 @@ try {
     // 一切先在同目录的暂存目录里完成（含 compile），全部成功后才逐个原子放入；失败不改动任何已有文件
     const stage = fs.mkdtempSync(path.join(outDir, '.wx-')), stageAssets = path.join(stage, 'assets');
     try {
-      const { plan, manifest, report } = await buildPlan(browser, stageAssets);
+      const { plan, manifest, report, pageInfo } = await buildPlan(browser, stageAssets);
       const sPlan = path.join(stage, 'plan.json'), sMan = path.join(stage, 'plan.manifest.json'), sOut = path.join(stage, 'out.pptx');
-      fs.writeFileSync(sPlan, J(plan)); fs.writeFileSync(sMan, J({ version: 2, manifest, flags: report.flags }));
+      fs.writeFileSync(sPlan, J(plan)); fs.writeFileSync(sMan, J({ version: 3, pages: pageInfo, manifest, flags: report.flags }));
       let compile = null;
       if (cmd === 'pptx') {   // 绝不替用户追加 --force：暂存目标是新文件，用不着
         const r = spawnSync(process.env.PYTHON || 'python3', [path.join(HERE, 'compile.py'), sPlan, sOut, '--assets', stageAssets, '--web'], { encoding: 'utf8' });

@@ -236,7 +236,7 @@ def _style_axes(obj, chart, style, family, kind: str) -> None:
         va.tick_labels.font.color.rgb = RGBColor.from_string(style["body"].lstrip("#"))
         if axis_cfg.get("min") is not None:
             va.minimum_scale = float(axis_cfg["min"])
-        elif kind in ("bar", "area") and chart_non_negative(chart):
+        elif kind in LIMITS["chart"]["contract"]["axis_zero_based_kinds"] and chart_non_negative(chart):
             # 柱/面积的长度即数值：自动轴会在数据挤在高位时把起点抬离 0（PowerPoint 的 5/6 规则），
             # 差异被放大而页面上没有任何说明。要截轴必须显式写 value_axis.min 与 note。
             va.minimum_scale = 0.0

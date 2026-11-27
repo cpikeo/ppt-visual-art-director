@@ -1,6 +1,6 @@
 # 元素、文本、素材与图表字段语义
 
-手写或改 plan 元素（`free` 页、图表、素材登记、页码）时读本文；配方、outline 与设计意图字段见 `build.md`。字段速查：`scaffold.py fields <element|chart|asset|…>`。
+手写或改 plan 元素（`free` 页、图表、素材登记、页码）时读本文；设计意图字段见 `plan.schema.json`。字段以 `plan.schema.json` 为准；图表缺省值见 `limits.json` 的 `chart.contract`。
 
 ## 坐标与元素
 
@@ -32,7 +32,7 @@
 
 ## 素材与生成图
 
-素材从素材根解析（`compile` `verify` `revise` 共用同一规则；`--assets` 优先，其次 plan 同级 `assets/`，再次 plan 所在目录）：先按 `image_id` 精确找，再补 `.png` `.jpg` `.jpeg` `.webp`，不做同名不同扩展名的兜底。**结果必须留在素材根内**：绝对路径、含 `..`、经符号链接指向根外的文件一律视为找不到（`E-IMG`）。图片按 `cover` 裁切，`crop_focus` 为裁窗中心；`crop_zoom`（1–8，缺省 1）在 cover 窗内再等比放大（`model.crop_geometry` 是 compile / verify / 量测共用的唯一实现，focus 点在窗内的相对位置不随放大改变）。
+素材从素材根解析（`compile` `verify` 共用同一规则；`--assets` 优先，其次 plan 同级 `assets/`，再次 plan 所在目录）：先按 `image_id` 精确找，再补 `.png` `.jpg` `.jpeg` `.webp`，不做同名不同扩展名的兜底。**结果必须留在素材根内**：绝对路径、含 `..`、经符号链接指向根外的文件一律视为找不到（`E-IMG`）。图片按 `cover` 裁切，`crop_focus` 为裁窗中心；`crop_zoom`（1–8，缺省 1）在 cover 窗内再等比放大（`model.crop_geometry` 是 compile / verify / 量测共用的唯一实现，focus 点在窗内的相对位置不随放大改变）。
 
 来源、角色（`image_role`）、职责（`info_duty`）三个维度各归各的字段，定义见 `imagery.md` 一。`background` `texture` 是承载层，可声明 `overlap_allowed`；只有 `info_duty: evidence` 带来源约束（不能指向生成图，`E-ASSET`）；不声明或 `none` 给 `W-ASSET`。
 

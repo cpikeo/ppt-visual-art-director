@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """Web → PPTX / PDF 对照核验：真实读取导出文件，逐页与 HTML 终态截图、导出清单（manifest）比对。
 用法: python scripts/web_verify.py --pptx deck.pptx --manifest deck.plan.manifest.json
-        [--pdf deck.pdf --shots DIR --out DIR] [--pptx-render PPTX渲染得到的.pdf] [--json report.json] [--force]
+        [--pdf deck.pdf [--pdf-report r.json]] --shots DIR [--render-pptx | --pptx-render 渲染.pdf] --out DIR [--json report.json] [--force]
 
 状态口径（唯一）：检查项 PASS｜FAIL｜BLOCKED（环境/输入缺失，无法执行）｜UNVERIFIED（没执行或无法判定）｜INFO。
 汇总只有一条规则：FAIL > BLOCKED > UNVERIFIED > PASS，且 PASS 要求没有任何 BLOCKED / UNVERIFIED 项。
 退出码与状态一一对应（EXIT_BY_STATUS 唯一出处，报告里的 exit_code 同值）：PASS 0、FAIL 1、输入/契约错误 2、BLOCKED 3、UNVERIFIED 4。
-PDF 光栅化用 PyMuPDF（AGPL，仅本机可选工具，见 requirements-render.txt）。"""
+PDF 光栅化用 PyMuPDF（AGPL，仅本机可选工具，见 requirements-render.txt）；SSIM 只需 numpy。"""
 import argparse, io, json, os, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from model import Report, guard_paths, write_atomic  # noqa: E402  共用路径守卫与原子写入（与 compile/revise 同一实现）
+from model import Report, guard_paths, write_atomic  # noqa: E402  共用路径守卫与原子写入（与 compile 同一实现）
 
 IN = 914400
 EXIT_BY_STATUS = {"PASS": 0, "FAIL": 1, "ERROR": 2, "BLOCKED": 3, "UNVERIFIED": 4}
+# 渲染差异阈值不在这里写常数：见 limits.json 的 web_verify（由 dev/calibration 的样例实测校准）。
 RESULTS = {"native", "raster", "downgraded", "skipped", "dropped"}   # manifest 每个源元素必须落在其中之一
-PPTX_DIFF_LIMIT = 0.12   # UNCALIBRATED：PPTX 渲染 PDF 与 HTML 终态的像素差上限，尚无实机样本校准，见 dev/evidence.json
-PDF_DIFF_LIMIT = 0.03    # Chromium 同引擎导出，差异应近零；0.03 为经验值（见 dev/evidence.json）
 
 
 def check(res, area, name, status, detail):
@@ -36,11 +35,12 @@ def rollup(res):
 def load_manifest(path):
     data = json.load(open(path, encoding="utf-8"))
     man = data["manifest"] if isinstance(data, dict) else data
+    pages = data.get("pages", []) if isinstance(data, dict) else []
     for m in man:   # 旧版 manifest 没有 result：按 strategy 推断，推不出的留空，由检查项报出
         if "result" not in m:
             s = m.get("strategy", "")
             m["result"] = "native" if s.startswith("native") else "raster" if s.startswith("raster") else ""
-    return man, (data.get("flags", []) if isinstance(data, dict) else [])
+    return man, (data.get("flags", []) if isinstance(data, dict) else []), pages
 
 
 def verify_manifest(manifest, flags, res):
@@ -68,20 +68,84 @@ def verify_manifest(manifest, flags, res):
     return down
 
 
-def verify_pptx(path, manifest, res):
+def _norm(t):
+    return "".join(str(t or "").split())
+
+
+def _rgb(fmt_fill):
+    try:
+        return "#" + str(fmt_fill.fore_color.rgb).upper()
+    except Exception:
+        return None
+
+
+def _chart_check(sh, m, bad):
+    """逐图核验：类型、类别、系列名与数值、颜色（系列或扇区）、图例、数据标签，全部对照 manifest 里的契约解析结果。"""
+    from model import chart_type_name
+    c, ch = m["chart"], sh.chart
+    loc = f"p{m['page']}/{m['id']}"
+    spec = {"kind": c["kind"], "stacked": c.get("stacked"), "horizontal": c.get("horizontal")}
+    want_type = chart_type_name(spec)
+    if ch.chart_type.name != want_type:
+        bad.append(f"{loc} type {ch.chart_type.name}≠{want_type}")
+    plot = ch.plots[0]
+    cats = [str(x) for x in plot.categories]
+    if c.get("categories") is not None and cats != [str(x) for x in c["categories"]]:
+        bad.append(f"{loc} categories {cats}≠{c['categories']}")
+    got = [(str(se.name), [float(v) for v in se.values]) for se in plot.series]
+    want = [(str(se["name"]), [float(v) for v in se["values"]]) for se in c.get("series") or []]
+    if got != want:
+        bad.append(f"{loc} series data mismatch")
+    if bool(ch.has_legend) != bool(c.get("legend")):
+        bad.append(f"{loc} legend {ch.has_legend}≠{c.get('legend')}")
+    ns = {"c": "http://schemas.openxmlformats.org/drawingml/2006/chart"}
+    shows = ch._chartSpace.xpath('.//c:dLbls/c:showVal[@val="1"] | .//c:dLbls/c:showCatName[@val="1"] | .//c:dLbls/c:showPercent[@val="1"]')
+    if bool(shows) != bool(c.get("data_labels")):
+        bad.append(f"{loc} data_labels {bool(shows)}≠{c.get('data_labels')}")
+    cm = c.get("color_map") or {}
+    pie_like = c["kind"] in ("pie", "donut")
+    if pie_like:
+        for k, cat in enumerate(c.get("categories") or []):
+            col = _rgb(plot.series[0].points[k].format.fill)
+            if col and cm.get(str(cat)) and col != cm[str(cat)].upper():
+                bad.append(f"{loc} slice '{cat}' {col}≠{cm[str(cat)]}")
+    else:
+        for se in plot.series:
+            if c.get("highlight") is not None:
+                break
+            col = _rgb(se.format.fill) if c["kind"] in ("bar", "area") else (_rgb(se.format.line) if c["kind"] == "line" else _rgb(se.format.fill))
+            if col and cm.get(str(se.name)) and col != cm[str(se.name)].upper():
+                bad.append(f"{loc} series '{se.name}' {col}≠{cm[str(se.name)]}")
+        if c.get("highlight") is not None:
+            pts = [_rgb(plot.series[0].points[k].format.fill) for k in range(len(cats))]
+            hi, base = c["highlight"], cm.get(str(plot.series[0].name), "").upper()
+            rest = {p for k, p in enumerate(pts) if k != hi}
+            if pts[hi] != base or len(rest) != 1 or pts[hi] in rest:
+                bad.append(f"{loc} highlight colours {pts}")
+
+
+def verify_pptx(path, manifest, pages, res):
+    """DOM id ↔ manifest ↔ PPTX 对象：存在、类型、几何、文字、叠放顺序、图片裁切、图表、备注、页数。"""
     from pptx import Presentation
     prs = Presentation(path)
-    pages = max((m["page"] for m in manifest), default=0)
-    check(res, "PPTX", "slide count == HTML slides", "PASS" if len(prs.slides) == pages else "FAIL", f"{len(prs.slides)} vs {pages}")
+    n_pages = max((m["page"] for m in manifest), default=0)
+    check(res, "PPTX", "slide count == HTML slides", "PASS" if len(prs.slides) == n_pages else "FAIL", f"{len(prs.slides)} vs {n_pages}")
     check(res, "PPTX", "page size 16:9 (12192000×6858000 EMU)", "PASS" if (prs.slide_width, prs.slide_height) == (12192000, 6858000) else "FAIL", f"{prs.slide_width}×{prs.slide_height}")
     kinds = {"text": 0, "picture": 0, "chart": 0, "table": 0, "shape": 0, "other": 0}
-    full_page, geom_bad, text_bad, missing = [], [], [], []
-    matched = notes = 0
+    full_page, geom_bad, text_bad, missing, type_bad, crop_bad, order_bad, chart_bad, table_bad, notes_bad = ([] for _ in range(10))
+    matched = 0
     area = prs.slide_width * prs.slide_height
+    declared = {p["page"]: p for p in pages}
     for si, slide in enumerate(prs.slides, 1):
-        if slide.has_notes_slide and slide.notes_slide.notes_text_frame.text.strip():
-            notes += 1
+        notes = slide.notes_slide.notes_text_frame.text if slide.has_notes_slide else ""
+        info = declared.get(si)
+        if info is not None:   # 备注按 HTML 实际声明核验：声明了必须在；没声明则 PPTX 不得凭空出现
+            if info["notes_declared"] and not _norm(notes):
+                notes_bad.append(f"p{si} declared but missing")
+            elif not info["notes_declared"] and _norm(notes):
+                notes_bad.append(f"p{si} not declared in HTML but present")
         by_name = {sh.name: sh for sh in slide.shapes}
+        order = {sh.name: k for k, sh in enumerate(slide.shapes)}
         for sh in slide.shapes:
             if sh.shape_type == 13: kinds["picture"] += 1
             elif getattr(sh, "has_chart", False) and sh.has_chart: kinds["chart"] += 1
@@ -91,129 +155,282 @@ def verify_pptx(path, manifest, res):
             else: kinds["other"] += 1
             if sh.shape_type == 13 and sh.width * sh.height >= .9 * area:
                 full_page.append(f"p{si}:{sh.name}")
+        last = -1
         for m in manifest:
             if m["page"] != si or m.get("result") in ("skipped", "dropped"):
-                continue   # 跳过/丢弃的元素不应出现在 PPTX；其结论由清单检查项负责
-            # compile 命名对象 "<页 id>.<元素 id>"；旧 manifest 没有 page_id 时退回后缀匹配
+                continue
             sh = by_name.get(f"{m['page_id']}.{m['id']}") if m.get("page_id") else next((c for n, c in by_name.items() if n.endswith("." + m["id"])), None)
+            loc = f"p{si}/{m['id']}"
             if sh is None:
-                missing.append(f"p{si}/{m['id']}"); continue
+                missing.append(loc); continue
             matched += 1
+            if order[sh.name] < last: order_bad.append(loc)
+            last = max(last, order[sh.name])
             dx = max(abs(sh.left - m["x"] * IN), abs(sh.top - m["y"] * IN), abs(sh.width - m["w"] * IN), abs(sh.height - m["h"] * IN)) / IN
-            if dx > 0.02: geom_bad.append(f"p{si}/{m['id']} Δ{dx:.3f}in")
+            if dx > 0.02: geom_bad.append(f"{loc} Δ{dx:.3f}in")
             st = m.get("strategy", "")
-            if st == "native-text" and not (sh.has_text_frame and sh.text_frame.text.strip()): text_bad.append(f"p{si}/{m['id']}")
-            if m.get("result") == "raster" and sh.shape_type != 13: text_bad.append(f"p{si}/{m['id']} raster expected picture")
-            if st == "native-chart" and not getattr(sh, "has_chart", False) and not getattr(sh, "has_table", False): text_bad.append(f"p{si}/{m['id']} chart expected native chart/table")
+            if st == "native-text":
+                if not (sh.has_text_frame and sh.text_frame.text.strip()): type_bad.append(loc)
+                elif m.get("text") is not None and _norm(sh.text_frame.text) != _norm(m["text"]): text_bad.append(f"{loc} '{sh.text_frame.text[:20]}'≠'{str(m['text'])[:20]}'")
+            if m.get("result") == "raster" and sh.shape_type != 13: type_bad.append(f"{loc} raster expected picture")
+            if st == "native-image" and m.get("result") == "native":
+                if sh.shape_type != 13: type_bad.append(f"{loc} image expected picture")
+                else:
+                    cl, cr, ct, cb = sh.crop_left, sh.crop_right, sh.crop_top, sh.crop_bottom
+                    iw, ih = sh.image.size
+                    vis = ((1 - cl - cr) * iw) / max(1e-9, (1 - ct - cb) * ih)
+                    if min(cl, cr, ct, cb) < -1e-6 or abs(vis / (sh.width / sh.height) - 1) > 0.02: crop_bad.append(f"{loc} visible AR {vis:.3f} vs box {sh.width / sh.height:.3f}")
+            if st == "native-chart":
+                c = m.get("chart") or {}
+                if c.get("kind") == "table":
+                    if not getattr(sh, "has_table", False): type_bad.append(f"{loc} expected native table")
+                    else:
+                        tb = sh.table
+                        if len(tb.rows) != (c.get("rows") or 0) + 1 or len(tb.columns) != len(c.get("headers") or []) or [tb.cell(0, k).text for k in range(len(tb.columns))] != list(c.get("headers") or []): table_bad.append(loc)
+                elif not getattr(sh, "has_chart", False): type_bad.append(f"{loc} expected native chart")
+                elif c:
+                    try: _chart_check(sh, m, chart_bad)
+                    except Exception as e: chart_bad.append(f"{loc} unreadable: {type(e).__name__}: {e}")
     expect = sum(1 for m in manifest if m.get("result") not in ("skipped", "dropped"))
-    check(res, "PPTX", "every exported element exists as a named object", "PASS" if not missing else "FAIL", f"{matched}/{expect}" + (f"; missing {missing[:5]}" if missing else ""))
-    check(res, "PPTX", "geometry within 0.02 in of DOM box", "PASS" if not geom_bad else "FAIL", f"{len(geom_bad)} off" + (f": {geom_bad[:5]}" if geom_bad else ""))
-    check(res, "PPTX", "native objects stay native (text/chart editable), rasters are pictures", "PASS" if not text_bad else "FAIL", ", ".join(text_bad[:5]) or "ok")
+    def line(ok_name, bad, detail_ok):
+        check(res, "PPTX", ok_name, "PASS" if not bad else "FAIL", (", ".join(bad[:5]) + (f" (+{len(bad) - 5})" if len(bad) > 5 else "")) if bad else detail_ok)
+    line("every exported element exists as a named object (DOM id ↔ manifest ↔ PPTX)", missing, f"{matched}/{expect}")
+    line("object types match the manifest strategy (text/picture/chart/table)", type_bad, "ok")
+    line("geometry within 0.02 in of DOM box", geom_bad, f"{matched} objects")
+    line("text content equals DOM text (whitespace-insensitive)", text_bad, "ok")
+    line("z-order follows DOM order", order_bad, "ok")
+    line("native image crop: visible aspect == box aspect (±2%)", crop_bad, "ok")
+    line("charts: type, categories, series data, colours, legend, data labels == contract", chart_bad, f"{kinds['chart']} charts")
+    line("tables: header and row count == DOM", table_bad, f"{kinds['table']} tables")
     check(res, "PPTX", "no full-page screenshot posing as slide", "PASS" if not full_page else "FAIL", ", ".join(full_page) or "no picture ≥ 90% of slide area")
-    want_notes = len(prs.slides)
-    check(res, "PPTX", "speaker notes carried over", "PASS" if notes == want_notes else "FAIL", f"{notes}/{want_notes}")
+    nd = sum(1 for p in pages if p["notes_declared"])
+    line("speaker notes follow what the HTML declares (declared → present; undeclared → absent)", notes_bad, f"{nd}/{len(pages)} slides declare notes" if pages else "no page info in manifest (legacy)")
     n = sum(kinds.values())
-    check(res, "PPTX", "object inventory", "INFO", json.dumps(kinds) + f"; native ≈ {n - kinds['picture']}/{n} objects; pictures = {kinds['picture']} (declared raster/image only)")
+    check(res, "PPTX", "object inventory", "INFO", json.dumps(kinds) + f"; pictures = {kinds['picture']} (declared raster/image only); non-picture objects = {n - kinds['picture']}/{n}")
 
 
-def _raster_pages(pdf, shots, out, force, area, limit, res, pages, tag):
-    """PDF（Chromium 导出，或 PPTX 经 LibreOffice/PowerPoint 渲染）→ 逐页光栅，与 HTML 终态截图比对。成功返回已打开的 PDF 文档。"""
-    try:
-        import pymupdf as fitz
-        from PIL import Image, ImageChops
-    except Exception as e:
-        check(res, area, f"{area} raster comparison", "BLOCKED", f"PyMuPDF/Pillow missing: {e}"); return None
+def stats_of(manifest):
+    """原生 / 局部栅格 / 降级 / 跳过 / 丢弃 统计（披露不可编辑项）。"""
+    by = {}
+    for m in manifest:
+        by[m["result"]] = by.get(m["result"], 0) + 1
+    tot = sum(v for k, v in by.items() if k != "skipped")
+    return {"elements": len(manifest), "by_result": by, "editable_share": round((by.get("native", 0) + by.get("downgraded", 0)) / tot, 4) if tot else None,
+            "not_editable": [{"page": m["page"], "id": m["id"], "sel": m.get("sel"), "why": m.get("reason"), "raster": m.get("raster")} for m in manifest if m["result"] == "raster"],
+            "downgraded": [{"page": m["page"], "id": m["id"], "why": m.get("reason")} for m in manifest if m["result"] == "downgraded"]}
+
+
+def _arr(img):
+    import numpy as np
+    return np.asarray(img.convert("RGB"), dtype=np.int16)
+
+
+def _box(x, k=7):
+    import numpy as np
+    c = np.cumsum(np.cumsum(np.pad(x, ((1, 0), (1, 0))), 0), 1)
+    return (c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]) / (k * k)
+
+
+def ssim(a, b):
+    """灰度 SSIM（7×7 均匀窗，C1/C2 取标准值）；无 skimage 依赖，只需 numpy。"""
+    import numpy as np
+    g = lambda im: np.asarray(im.convert("L"), dtype=np.float64)
+    x, y = g(a), g(b)
+    c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+    mx, my = _box(x), _box(y)
+    vx, vy, cxy = _box(x * x) - mx * mx, _box(y * y) - my * my, _box(x * y) - mx * my
+    return float(np.mean(((2 * mx * my + c1) * (2 * cxy + c2)) / ((mx * mx + my * my + c1) * (vx + vy + c2))))
+
+
+def pixel_stats(a, b):
+    import numpy as np
+    d = np.abs(_arr(a) - _arr(b))
+    return {"differing_pixels": int((d.max(axis=2) > 0).sum()), "max_abs": int(d.max()), "mean_abs": round(float(d.mean()), 4),
+            "share_gt40": round(float((d.max(axis=2) > 40).mean()), 6), "ssim": round(ssim(a, b), 5)}
+
+
+def _doc_pages(pdf, scale_to_px):
+    import pymupdf as fitz
+    from PIL import Image
     doc = fitz.open(pdf)
-    if pages is not None:
-        check(res, area, "page count == HTML slides", "PASS" if len(doc) == pages else "FAIL", f"{len(doc)} vs {pages}")
+    for p in doc:
+        k = scale_to_px / p.rect.width
+        pix = p.get_pixmap(matrix=fitz.Matrix(k, k), alpha=False)
+        yield p, Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+
+def _baseline(shots, i):
+    from PIL import Image
+    f = os.path.join(shots, f"slide-{i:02d}.png")
+    return Image.open(f).convert("RGB") if os.path.isfile(f) else None
+
+
+def verify_pdf_pixel(pdf, rep, shots, out, force, pages, res):
+    """像素模式：逐页栅格化 PDF，与同环境 HTML 基准图逐像素比对，目标 0 差异。再抽取页内嵌入图直接比对，区分“封装无损”与“查看器重采样”。"""
+    import pymupdf as fitz
+    from PIL import Image
+    dpr = rep["dpr"]
+    px = 1280 * dpr
+    doc = fitz.open(pdf)
+    check(res, "PDF", "page count == HTML slides", "PASS" if len(doc) == pages else "FAIL", f"{len(doc)} vs {pages}")
     sizes = {(round(p.rect.width), round(p.rect.height)) for p in doc}
-    check(res, area, "page size 1280×720 px (960×540 pt), no blank/extra pages", "PASS" if sizes == {(960, 540)} else "FAIL", str(sizes))
-    missing = [i for i in range(1, len(doc) + 1) if not os.path.isfile(os.path.join(shots, f"slide-{i:02d}.png"))]
+    check(res, "PDF", "page size 16:9 (960×540 pt = 1280×720 px), no blank/extra pages", "PASS" if sizes == {(960, 540)} else "FAIL", str(sizes))
+    missing = [i for i in range(1, len(doc) + 1) if _baseline(shots, i) is None]
     if missing:
-        check(res, area, "per-page pixel diff vs HTML final-state screenshot", "BLOCKED", f"missing HTML screenshots for pages {missing[:8]} in {shots} (run web_export.mjs audit --shots)")
-        return doc
-    diffs = []
-    for i, p in enumerate(doc, 1):
-        pix = p.get_pixmap(matrix=fitz.Matrix(1280 / p.rect.width, 1280 / p.rect.width))
-        a = Image.frombytes("RGB", (pix.width, pix.height), pix.samples).resize((1280, 720))
-        b = Image.open(os.path.join(shots, f"slide-{i:02d}.png")).convert("RGB").resize((1280, 720))
-        d = ImageChops.difference(a, b).convert("L")
-        hist = d.histogram(); tot = sum(hist)
-        diffs.append((i, sum(hist[40:]) / tot))
-        buf = io.BytesIO(); a.save(buf, "PNG"); write_atomic(Path(out) / f"{tag}-{i:02d}.png", buf.getvalue(), force)
-        sheet = Image.new("RGB", (2580, 720), (30, 30, 30)); sheet.paste(b, (0, 0)); sheet.paste(a, (1300, 0))
-        buf = io.BytesIO(); sheet.resize((1290, 360)).save(buf, "JPEG", quality=82); write_atomic(Path(out) / f"cmp-{tag}-{i:02d}.jpg", buf.getvalue(), force)
-    worst = max(diffs, key=lambda x: x[1])
-    check(res, area, f"per-page pixel diff vs HTML final-state screenshot (share of pixels with Δ>40/255, limit {limit:.0%})", "PASS" if worst[1] < limit else "FAIL",
-          "; ".join(f"p{i}:{b * 100:.2f}%" for i, b in diffs) + f" (worst p{worst[0]})")
-    return doc
+        check(res, "PDF", "pixel-exact vs HTML baseline", "BLOCKED", f"missing baseline pages {missing[:8]} in {shots} (run web_export.mjs shots)"); return
+    base0 = _baseline(shots, 1)
+    if base0.size != (px, 720 * dpr):
+        check(res, "PDF", "pixel-exact vs HTML baseline", "BLOCKED", f"baseline is {base0.size}, PDF report says {px}×{720 * dpr} (re-run shots with --dpr {dpr})"); return
+    raster, embedded = [], []
+    for i, (p, im) in enumerate(_doc_pages(pdf, px), 1):
+        b = _baseline(shots, i)
+        raster.append(pixel_stats(im, b) if im.size == b.size else {"differing_pixels": -1, "max_abs": -1, "note": f"size {im.size}≠{b.size}"})
+        imgs = p.get_images(full=True)
+        if len(imgs) == 1:
+            ex = Image.open(io.BytesIO(doc.extract_image(imgs[0][0])["image"])).convert("RGB")
+            embedded.append(pixel_stats(ex, b) if ex.size == b.size else {"differing_pixels": -1, "max_abs": -1, "note": f"size {ex.size}≠{b.size}"})
+        else:
+            embedded.append({"differing_pixels": -1, "max_abs": -1, "note": f"{len(imgs)} images on page"})
+        if raster[-1]["differing_pixels"] != 0:
+            buf = io.BytesIO(); im.save(buf, "PNG"); write_atomic(Path(out) / f"pdf-{i:02d}.png", buf.getvalue(), force)
+    worst = max(raster, key=lambda r: r["differing_pixels"])
+    ok = all(r["differing_pixels"] == 0 for r in raster)
+    check(res, "PDF", f"pixel mode: rasterised PDF page == HTML baseline at {dpr}× (differing pixels must be 0)", "PASS" if ok else "FAIL",
+          "; ".join(f"p{i}:{r['differing_pixels']}px(max Δ{r['max_abs']})" for i, r in enumerate(raster, 1)))
+    eok = all(r["differing_pixels"] == 0 for r in embedded)
+    check(res, "PDF", "pixel mode: embedded page image == HTML baseline bytes-for-pixels (lossless packaging)", "PASS" if eok else "FAIL",
+          "; ".join(f"p{i}:{r['differing_pixels']}px" for i, r in enumerate(embedded, 1)))
+    text = sum(len("".join(p.get_text().split())) for p in doc)
+    check(res, "PDF", "text layer (pixel mode is image pages by design: NOT selectable, NOT vector-editable)", "INFO", f"{text} selectable chars (expected 0)")
+    rep_out = {"mode": "pixel", "dpr": dpr, "raster_vs_baseline": raster, "embedded_vs_baseline": embedded, "worst_raster_differing_px": worst["differing_pixels"]}
+    return rep_out
 
 
-def verify_pdf(pdf, shots, out, force, manifest, res):
-    pages = max((m["page"] for m in manifest), default=None)
-    doc = _raster_pages(pdf, shots, out, force, "PDF", PDF_DIFF_LIMIT, res, pages, "pdf")
-    if doc is None:
-        return
-    fonts = sorted({f"{f[3] or f[4]}({f[2]})" for p in doc for f in p.get_fonts()})
-    check(res, "PDF", "fonts embedded (Skia embeds CJK as Type3 outlines: selectable, not re-editable)", "PASS" if fonts else "FAIL", f"{len(fonts)} font objects: " + ", ".join(fonts[:4]))
-    # 文字量按清单里的期望字数比较（大数字页只有几个字也是合法的），而不是写死“每页 > 20 字”
+def verify_pdf_vector(pdf, shots, out, force, manifest, pages, res):
+    """高保真矢量模式：报告实测差异，不声称与屏幕一致。阈值取自 limits.json 的 web_verify.pdf_vector（样例校准，见 dev/calibration）。"""
+    from model import LIMITS
+    lim = LIMITS["web_verify"]["pdf_vector"]
+    import pymupdf as fitz
+    doc = fitz.open(pdf)
+    check(res, "PDF", "page count == HTML slides", "PASS" if len(doc) == pages else "FAIL", f"{len(doc)} vs {pages}")
+    sizes = {(round(p.rect.width), round(p.rect.height)) for p in doc}
+    check(res, "PDF", "page size 1280×720 px (960×540 pt)", "PASS" if sizes == {(960, 540)} else "FAIL", str(sizes))
+    stats = []
+    from PIL import Image
+    for i, (p, im) in enumerate(_doc_pages(pdf, 1280), 1):
+        b = _baseline(shots, i)
+        if b is None:
+            check(res, "PDF", "vector PDF vs HTML baseline", "BLOCKED", f"missing baseline page {i}"); return
+        b = b.resize((1280, 720), Image.LANCZOS)
+        stats.append(pixel_stats(im, b))
+    worst = max(stats, key=lambda r: r["share_gt40"]); worst_ssim = min(r["ssim"] for r in stats)
+    ok = worst["share_gt40"] <= lim["share_gt40_max"] and worst_ssim >= lim["ssim_min"]
+    check(res, "PDF", f"vector mode (high fidelity, NOT pixel-identical): share Δ>40 ≤ {lim['share_gt40_max']:.2%}, SSIM ≥ {lim['ssim_min']}", "PASS" if ok else "FAIL",
+          "; ".join(f"p{i}:{r['share_gt40'] * 100:.2f}%/ssim {r['ssim']:.4f}" for i, r in enumerate(stats, 1)))
     got = ["".join(p.get_text().split()) for p in doc]
     want = {}
     for m in manifest:
         want[m["page"]] = want.get(m["page"], 0) + int(m.get("text_len") or 0)
     bad = [i for i, t in enumerate(got, 1) if (want.get(i) and len(t) < .8 * want[i]) or (not want.get(i) and not t)]
-    if not any(want.values()):
-        check(res, "PDF", "vector selectable text on every page", "PASS" if not bad else "FAIL", f"chars/page {[len(t) for t in got]} (manifest has no text_len: only non-empty checked)")
-    else:
-        check(res, "PDF", "vector selectable text matches DOM text volume (≥ 80%)", "PASS" if not bad else "FAIL", f"pdf chars {[len(t) for t in got]} vs dom {[want.get(i, 0) for i in range(1, len(got) + 1)]}")
+    check(res, "PDF", "vector selectable text ≥ 80% of DOM text volume", "PASS" if not bad else "FAIL", f"pdf chars {[len(t) for t in got]} vs dom {[want.get(i, 0) for i in range(1, len(got) + 1)]}")
+    return {"mode": "vector", "vs_baseline": stats}
+
+
+def render_pptx(pptx, outdir):
+    """LibreOffice 真实渲染 PPTX → PDF；独立用户配置目录，超时即 BLOCKED。返回 (pdf 路径|None, 说明)。"""
+    import shutil, subprocess, tempfile
+    so = shutil.which("soffice") or shutil.which("libreoffice") or os.environ.get("SOFFICE")
+    if not so:
+        return None, "soffice not found (install LibreOffice or set SOFFICE)"
+    with tempfile.TemporaryDirectory() as prof:
+        try:
+            r = subprocess.run([so, f"-env:UserInstallation=file://{prof}", "--headless", "--convert-to", "pdf", "--outdir", str(outdir), str(pptx)], capture_output=True, text=True, timeout=240)
+        except subprocess.TimeoutExpired:
+            return None, "soffice timed out (240 s)"
+    pdf = Path(outdir) / (Path(pptx).stem + ".pdf")
+    ver = subprocess.run([so, "--version"], capture_output=True, text=True).stdout.strip()
+    return (str(pdf), ver) if pdf.is_file() else (None, f"soffice produced no PDF: {r.stderr.strip()[:200]}")
+
+
+def verify_pptx_render(render_pdf, shots, pages, res, ver):
+    from model import LIMITS
+    from PIL import Image
+    lim = LIMITS["web_verify"]["pptx_render"]
+    stats = []
+    for i, (p, im) in enumerate(_doc_pages(render_pdf, 1280), 1):
+        b = _baseline(shots, i)
+        if b is None:
+            check(res, "PPTX", "visual fidelity vs HTML", "BLOCKED", f"missing baseline page {i}"); return None
+        stats.append(pixel_stats(im.resize((1280, 720)), b.resize((1280, 720), Image.LANCZOS)))
+    check(res, "PPTX", "rendered page count == HTML slides", "PASS" if len(stats) == pages else "FAIL", f"{len(stats)} vs {pages}")
+    worst, wssim = max(r["share_gt40"] for r in stats), min(r["ssim"] for r in stats)
+    ok = worst <= lim["share_gt40_max"] and wssim >= lim["ssim_min"]
+    check(res, "PPTX", f"LibreOffice render ({ver}) vs HTML: share Δ>40 ≤ {lim['share_gt40_max']:.0%}, SSIM ≥ {lim['ssim_min']} (calibrated: {lim['calibration']})", "PASS" if ok else "FAIL",
+          "; ".join(f"p{i}:{r['share_gt40'] * 100:.1f}%/ssim {r['ssim']:.3f}" for i, r in enumerate(stats, 1)))
+    check(res, "PPTX", "Microsoft PowerPoint real render", "UNVERIFIED", "not run in this environment (no PowerPoint); LibreOffice is a different layout engine")
+    return {"renderer": ver, "per_page": stats}
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pptx"); ap.add_argument("--manifest"); ap.add_argument("--pdf"); ap.add_argument("--shots")
-    ap.add_argument("--pptx-render", help="PPTX 经 LibreOffice/PowerPoint 渲染得到的 PDF；缺它则 PPTX 视觉还原只能是 UNVERIFIED")
+    ap.add_argument("--pptx"); ap.add_argument("--manifest"); ap.add_argument("--pdf"); ap.add_argument("--pdf-report", help="web_export.mjs pdf 写出的 *.pdf-report.json（缺省取 PDF 同名）")
+    ap.add_argument("--shots", help="web_export.mjs shots 的 HTML 基准图目录")
+    ap.add_argument("--render-pptx", action="store_true", help="用本机 LibreOffice 真实渲染 PPTX 后比对")
+    ap.add_argument("--pptx-render", help="已有的 PPTX 渲染 PDF（LibreOffice / PowerPoint 导出）")
     ap.add_argument("--out", default="verify-out"); ap.add_argument("--json"); ap.add_argument("--force", action="store_true", help="允许覆盖已存在的报告/对比图")
     a = ap.parse_args(argv)
-    # 输入/契约错误 → 退出码 2，不写任何文件
     err = []
     if not (a.pptx or a.pdf): err.append("至少给 --pptx 或 --pdf")
     if a.pptx and not a.manifest: err.append("--pptx 需要 --manifest（没有清单无法逐元素核对）")
-    if a.pptx_render and not a.pptx: err.append("--pptx-render 需要 --pptx")
-    for k in ("pptx", "manifest", "pdf", "pptx_render"):
+    if (a.pptx_render or a.render_pptx) and not a.pptx: err.append("--pptx-render / --render-pptx 需要 --pptx")
+    for k in ("pptx", "manifest", "pdf", "pptx_render", "pdf_report"):
         v = getattr(a, k)
         if v and not os.path.isfile(v): err.append(f"--{k.replace('_', '-')} 文件不存在: {v}")
     if a.shots and not os.path.isdir(a.shots): err.append(f"--shots 不是目录: {a.shots}")
     rep = Report()
     outdir = Path(a.out).resolve()
-    ins = {k: Path(getattr(a, k)) for k in ("pptx", "manifest", "pdf", "pptx_render") if getattr(a, k)}
+    ins = {k: Path(getattr(a, k)) for k in ("pptx", "manifest", "pdf", "pptx_render", "pdf_report") if getattr(a, k)}
     outs = [("--json", Path(a.json), ".json")] if a.json else []
     guard_paths(rep, ins, outs, a.force, dirs={"--out": outdir, **({"--shots": Path(a.shots)} if a.shots else {})})
-    if a.shots and outdir == Path(a.shots).resolve(): rep.hard("E-EXIST", str(outdir), "--out 不能等于 --shots：对比图不得混进 HTML 终态截图")
+    if a.shots and outdir == Path(a.shots).resolve(): rep.hard("E-EXIST", str(outdir), "--out 不能等于 --shots：对比图不得混进 HTML 基准图")
     err += [f"{i.code} {i.where}: {i.message}" for i in rep.items if i.level == "HARD"]
     if err:
         for e in err: print("ERROR", e, file=sys.stderr)
         return EXIT_BY_STATUS["ERROR"]
-    manifest, flags = load_manifest(a.manifest) if a.manifest else ([], [])
-    res, down = [], []
-    if a.manifest: down = verify_manifest(manifest, flags, res)
+    manifest, flags, pages = load_manifest(a.manifest) if a.manifest else ([], [], [])
+    n_pages = max((m["page"] for m in manifest), default=None)
+    res, down, detail, stats = [], [], {}, None
+    if a.manifest:
+        down = verify_manifest(manifest, flags, res); stats = stats_of(manifest)
     try:
-        if a.pptx: verify_pptx(a.pptx, manifest, res)
+        if a.pptx: verify_pptx(a.pptx, manifest, pages, res)
     except Exception as e:   # 打不开/损坏的 PPTX 是 FAIL，不是崩溃后的“无结论”
         check(res, "PPTX", "PPTX opens as a valid package", "FAIL", f"{type(e).__name__}: {e}")
-    if a.pdf and not a.shots:
-        check(res, "PDF", "PDF raster comparison", "BLOCKED", "需要 --shots（web_export.mjs audit 产出的 slide-NN.png）才能逐页比对")
-    if (a.pdf or a.pptx_render) and a.shots:
-        outdir.mkdir(parents=True, exist_ok=True)
-    if a.pdf and a.shots: verify_pdf(a.pdf, a.shots, outdir, a.force, manifest, res)
-    if a.pptx:
-        if a.pptx_render and a.shots:
-            _raster_pages(a.pptx_render, a.shots, outdir, a.force, "PPTX-render", PPTX_DIFF_LIMIT, res, max((m["page"] for m in manifest), default=None), "pptx")
-        else:
-            check(res, "PPTX", "visual fidelity vs HTML (needs LibreOffice/PowerPoint render: --pptx-render + --shots)", "UNVERIFIED",
-                  "未提供 PPTX 的真实渲染；上面的几何/文本/类型检查只是结构层。PowerPoint 实机: NOT VERIFIED")
+    outdir.mkdir(parents=True, exist_ok=True)
+    try:
+        if a.pdf:
+            rp = a.pdf_report or str(Path(a.pdf).with_suffix("")) + ".pdf-report.json"
+            prep = json.load(open(rp, encoding="utf-8")) if os.path.isfile(rp) else None
+            if not a.shots: check(res, "PDF", "PDF raster comparison", "BLOCKED", "需要 --shots（web_export.mjs shots 的基准图）才能逐页比对")
+            elif prep is None: check(res, "PDF", "PDF mode unknown", "BLOCKED", f"找不到 {rp}：无法判定是像素模式还是矢量模式，不替它选一个更宽松的口径")
+            else:
+                check(res, "PDF", "pdf-report sha256 == file sha256", "PASS" if prep.get("pdf_sha256") == __import__("hashlib").sha256(open(a.pdf, "rb").read()).hexdigest() else "FAIL", f"mode={prep.get('mode')}")
+                detail["pdf"] = (verify_pdf_pixel(a.pdf, prep, a.shots, outdir, a.force, n_pages, res) if prep.get("mode") == "pixel"
+                                 else verify_pdf_vector(a.pdf, a.shots, outdir, a.force, manifest, n_pages, res))
+        if a.pptx:
+            rpdf, ver = a.pptx_render, "external render"
+            if a.render_pptx and not rpdf:
+                rpdf, ver = render_pptx(a.pptx, outdir)
+                if rpdf is None: check(res, "PPTX", "LibreOffice render", "BLOCKED", ver)
+            if rpdf and a.shots: detail["pptx_render"] = verify_pptx_render(rpdf, a.shots, n_pages, res, ver)
+            elif rpdf: check(res, "PPTX", "visual fidelity vs HTML", "BLOCKED", "需要 --shots 基准图")
+            elif not a.render_pptx:
+                check(res, "PPTX", "visual fidelity vs HTML (needs LibreOffice/PowerPoint render: --render-pptx or --pptx-render)", "UNVERIFIED", "未提供 PPTX 的真实渲染；上面是结构层核验。PowerPoint 实机: UNVERIFIED")
+    except ImportError as e:
+        check(res, "PDF/PPTX", "raster comparison", "BLOCKED", f"PyMuPDF/Pillow/numpy missing: {e} (pip install -r requirements-render.txt)")
     status = rollup(res)
     counts = {s: sum(1 for r in res if r["status"] == s) for s in ("PASS", "FAIL", "BLOCKED", "UNVERIFIED", "INFO")}
-    out = {"status": status, "exit_code": EXIT_BY_STATUS[status], "counts": counts, "downgrades": down, "checks": res}
+    out = {"status": status, "exit_code": EXIT_BY_STATUS[status], "counts": counts, "stats": stats, "downgrades": down, "detail": detail, "checks": res}
     if a.json: write_atomic(Path(a.json), json.dumps(out, ensure_ascii=False, indent=2).encode("utf-8"), a.force)
     for r in res: print(f"{r['status']:10} [{r['area']}] {r['name']} — {r['detail']}")
     print(f"STATUS {status}  exit={EXIT_BY_STATUS[status]}  " + " ".join(f"{k}={v}" for k, v in counts.items()) + f"  downgrades={len(down)}")

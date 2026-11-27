@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """plan 模型与共用工具：诊断、载入、度量、颜色、几何、成品包校验。
 
-compile / verify / revise 共用这一份实现；这里不依赖 python-pptx，可单独校验 plan。
+compile / verify / web_verify 共用这一份实现；这里不依赖 python-pptx，可单独校验 plan。
 """
 
 from __future__ import annotations
@@ -66,9 +66,6 @@ def parse_xml(data: bytes):
 
 # ---------------------------------------------------------------- 诊断
 
-
-class BadOp(Exception):
-    """revise.py 的操作无法执行：定位不到对象、参数不合契约。不猜，直接停。"""
 
 @dataclass
 class Issue:
@@ -170,7 +167,7 @@ def strict_json_loads(raw: str) -> Any:
 
 
 def schema_errors(plan: Any) -> List[str]:
-    """plan 对 plan.schema.json 的违例（路径排序，文案截断）；load_plan 与 scaffold init 共用。"""
+    """plan 对 plan.schema.json 的违例（路径排序，文案截断）；load_plan 使用。"""
     from jsonschema import Draft202012Validator
     errs = sorted(Draft202012Validator(SCHEMA).iter_errors(plan), key=lambda e: list(map(str, e.absolute_path)))
     return [f"{'/'.join(map(str, e.absolute_path)) or '(根)'}: {e.message[:300]}" for e in errs]
@@ -222,7 +219,7 @@ def xml_illegal(node: Any, path: str = "") -> List[str]:
 CANVAS_PX: Tuple[int, int] = (LIMITS["canvas"]["width_px"], LIMITS["canvas"]["height_px"])
 CANVAS_EMU: Tuple[int, int] = (LIMITS["canvas"]["width_emu"], LIMITS["canvas"]["height_emu"])
 PX_PER_IN: int = LIMITS["canvas"]["px_per_in"]
-# 画布英寸尺寸：由 EMU 推出，全链路（scaffold 网格、compile 页面、checks 出界、verify 渲染页尺寸）唯一来源。
+# 画布英寸尺寸：由 EMU 推出，全链路（compile 页面、checks 出界、verify 渲染页尺寸）唯一来源。
 CANVAS_IN: Tuple[float, float] = (CANVAS_EMU[0] / EMU, CANVAS_EMU[1] / EMU)
 
 
@@ -234,10 +231,6 @@ def px(inches: float) -> float:
     """英寸 → 1280×720 设计像素（96 px/in）。"""
     return inches * PX_PER_IN
 
-
-def is_canvas_emu(width: int, height: int) -> bool:
-    """已有 PPTX 的页面尺寸是否就是 16:9 标准画布（容差 1000 EMU ≈ 0.001 in，吸收各家取整）。"""
-    return abs(width - CANVAS_EMU[0]) <= 1000 and abs(height - CANVAS_EMU[1]) <= 1000
 
 def _em_width(ch: str) -> float:
     if ch in " \u00a0\t":
@@ -397,7 +390,7 @@ def chart_palette(plan: Dict[str, Any], chart: Dict[str, Any]) -> List[str]:
 def is_finite_number(v: Any) -> bool:
     """图表数值的唯一判定：真实有限数值。bool、字符串、None、NaN、±Infinity 一律不是。
 
-    plan 校验（checks）与定点改稿（revise chart_data）共用这一处，两条路径对同一份数据结论一致。
+    plan 校验（checks）与核验（verify）共用这一处。
     """
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
@@ -414,7 +407,7 @@ def non_finite_series(series: List[Dict[str, Any]]) -> List[str]:
 
 def chart_data_problems(kind: str, categories: Optional[List[Any]], series: List[Dict[str, Any]], unit: str = "",
                         stacked: Any = None, data_labels: bool = False) -> List[Tuple[str, str, str]]:
-    """图表数据契约的唯一实现：新建（checks.check_chart）与既有图表改数（revise.apply_chart）共用。
+    """图表数据契约的唯一实现：checks.check_chart 与 verify 共用。
 
     返回 [(严重度 HARD|SOFT, 诊断码, 说明)]。规则：系列名与类别名唯一、数值有限、值数=类别数；
     饼/环单系列、不得为负、合计不得为 0、以 % 表示时合计应为 100；百分比堆叠每列合计应为 100。
@@ -525,9 +518,8 @@ def legend_label(spec: Dict[str, Any], item: str, values: List[Any], i: int, sho
 def chart_flags(chart: Dict[str, Any]) -> Dict[str, bool]:
     """原生图例与直标的**有效**开关：compile、checks、verify 只读这里，没有第二份缺省。
 
-    缺省值（plan 里没写该键时）：
+    缺省值（plan 里没写该键时）读 `limits.json` 的 `chart.contract`（HTML 的 chart.js 读同一份）：
       - 饼/环：`data_labels` 开（饼带类别名与读数，环只有读数）、`legend` 关。
-        旧版两个都缺省为关，饼/环会被编译成既无类别也无数值的图。
       - 柱/线/面积/散点：`data_labels` 关；`legend` 在两个以上系列时开。
       - 表格：两者都不适用，恒为关。
     显式写了的值（含 false）永远优先；是否放行由 `chart_readout_problems` 判断。
@@ -535,13 +527,15 @@ def chart_flags(chart: Dict[str, Any]) -> Dict[str, bool]:
     kind = chart.get("kind")
     if kind == "table":
         return {"legend": False, "data_labels": False}
-    pie_like = kind in ("pie", "donut")
+    ct = LIMITS["chart"]["contract"]
     n_series = len((chart.get("data") or {}).get("series") or [])
-    legend = chart.get("legend")
-    labels = chart.get("data_labels")
+    legend, labels = chart.get("legend"), chart.get("data_labels")
+    def pick(table: Dict[str, Any]) -> Any:
+        return table.get(kind, table["*"])
+    leg_rule = pick(ct["legend_default"])
     return {
-        "legend": bool(legend) if legend is not None else (False if pie_like else n_series > 1),
-        "data_labels": bool(labels) if labels is not None else pie_like,
+        "legend": bool(legend) if legend is not None else (n_series > 1 if leg_rule == "multi_series" else bool(leg_rule)),
+        "data_labels": bool(labels) if labels is not None else bool(pick(ct["data_labels_default"])),
     }
 
 def chart_readout_problems(chart: Dict[str, Any], has_legend_element: bool = False) -> List[Tuple[str, str]]:
@@ -852,7 +846,7 @@ def substantive_overlap(a: Box, b: Box) -> bool:
 def default_asset_root(anchor: Path, explicit: Optional[str] = None) -> Path:
     """素材根目录：--assets 优先，否则取 anchor（plan 或 edit.json）同级 assets/，再否则取其所在目录。
 
-    compile / verify / revise 共用这一个解析，三者不会各看各的目录。
+    compile / verify 共用这一个解析，不会各看各的目录。
     """
     if explicit:
         return Path(explicit).resolve()
@@ -1467,7 +1461,7 @@ def guard_paths(rep: "Report", inputs: Dict[str, Optional[Path]], outputs: List[
 
 
 def place_atomic(tmp: Path, dest: Path, force: bool = False) -> None:
-    """把已写好的临时文件放到交付名：所有 CLI（compile / revise / scaffold / verify）唯一的落点。
+    """把已写好的临时文件放到交付名：所有 CLI（compile / verify / web_verify）唯一的落点。
 
     默认不覆盖：os.link 在目标已存在时原子失败（FileExistsError），关闭“检查后、放入前”被并发进程抢占的窗口；
     force 才 os.replace。成功后临时文件已被移走或删除。
@@ -1517,7 +1511,7 @@ def write_atomic(path: Path, data: bytes, force: bool = False, verify: Any = Non
             tmp.unlink()
 
 
-PENDING = "【待判断】"          # scaffold 起稿时的占位：设计判断还没做，不是理由
+PENDING = "【待判断】"          # web 导出在 HTML 没写 data-focus 时的占位：设计判断还没做，不是理由
 SCHEMA_VERSION = 2
 
 
@@ -1532,41 +1526,6 @@ def pending_fields(page: Dict[str, Any]) -> List[str]:
     if not str(page.get("composition_rationale") or "").strip():
         out.append("composition_rationale（缺失）")
     return out
-
-
-# 15.2 及以前 scaffold 会把配方说明原样写进 composition_rationale；迁移时识别并摘掉，免得被当成真实理由。
-LEGACY_GRAMMARS = (
-    "标题底边锚在 64% 线，上方整块安静区", "一句话占满视野，竖线是唯一装饰，让人停下来", "巨型序号压暗场，换气与分章",
-    "关键数字压住页面，正文只写结论与限定", "图承担读数，旁注只写意义", "两个数字同基线同尺度，落差就是论点",
-    "标题与条目同一顶线，竖线钉住两栏", "表格承担精确读数", "只表达先后，不画箭头", "半幅图承载空间，文字留在另一侧",
-    "收在决定与下一步", "自由构图：关系决定几何，系统只供网格、色值与字号档",
-)
-
-
-def migrate_plan(plan: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
-    """旧版 plan → 当前版本，返回 (新 plan, 变更说明)。只做可证的事：不凭标题臆造 focus，不删用户写的理由。"""
-    import copy
-    new, notes = copy.deepcopy(plan), []
-    ver = new.get("schema_version", 1)
-    if ver > SCHEMA_VERSION:
-        raise ValueError(f"schema_version={ver} 比本工具（{SCHEMA_VERSION}）新，拒绝降级迁移")
-    if "aspect_ratio" in new:
-        ratio = new.pop("aspect_ratio")
-        if ratio != "16:9":
-            raise ValueError(f"aspect_ratio={ratio!r}：本技能只支持 16:9（1280×720 px），旧稿须先按 16:9 重做版面，不做自动转换")
-        notes.append("aspect_ratio 字段已移除（16:9 是唯一画布，不再是可配置项）")
-    for page in new.get("pages") or []:
-        pid = page.get("id", "?")
-        if page.get("composition_rationale") in LEGACY_GRAMMARS:
-            del page["composition_rationale"]
-            page["design_state"] = "draft"
-            notes.append(f"{pid}: composition_rationale 是配方默认说明，已移除并标 design_state=draft（待 AI 补真实构图理由）")
-        if page.get("focus") and page.get("claim") and str(page["focus"]) == str(page["claim"]).split("\n")[0]:
-            notes.append(f"{pid}: focus 与 claim 首行相同，疑为标题推断值；未改动，请复核")
-    if ver != SCHEMA_VERSION:
-        new["schema_version"] = SCHEMA_VERSION
-        notes.append(f"schema_version {ver} → {SCHEMA_VERSION}")
-    return new, notes
 
 
 def utf8_stdio() -> None:

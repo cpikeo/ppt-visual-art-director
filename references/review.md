@@ -1,6 +1,6 @@
 # 诊断、复核与交付
 
-评审既有稿、看图复核、读 `W-*` 信号、写交付回复时读本文。判断框架见 `design.md`，字段与诊断码见 `build.md` `elements.md` `ops.md`。
+评审既有稿、看图复核、读 `W-*` 信号、写交付回复时读本文。判断框架见 `design.md`，字段与诊断码见 `plan.schema.json` `elements.md` `ops.md`。
 
 ## 一、诊断
 

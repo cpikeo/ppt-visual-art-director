@@ -1,13 +1,13 @@
 # 命令、退出码、诊断码与能力边界
 
-读诊断码、退出码、报告字段、能力边界、输入安全时读本文；plan 字段与元素语义见 `build.md` `elements.md`。
+读诊断码、退出码、报告字段、能力边界、输入安全时读本文；plan 字段与元素语义见 `plan.schema.json` `elements.md`。
 
 ## 命令与退出码
 
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
-- `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积、压缩比）。
+- `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。
 - `--assets` 缺省取 plan 同级 `assets/`，否则取 plan 所在目录。`verify.py` 的渲染目录缺省为 `render/<pptx 名>/`。
-- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`web_verify.py` PASS 0、FAIL 1、输入/路径错误 2、BLOCKED 3、UNVERIFIED 4（`web_verify.EXIT_BY_STATUS` 一处定义）；`web_export.mjs` 0 成功、1 转换/编译失败或存在 `E-*`、2 输入/路径守卫拒绝；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
+- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`web_verify.py` PASS 0、FAIL 1、输入/路径错误 2、BLOCKED 3、UNVERIFIED 4（`web_verify.EXIT_BY_STATUS` 一处定义）；`web_export.mjs` 0 成功、1 转换/编译失败或存在 `E-*`、2 输入/路径守卫拒绝。
 
 ## 诊断码
 
@@ -21,7 +21,7 @@
 | `E-OVERLAP` | 实质重叠且下层未声明承载；多半忘了 `overlap_allowed` |
 | `W-DOMINANT` | `focus_element` 的粗估视觉重量（文字＝字号²×字数，图/图表/色块＝面积）没有明显超过配角；只比尺度，不判断好看 |
 | `E-CHART` `W-CHART` `W-NOTE` `W-SUM` | 口径、单位、截轴说明、颜色映射、系列色沉进承载面、饼/环合计非 100（为 0 即阻断）、饼/环无类别来源；改措辞、拆图、补映射，错色没有放行开关 |
-| `W-GRAY` `V-GRAY` | 任意两系列灰度 ΔL* 低于 `chart.min_series_delta_lstar`（limits.json，现为 9.5，scaffold 色板名义 10 留损耗）；拉开明度，或直标、换线型与标记 |
+| `W-GRAY` `V-GRAY` | 任意两系列灰度 ΔL* 低于 `chart.min_series_delta_lstar`（limits.json，现为 9.5）；拉开明度，或直标、换线型与标记 |
 | `V-LABEL-INK` `V-LABEL-POS` `V-MARKER` `V-READOUT` | 成品图表被改过或编译链有误（墨色对比 < 4.5、`dLblPos` 非法、散点 marker 不可见、饼/环读不到类别）；重新编译，不手改成品 |
 | `E-FORMAT` | 不是合格的无宏 `.pptx`（含 DTD/实体、越界部件名、解压体积或单部件压缩比异常）；输出改 `.pptx`，宏稿人工另存 |
 | `E-SCHEMA` | schema 不符，或 JSON 本身无效：`NaN`/`Infinity`、对象内重复键（标准解析器会静默取最后一个）、嵌套过深；plan、edit.json、outline 同一规则（`model.strict_json_loads`） |
@@ -47,7 +47,6 @@
 
 - `compile.py`：`blocked`、`output`、`pages`、`sha256`、`issues`。
 - `verify.py`：`status`、`exit_code`、`sha256`、`render`（PDF、PNG、`font_substituted`、`text_checks`）、`structure`、`layers`（`objects`／`render`／`fonts`／`human`）、`findings`。`render` 非 `PASS` 时 `status` 只能是 `PARTIAL`；`fonts` 为 `SUBSTITUTED`、`FACE MISMATCH`、`FACE UNVERIFIED` 时不能是 `READY`（`render.font_face`：`VERIFIED` `MISMATCH` `UNVERIFIED` `NOT_APPLICABLE`）；`layers.powerpoint` 恒为 `NOT VERIFIED`。判定只在 `verify.decide_status` 一处。
-- `revise.py`：`status`、`output`、`sha256`（失败为 null）、`ops`、`preservation`（`parts.changed` 为越界，`parts.moved` 为声明过的改写；`rejected` 为证据路径）、`issues`。
 
 `sha256` 用于确认“这份文件是不是我验的那一份”，不是复现凭据。
 
@@ -57,7 +56,7 @@
 
 | 能力 | 级别 | 说明 |
 | --- | --- | --- |
-| 画布 16:9（1280×720 px） | 完整 | 唯一画布。其他比例（含 4:3）不支持：`revise.py` 对非 16:9 稿 `E-CANVAS` 拒收，`verify.py` 页面尺寸不等于 12192000×6858000 EMU 报 `V-CANVAS` |
+| 画布 16:9（1280×720 px） | 完整 | 唯一画布。其他比例（含 4:3）不支持：`verify.py` 页面尺寸不等于 12192000×6858000 EMU 报 `V-CANVAS` |
 | 文本、形状、折线路径、组、图片裁切 | 完整 | 对象核对覆盖几何、旋转、逐 run 样式、字节 |
 | 原生图表：柱、条、堆叠、百分比堆叠、组合、线、面积、饼、环、散点；原生表格 | 完整 | 无双数值轴、瀑布、桑基、甘特、气泡、雷达、趋势线 |
 | 按数据点着色 | 部分 | 仅 `highlight_category`（单系列柱/条，其余退隐灰，不能开原生图例）与饼/环按类别取色；折线、面积、散点不支持，强调单条靠直标或旁注 |

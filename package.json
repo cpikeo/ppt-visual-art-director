@@ -1,15 +1,25 @@
 {
   "name": "ppt-visual-art-director",
-  "version": "22.1.0",
+  "version": "23.0.0",
   "private": true,
   "type": "module",
-  "description": "Web Presentation design intelligence: runtime, audit, PDF/PPTX export (Python engine in scripts/).",
+  "description": "Web Presentation: one HTML source → immersive web deck, pixel-exact PDF, editable PPTX (Python engine in scripts/).",
   "scripts": {
     "audit": "node scripts/web_export.mjs audit",
+    "shots": "node scripts/web_export.mjs shots",
     "pdf": "node scripts/web_export.mjs pdf",
-    "pptx": "node scripts/web_export.mjs pptx"
+    "pptx": "node scripts/web_export.mjs pptx",
+    "release": "node scripts/release.mjs",
+    "sync:contract": "node scripts/sync_contract.mjs",
+    "check": "node dev/check_versions.mjs && node scripts/sync_contract.mjs --check && node dev/tests/contract_parity.mjs",
+    "test:interaction": "node dev/tests/interaction.mjs",
+    "pack": "python3 dev/release/pack_skill.py"
   },
   "dependencies": {
-    "playwright": "^1.65.1"
+    "playwright": "1.65.1"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
   }
 }

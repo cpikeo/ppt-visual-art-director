@@ -1,7 +1,7 @@
-# 编译、核验（对象层）、改稿的必需依赖，均为宽松许可（MIT / BSD / HPND）。
+# 编译（导出引擎）、核验（对象层）的必需依赖，均为宽松许可（MIT / BSD / HPND）。
 # 渲染核验的可选依赖在 requirements-render.txt，默认不安装。
 python-pptx>=1.0.2,<2   # 实测：1.0.2
 jsonschema>=4.18,<5   # 实测：4.26.0
 Pillow>=10,<14   # 实测：13.0.0；10–12 未测，下限沿用旧声明
 lxml>=5   # 实测：6.1.3
-# Web 演示 / 导出（可选，仅 Web 路径需要）：Node ≥ 18 → `npm i && npx playwright install chromium`（见 package.json）
+# Web 演示 / 导出：Node >= 20 → npm ci && npx playwright install chromium（Playwright 精确锁 1.65.1，见 package.json）

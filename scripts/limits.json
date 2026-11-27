@@ -76,6 +76,16 @@
   "chart": {
     "min_contrast": {"bar": 2.0, "line": 3.0, "area": 2.0, "pie": 2.0, "donut": 2.0, "scatter": 3.0},
     "deemphasis": {"light": "#AEB3B8", "dark": "#50565E"},
+    "contract": {
+      "version": 1,
+      "_readme": "HTML(web/chart.js) 与 PPTX(model.py/charts.py) 图表默认值的唯一来源。web/contract.js 由 scripts/sync_contract.mjs 从本文件生成，CI 校验同步；两端都不得另写缺省。",
+      "item_order": {"pie": "categories", "donut": "categories", "*": "series"},
+      "data_labels_default": {"pie": true, "donut": true, "*": false},
+      "legend_default": {"pie": false, "donut": false, "*": "multi_series"},
+      "axis_zero_based_kinds": ["bar", "area", "line"],
+      "highlight": {"kind": "bar", "single_series_only": true, "dim_color": "chart.deemphasis"},
+      "unit": "chart.unit，否则取各系列声明的同一个单位"
+    },
     "font_pt": {"title": 15, "legend": 14, "axis": 14, "label": 14, "table": 18},
     "min_series_delta_lstar": 9.5,
     "gap_width": 60,
@@ -101,6 +111,11 @@
     "contact_sheet_width_px": 1800
   },
 
+  "web_verify": {
+    "_readme": "Web 导出核验的渲染差异阈值。由 dev/calibration/calibrate.mjs 在代表性样例上实测后写入；不是通用常数，换了渲染环境或样例集要重新校准。",
+    "pdf_vector": {"share_gt40_max": 0.01, "ssim_min": 0.96, "calibration": "2 decks / 10 pages, dev/calibration/results.json"},
+    "pptx_render": {"share_gt40_max": 0.24, "ssim_min": 0.79, "calibration": "2 decks / 10 pages, dev/calibration/results.json"}
+  },
   "render_check": {
     "_readme": "渲染核对用的容差与下限：span 归属容差、行归属容差、孤字判定所需的最少字数、旋转生效判定。",
     "span_tol_in": 0.2,

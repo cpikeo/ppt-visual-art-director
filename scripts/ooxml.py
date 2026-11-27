@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""OOXML 低层写入：填充、渐变、描边、圆角、双色调、run 属性。compile 与 revise 共用。"""
+"""OOXML 低层写入：填充、渐变、描边、圆角、双色调、run 属性。供 compile 与 charts 使用。"""
 
 from __future__ import annotations
 

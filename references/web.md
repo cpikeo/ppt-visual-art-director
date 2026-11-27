@@ -1,6 +1,6 @@
 # Web Presentation：工程契约与跨格式发行
 
-新建整稿的默认交付是一个 `deck.html`（+ `assets/`）。Python 引擎（`plan.json → .pptx`）保留，用于**原生 PPTX 直做**与**导出落地**。
+新建整稿的默认交付是一个 `deck.html`（+ `assets/`）。**HTML 是唯一创作源**；Python 引擎（`plan.json → .pptx`）只作为导出引擎，不提供独立的原生起稿/改稿入口。
 
 ## 一、流程（每步只回答自己层级的问题）
 
@@ -16,21 +16,23 @@
     <h1|h2 data-m="rise" data-at=".2">…</h1> … <aside class="notes">演讲备注</aside>
   </section>
 </main>
-<script src="web/chart.js"></script><script src="web/deck.js"></script>
+<script src="web/contract.js"></script><script src="web/chart.js"></script><script src="web/deck.js"></script>
 ```
 - 画布 **1280×720 px**（= 13.333×7.5 in，96 px = 1 in，字号 pt = px×0.75）。运行时整体缩放，布局只在 1280×720 内思考；安全边 ≥ 64 px，右下角 ≥ 1151,651 留给页码类信息。
 - 每页一个 `h1/h2`（大纲、读屏、PPTX 标题占位符）；`data-role` `data-focus` 必填，对应 plan 的 `role` `focus`；`aside.notes` 进入演讲者面板与 PPTX 备注。
 - 自由构图：`.slide` 内元素用 `position:absolute` + px 坐标；本页的视觉概念写进 `data-concept`，取舍写进 `data-rationale`。风格由 deck 自带 `<style>`，运行时只管引擎。
 - 运行时（只读 `web/deck.js`，勿改）：键盘 ←→/空格/Home/End/数字⏎，O 总览，P 演讲者面板（备注、计时、下一页），F 全屏，B 黑屏，? 帮助；触摸滑动；`#页码` + localStorage 刷新恢复；`inert`/`aria-live`；`Deck.show(i)` 终态（QA 与导出用）。
-- 图表：`<div data-chart='{"kind":"bar|line|table|…","data":…}'>`，**HTML 视图由 `web/chart.js` 用同一份 JSON 画（bar/line/table；其余 kind 由 deck 自画）**，数据、系列色、图例与 PPTX 同源；导出时整块变成原生图表/表格。字段同 `scaffold.py fields chart`。
+- 图表：`<div data-chart='{"kind":"bar|line|table|…","data":…}'>`，**HTML 视图由 `web/chart.js` 用同一份 JSON 画（bar/line/table；其余 kind 由 deck 自画）**，数据、系列色、图例与 PPTX 同源；导出时整块变成原生图表/表格。缺省值（`data_labels` `legend` 色序 `color_map` 单位 轴起点 高亮退隐色）只来自 `limits.json` 的 `chart.contract`（`web/contract.js` 由它生成）；HTML 解析一次（`DeckChart.resolve`），导出把解析结果显式写进 plan，PPTX 不再推导。HTML 支持 bar/line/pie/donut/table；area/scatter 由 deck 自画。字段名见 `plan.schema.json` 的 `chart`。
 
 ## 三、命令（需 Node ≥ 18 + `npm i` + `npx playwright install chromium`；Python 依赖见 requirements.txt）
 
 ```bash
 node scripts/web_export.mjs audit deck.html --shots DIR     # 静态审计 + 真实键盘通关 + 375/768/1440 + 帧间隔，输出 PASS/WARN/FAIL
-node scripts/web_export.mjs pdf   deck.html out.pdf         # print 样式，矢量文字，1280×720 逐页
+node scripts/web_export.mjs shots deck.html --shots DIR     # 同一渲染函数的 HTML 基准图（核验用）
+node scripts/web_export.mjs pdf   deck.html out.pdf         # 缺省像素模式：终态无损 PNG（2×/3×）→ 16:9 图像页；--mode vector 为高保真矢量（不承诺一致）
+node scripts/release.mjs deck.html --out dist/NAME          # 构建期发行 + 静态下载页（无 API）
 node scripts/web_export.mjs pptx  deck.html out.pptx --assets DIR   # 终态 DOM → plan.json（+ manifest）→ compile.py --web
-python scripts/web_verify.py --pptx out.pptx --manifest out.plan.manifest.json --pdf out.pdf --shots DIR --out DIR2 [--pptx-render 渲染后的.pdf] [--json r.json]
+python scripts/web_verify.py --pptx out.pptx --manifest out.plan.manifest.json --pdf out.pdf --shots DIR --out DIR2 [--render-pptx | --pptx-render 渲染后的.pdf] [--json r.json]
 ```
 **写出规则**（Web 与 Python 同一口径）：输出不得是符号链接/目录/输入文件、扩展名必须匹配；已存在默认不覆盖，只有用户明确要求才加 `--force`（脚本从不替用户追加）；pptx 先在暂存目录完成 plan→compile，全部成功后才原子放入，失败不改动任何已有文件；退出码 2 = 输入/路径错误。图片只从 deck 目录内读取，远程 URL 不抓取。
 CJK 字体缺失时 audit 报 `WARN`（PDF 会替换；PPTX 取决于目标机）。无头 Linux 缺系统库时先装 Chromium 依赖。
@@ -56,7 +58,7 @@ CJK 字体缺失时 audit 报 `WARN`（PDF 会替换；PPTX 取决于目标机�
 ## 五、能力边界（必须原样告知用户）
 
 - PPTX 与 HTML 的**换行、字重、行高**可能有像素级差异；未装字体被替换。本包只能做对象级（几何、文本、类型）核验；**渲染还原需 LibreOffice 或 PowerPoint 实机**，否则 `UNVERIFIED`。
-- PDF 里 Chromium 把 CJK 字体嵌为 Type3 轮廓：可选中、不可换字体编辑。
+- **PDF 像素模式**（缺省）：每页是 2×/3× 无损 PNG 图像页，**文字不可选中、不可矢量编辑**；换来的是与同环境 HTML 基准逐像素 0 差异（`web_verify.py` 逐页栅格化比对，并抽取嵌入图比对）。**矢量模式**经 Chromium 打印排版，是不同管线，只报告实测差异（样例校准见 `limits.json` 的 `web_verify.pdf_vector`），不得称 100% 一致。
 - 无：动画/转场导出、嵌入字体、SVG 原生矢量导入、阴影/发光/混合模式原生化。
 
 ## 六、验收口径

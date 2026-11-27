@@ -453,7 +453,7 @@ def build(plan: Dict[str, Any], asset_root: Path, out: Path, force: bool = False
     try:
         prs.save(str(tmp))
         _normalize_app_props(tmp, plan)
-        problems = package_problems(tmp, check_suffix=False)   # 先验临时件再落盘：不合格的包不得以交付名出现（与 revise.py 一致）
+        problems = package_problems(tmp, check_suffix=False)   # 先验临时件再落盘：不合格的包不得以交付名出现
         if problems:
             raise PackageError("；".join(problems))
         place_atomic(tmp, out, force)
