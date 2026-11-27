@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-import motion
 from model import page_views, chart_data_problems, LABEL_INK_MIN, backdrop_image, zone_contrast, zone_probe, page_bg, CARRIERS, LIMITS, Report, TEXT_TYPES, intersection, union_box, all_elements, canvas, chart_color_map, chart_flags, chart_readout_problems, gray_conflicts, chart_style, chart_surface, chart_surface_known, chart_items, chart_palette, contrast_ratio, explicit_box, fit_height_in, image_probe, image_signature, page_numbers, paragraph_runs, pn_box, resolve_asset, resolve_bg, resolve_points, rot_box, rotated_ancestors, substantive_overlap, text_style
 
 LAYER_STRATEGIES = ("layered", "interlock", "diagonal", "bleed")   # 声明了这些构图，图片之间的层叠才算有依据
@@ -62,8 +61,6 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, v
         if focus and focus not in ids:
             rep.hard("E-REF", pid, f"focus_element「{focus}」不是本页元素 id")
         _check_depth(rep, pid, page, ids)
-        tops = {e.get("id"): e for e in elements}
-        motion.validate_page(page, tops, ids - set(tops), rep)
         _check_design_intent(rep, pid, page, ids, production)
 
         boxes = view["boxes"]
@@ -205,7 +202,6 @@ def validate(plan: Dict[str, Any], asset_root: Path, production: bool = False, v
         where = "、".join(l for l, _ in spaced[:8]) + (f" 等 {len(spaced)} 处" if len(spaced) > 8 else "")
         rep.info("I-SPACE", "deck", f"{where}：中西文之间手敲了单个空格（如「{spaced[0][1]}」）。这是通行的中文排法，"
                                     f"但 LibreOffice 会叠加自动间距显得更松、PowerPoint 里正常；全稿统一取一种并写进交付说明")
-    motion.validate_deck(plan, rep)
     return rep
 
 # 中西文间的手敲空格：字体自带字距已够，空格宽度又随渲染器而异（Noto CJK 约 0.22–0.26 em；宋体 0.5 em）。

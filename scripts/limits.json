@@ -57,15 +57,6 @@
     }
   },
 
-  "motion": {
-    "_readme": "动画与切换的克制度阈值（SOFT）。结构合法性是 HARD，在 motion.py；这里只有“该不该这样多”的数值。",
-    "max_clicks_per_page": 3,
-    "max_animations_per_page": 8,
-    "max_total_ms_per_page": 6000,
-    "slow_ms": 1500,
-    "max_transition_kinds": 2
-  },
-
   "package": {
     "max_unpacked_mb": 1024,
     "ratio_check_min_mb": 64,

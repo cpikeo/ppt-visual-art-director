@@ -1,5 +1,0 @@
-# 本包实测通过的精确版本（QA 环境）。可复现安装：pip install -r requirements.lock.txt && npm ci
-python-pptx==1.0.2
-jsonschema==4.26.0
-Pillow==13.0.0
-lxml==6.1.3
