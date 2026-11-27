@@ -1589,6 +1589,50 @@ def make_contact_sheet(pngs: List[Path], render_dir: Path) -> List[str]:
 EXIT_BY_STATUS = {"READY": 0, "BLOCK": 1, "PARTIAL": 4}
 
 
+def verify_motion(plan: Dict[str, Any], pptx: Path, mode: str, f: M.Report) -> Dict[str, Any]:
+    """Motion QA：计划 ↔ 成品对账（切换类型、动画目标/类别/触发/顺序）+ 结构层（XSD、悬空目标、cTn 唯一）。
+
+    只证明文件结构与计划一致；动画是否按预期播放、有无修复提示，只有 PowerPoint 实机能回答（恒为 NOT VERIFIED）。
+    """
+    import motion
+    import officecheck as oc
+    parts = oc.read_parts(pptx)
+    res = oc.check_parts(parts)
+    for p in res["problems"]:
+        if p["code"].startswith("E-"):
+            f.add("HARD", "V-OFFICE", p["where"], f"{p['code']}：{p['message']}")
+    slides = oc.listed_slides(parts)
+    planned = found = 0
+    for i, page in enumerate(plan["pages"]):
+        exp = motion.normalize(page, lambda eid, pid=page["id"]: f"{pid}.{eid}", mode)
+        if i >= len(slides):
+            break
+        root = M.parse_xml(parts[slides[i]["part"]])
+        got = motion.summarize(root, motion.catalog(root, oc._chart_info(parts, slides[i]["part"], oc.part_rels(parts, slides[i]["part"]))))
+        loc = page["id"]
+        if exp is None:
+            if got["transition"] or got["effects"]:
+                f.add("HARD", "V-MOTION", loc, "计划没有动画/切换，成品却有（无动画页必须保持无 p:timing / p:transition）")
+            continue
+        want_tr = (exp.get("transition") or {}).get("type")
+        if (got["transition"] or {}).get("type") != want_tr:
+            f.add("HARD", "V-MOTION", loc, f"切换：计划 {want_tr}，成品 {(got['transition'] or {}).get('type')}")
+        order = []
+        for e in got["effects"]:
+            key = (e["name"], e["class"])
+            if not order or order[-1][0] != key:
+                order.append([key, e["trigger"]])
+        want = [[(a["target"], motion.PRESET_CLASS[a["class"]]), motion.NODE_TYPE[a["trigger"]]] for a in exp["animations"]]
+        planned += len(want)
+        found += len(order)
+        if [o[0] for o in order] != [w[0] for w in want]:
+            f.add("HARD", "V-MOTION", loc, f"动画序列与计划不一致：计划 {[w[0] for w in want]}，成品 {[o[0] for o in order]}")
+        elif [o[1] for o in order] != [w[1] for w in want]:
+            f.add("HARD", "V-MOTION", loc, f"动画触发关系与计划不一致：计划 {[w[1] for w in want]}，成品 {[o[1] for o in order]}")
+    return {"structure": res["status"], "planned_animations": planned, "found_animations": found,
+            "transitions": sum(1 for p in plan["pages"] if p.get("transition")) if mode != "static" else 0, "mode": mode, "powerpoint": "NOT VERIFIED"}
+
+
 def decide_status(blocked: bool, render_state: str, render_facts: Dict[str, Any]) -> Tuple[str, str]:
     """BLOCK / PARTIAL / READY 的唯一判定点，返回 (status, fonts_state)。
 
@@ -1618,6 +1662,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--render-dir", default=None, help="写 PDF/PNG/缩略总览的目录")
     parser.add_argument("--report", default=None, help="核验报告 JSON；已存在时需 --force，且不得是 plan / pptx")
     parser.add_argument("--force", action="store_true", help="允许替换已存在的报告")
+    parser.add_argument("--motion", choices=["full", "reduced", "static"], default="full", help="须与编译时的 --motion 一致")
     args = parser.parse_args(argv)
 
     plan_path = Path(args.plan).resolve()
@@ -1661,6 +1706,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     for issue in K.design_signals(plan, views).items:
         obj_rep.items.append(issue)
     facts["structure"] = verify_structure(plan, pptx, facts, obj_rep)
+    facts["motion"] = verify_motion(plan, pptx, args.motion, obj_rep)
 
     # 每份 pptx 一个子目录：同一目录里核验两份稿时，PNG 与缩略总览不会互相覆盖。
     render_dir = render_arg
@@ -1681,6 +1727,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     render_state = "SKIP" if pdf is None else ("FAIL" if render_rep.blocked else "PASS")
     status, fonts_state = decide_status(f.blocked, render_state, facts["render"])
     facts["layers"] = {"objects": objects, "render": render_state, "fonts": fonts_state,
+                       "motion": facts["motion"]["structure"] if (facts["motion"]["planned_animations"] or facts["motion"]["transitions"]) else "NOT_APPLICABLE",
                        "powerpoint": "NOT VERIFIED", "human": "NOT REVIEWED"}
     if fonts_state == "SUBSTITUTED":
         print("字体替换：声明字体未全部参与渲染，断行与宽度只代表替代字体，状态不能是 READY。")
@@ -1688,6 +1735,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("字面未确认或不一致：家族匹配不等于地区字面一致，状态不能是 READY。")
     print(f"\n对象核对：{objects}（硬 {obj_rep.count('HARD')}）｜渲染核对：{render_state}｜字体：{fonts_state}"
           f"｜提示 {f.count('SOFT')}｜说明 {f.count('INFO')}｜状态：{status}")
+    mo = facts["motion"]
+    print(f"动画核对：结构层 {mo['structure']}｜计划动画 {mo['planned_animations']} → 成品 {mo['found_animations']}｜切换 {mo['transitions']}｜策略 {mo['mode']}｜PowerPoint 动画播放 = NOT VERIFIED（LibreOffice 不能证明 PowerPoint 动画）")
     print("READY 只说明对象与渲染一致，不说明设计成立；PARTIAL 说明视觉判断没有任何机器依据。")
     st = facts.get("structure") or {}
     print(f"文件结构：slide {st.get('slides')}｜原生图表 {st.get('charts')}｜内嵌工作簿 {st.get('embeddings')}"

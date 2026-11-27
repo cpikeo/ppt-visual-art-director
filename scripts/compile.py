@@ -13,7 +13,7 @@ plan.json → 原生可编辑 PPTX（V22：PptxGenJS 主引擎）。
 只做确定性执行：校验契约、按 plan 建对象、写出文件。不自动缩字、换色、补数据或联网取图。
 硬错误（E-）在写文件前阻断；输出与报告都不得指向 plan 自己。目标文件已存在时默认不动，确认要替换才加 --force。
 先写临时文件再原子替换，失败不留半成品；运行期异常另写 <名称>.error.pptx 供排查，该文件不是交付物。
-`--engine legacy`：迁移期回滚通道（python-pptx 旧引擎，仅在仓库完整检出时存在，不随正式包分发）。
+`--motion full|reduced|static`：动画/切换的呈现策略（默认 full；reduced 去掉位移/旋转/缩放并压短时长；static 全部去除，页面保持静态可读）。
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from checks import design_signals, validate
 from model import (CANVAS_EMU, Report, canvas, default_asset_root, guard_paths, load_plan, package_problems, page_views,
                    place_atomic, show, temp_beside, utf8_stdio, write_atomic)
+import officecheck
 import post
 import spec as specmod
 
@@ -41,9 +42,9 @@ class EngineBlock(Exception):
     """PptxGenJS 引擎明确不能可靠生成的 Plan 能力：阻断，不静默降级。"""
 
 
-def render_pptx(plan: Dict[str, Any], views: List[Dict[str, Any]], asset_root: Path, out: Path, force: bool) -> Dict[str, Any]:
+def render_pptx(plan: Dict[str, Any], views: List[Dict[str, Any]], asset_root: Path, out: Path, force: bool, motion_mode: str = "full") -> Dict[str, Any]:
     """spec → PptxGenJS → 后处理 → 包检查 → 原子落盘。"""
-    spec = specmod.build_spec(plan, views, asset_root)
+    spec = specmod.build_spec(plan, views, asset_root, motion_mode)
     if not (HERE.parent / "node_modules" / "pptxgenjs").is_dir():
         raise RuntimeError("缺少 Node 依赖：在 Skill 根目录执行 `npm ci`（需要 Node ≥ 18；版本已锁定在 package-lock.json）")
     with tempfile.TemporaryDirectory(prefix="vad-") as td:
@@ -65,6 +66,10 @@ def render_pptx(plan: Dict[str, Any], views: List[Dict[str, Any]], asset_root: P
             problems = package_problems(tmp, check_suffix=False)   # 先验临时件再落盘：不合格的包不得以交付名出现
             if problems:
                 raise PackageError("；".join(problems))
+            office = officecheck.check(tmp)    # 结构层：OPC / 关系 / XSD / 图表 / 动画引用；不通过则交付路径不写
+            if office["status"] != "PASS":
+                raise PackageError("；".join(f"{p['code']} {p['where']}: {p['message']}" for p in office["problems"] if p["code"].startswith("E-"))[:900])
+            stats.update(office=office["status"])
             place_atomic(tmp, out, force)
         finally:
             if tmp.exists():
@@ -130,18 +135,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--assets", default=None, help="素材目录；缺省为 plan 同级 assets/ 或 plan 所在目录")
     parser.add_argument("--report", default=None, help="把诊断写成 JSON")
     parser.add_argument("--force", action="store_true", help="允许替换已存在的输出文件")
-    parser.add_argument("--engine", choices=["pptxgenjs", "legacy"], default="pptxgenjs", help="生成引擎；legacy 仅为迁移期回滚通道")
+    parser.add_argument("--motion", choices=["full", "reduced", "static"], default="full", help="动画/切换策略：full 按 plan｜reduced 减少动态｜static 去除全部动画与切换")
     parser.add_argument("--production", action="store_true", help="生产模式：设计判断仍是待判断（draft / 占位符 / 缺构图理由）即阻断；默认草稿模式只提示")
     args = parser.parse_args(argv)
-    if args.engine == "legacy":
-        legacy = HERE / "legacy" / "compile_legacy.py"
-        if not legacy.exists():
-            print("[HARD] E-ENGINE legacy 引擎不在正式包内；请使用完整仓库检出")
-            return 2
-        sys.path[:0] = [str(HERE), str(HERE / "legacy")]
-        import compile_legacy
-        return compile_legacy.main([a for a in (argv if argv is not None else sys.argv[1:]) if a not in ("--engine", "legacy")])
-
     plan_path = Path(args.plan).resolve()
     out_path = Path(args.out).resolve()
     asset_root = default_asset_root(plan_path, args.assets)
@@ -172,7 +168,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     try:
-        render_pptx(plan, views, asset_root, out_path, args.force)
+        render_pptx(plan, views, asset_root, out_path, args.force, args.motion)
     except EngineBlock as exc:
         print(f"[HARD] E-ENGINE 引擎阻断（不静默降级）：{exc}")
         return 2

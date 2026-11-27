@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image
 
+import motion
 from model import (CANVAS_EMU, EMU, LIMITS, MASK_PRESETS, TEXT_TYPES, alt_text, chart_color_map, chart_flags, chart_items,
                    chart_label_plan, chart_min_value, chart_mode, chart_non_negative, chart_style, chart_surface,
                    chart_unit, contrast_ratio, corner_adj, crop_geometry, deck_palette, explicit_box, is_dark,
@@ -340,13 +341,14 @@ def _theme(plan) -> Dict[str, Any]:
             "title_pt": LIMITS["type"]["default_pt"]["title"]}
 
 
-def build_spec(plan: Dict[str, Any], views: List[Dict[str, Any]], asset_root: Path) -> Dict[str, Any]:
+def build_spec(plan: Dict[str, Any], views: List[Dict[str, Any]], asset_root: Path, motion_mode: str = "full") -> Dict[str, Any]:
     pages = []
     for idx, page in enumerate(plan["pages"]):
         ctx = Ctx(plan, page, views[idx]["boxes"], asset_root)
         els = [_element(el, ctx) for el in page["elements"]]
         pages.append({"id": page["id"], "bg": _hex(page_bg(page)), "elements": els,
-                      "page_number": _page_number(plan, page, idx), "notes": page.get("speaker_notes") or ""})
+                      "page_number": _page_number(plan, page, idx), "notes": page.get("speaker_notes") or "",
+                      "motion": motion.normalize(page, lambda eid, pid=page["id"]: f"{pid}.{eid}", motion_mode)})
     brief = plan.get("brief") or {}
     return {"version": SPEC_VERSION,
             "canvas": {"w_emu": CANVAS_EMU[0], "h_emu": CANVAS_EMU[1], "w_in": CANVAS_EMU[0] / EMU, "h_in": CANVAS_EMU[1] / EMU},

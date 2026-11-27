@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from lxml import etree
 
+import motion
 from model import CANVAS_EMU, LIMITS, PT_EMU, allowed_label_positions, parse_xml, qn
 from ooxml import stable_xlsx
 
@@ -298,7 +299,7 @@ def _wrap_groups(tree, elements: List[Dict[str, Any]], by_name: Dict[str, Any]) 
             node_of(e)
 
 
-def _slide(xml: bytes, page: Dict[str, Any], rels: Dict[str, str]) -> (bytes, Dict[str, str]):
+def _slide(xml: bytes, page: Dict[str, Any], rels: Dict[str, str], chart_info=None, mstats: Optional[Dict[str, int]] = None) -> (bytes, Dict[str, str]):
     root = parse_xml(xml)
     tree = root.find(".//" + qn("p:spTree"))
     by_spec = _flat(page["elements"] + ([page["page_number"]] if page.get("page_number") else []))
@@ -351,6 +352,14 @@ def _slide(xml: bytes, page: Dict[str, Any], rels: Dict[str, str]) -> (bytes, Di
             rid = node.find(".//" + qn("c:chart")).get(qn("r:id"))
             charts[rels[rid]] = e["name"]
     _wrap_groups(tree, page["elements"], by_name)
+    if page.get("motion"):   # 切换/动画：此时 group 已落成、cNvPr@id 已定，按名称解析为实际 id（唯一一处编译动画）
+        try:
+            ms = motion.compile_slide(root, page["motion"], motion.catalog(root, chart_info))
+        except motion.MotionError as exc:
+            raise PostError(f"E-MOTION {page['id']}: {exc}")
+        if mstats is not None:
+            for k, v in ms.items():
+                mstats[k] += v
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True), charts
 
 
@@ -625,6 +634,17 @@ def chart_problems(xml: bytes, label: str) -> List[str]:
 # ---------------------------------------------------------------- 包
 
 
+def _chart_info(parts: Dict[str, bytes], rels: Dict[str, str]):
+    """rId → (系列数, 类别数, 绘图类型)；供 motion.catalog 解析图表构建步数（读原始图表部件）。"""
+    def info(rid: str):
+        root = parse_xml(parts[rels[rid]])
+        sers = root.findall(".//" + qn("c:ser"))
+        plot = next((etree.QName(e).localname for e in root.iter() if isinstance(e.tag, str) and etree.QName(e).localname in _PLOTS), None)
+        cats = sers[0].findall(".//" + qn("c:cat") + "//" + qn("c:pt")) if sers else []
+        return len(sers), len(cats), plot
+    return info
+
+
 def _rels_of(zf: Dict[str, bytes], part: str) -> Dict[str, str]:
     name = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
     if name not in zf:
@@ -737,12 +757,20 @@ def postprocess(raw: Path, spec: Dict[str, Any], out: Path, rendered_pages: Opti
     if (int(sz.get("cx")), int(sz.get("cy"))) != tuple(CANVAS_EMU):
         raise PostError(f"画布 {sz.get('cx')}×{sz.get('cy')} ≠ CANVAS_EMU {CANVAS_EMU}")
     sz.attrib.pop("type", None)
+    pres_order = ["sldMasterIdLst", "notesMasterIdLst", "handoutMasterIdLst", "sldIdLst", "sldSz", "notesSz", "smartTags", "embeddedFontLst",
+             "custShowLst", "photoAlbum", "custDataLst", "kinsoku", "defaultTextStyle", "modifyVerifier", "extLst"]
+    kids = [k for k in pres if isinstance(k.tag, str)]
+    rank = {n: i for i, n in enumerate(pres_order)}
+    if all(etree.QName(k).localname in rank for k in kids):   # PptxGenJS 把 notesMasterIdLst 写在 sldIdLst 之后：按 schema 序归位
+        for k in sorted(kids, key=lambda k: rank[etree.QName(k).localname]):
+            pres.append(k)
     parts["ppt/presentation.xml"] = etree.tostring(pres, xml_declaration=True, encoding="UTF-8", standalone=True)
 
     chart_specs: Dict[str, Dict[str, Any]] = {}
+    mstats: Dict[str, int] = {"transition": 0, "animations": 0}
     for i, page in enumerate(pages, 1):
         part = f"ppt/slides/slide{i}.xml"
-        xml, charts = _slide(parts[part], page, _rels_of(parts, part))
+        xml, charts = _slide(parts[part], page, _rels_of(parts, part), _chart_info(parts, _rels_of(parts, part)), mstats)
         parts[part] = xml
         by_name = _flat(page["elements"])
         for chart_part, name in charts.items():
@@ -771,4 +799,4 @@ def postprocess(raw: Path, spec: Dict[str, Any], out: Path, rendered_pages: Opti
             info.compress_type = zipfile.ZIP_DEFLATED
             zout.writestr(info, data)
     tmp.replace(out)
-    return {"charts": len(chart_specs), "media": sum(1 for n in parts if n.startswith("ppt/media/")), "parts": len(parts)}
+    return {"transitions": mstats["transition"], "animations": mstats["animations"], "charts": len(chart_specs), "media": sum(1 for n in parts if n.startswith("ppt/media/")), "parts": len(parts)}

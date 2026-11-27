@@ -7,7 +7,7 @@
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
 - `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积、压缩比）。
 - `--assets` 缺省取 plan 同级 `assets/`，否则取 plan 所在目录。`verify.py` 的渲染目录缺省为 `render/<pptx 名>/`。
-- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
+- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`officecheck.py` 0 PASS｜1 BLOCK｜2 输入错误；`package.py` 0 成功｜1 校验或操作被阻断（交付路径未写）｜2 路径/契约错误；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
 
 ## 诊断码
 
@@ -41,6 +41,11 @@
 | `E-GEOM` `E-ID` `E-PAGE` `E-SHAPE` `E-TEXT` `E-SRC` | 结构类硬错误：元素缺坐标或 group 无子元素；页 id 重复；文字/图表压到页码保留框；shape 无填充无描边；文本为空；改稿找不到原稿。按提示改 plan 或路径 |
 | `W-PT` `W-BOUND` `W-PAGE` `W-RHYTHM` `W-ANCHOR` `W-REF` `W-SHAPE` | 字号低于 `type.min_pt`；改动后出画布；`page_numbers.hide` 里不是页 id；`rhythm` 条数≠页数；锚点相关；锚点目标宽或高为 0；闭合路径写了箭头（忽略） |
 | `I-ART` `I-GRID` `I-GROUP` `I-PAGE` `I-LABEL` `I-AXIS` | 提示级：有图却没写 `brief.art`；`grid=none` 没写破格理由；group 几何由子元素推出；图片压到页码角区；直标色非显式 RGB 未核对对比；读不到数值轴显示状态 |
+| `E-MOTION-TARGET` `E-MOTION-ID` `E-MOTION-FIELD` `E-MOTION-ORDER` `E-MOTION-BUILD` `E-MOTION-PATH` `E-MOTION-GROUP` `E-MOTION-ADVANCE` | 动画/切换契约：目标不是本页顶层元素（或是 group 子元素）、动画 id 重复、字段与 effect 不匹配、先退出后进入、构建对象不合法、路径缺点或偏移过大、group 不连续、禁用点击又无自动前进；按提示改 plan |
+| `W-MOTION-CLICKS` `W-MOTION-DENSITY` `W-MOTION-LENGTH` `W-MOTION-SLOW` `W-MOTION-VARIETY` `W-MOTION-BLANKET` | 动画克制度（SOFT）：单击阶段 > 3、一页动画 > 8、累计 > 6 s、单个 > 1.5 s、整稿切换种类 > 2、每页都有动画；写理由或删减，不靠调阈值 |
+| `E-MOTION`（编译期）`E-MOTION-STRANDED` `E-MOTION-CTN` `E-MOTION-CLICK` `E-MOTION-RANGE` | 成品时间树不合格：段落/系列数与目标不符、悬空目标 id、cTn id 重复、click 锚点丢失、构建索引越界；`compile.py` 退出 3 或 `officecheck.py` BLOCK |
+| `E-OPC` `E-REL` `E-XML` `E-XSD` `E-ID` `E-SHARED` `E-PRES` `E-CHART` | `officecheck.py` 结构层：Content Type/关系缺失、XML 不可解析、XSD 不合法、同页 id 重复、多页共享图表/工作簿/备注（复制页未深拷贝）、sldId 不合法 |
+| `V-MOTION` `V-OFFICE` | verify 的动画核对：成品与计划的切换/动画序列/触发不一致；结构层问题 |
 | `V-OBJ` `V-ORDER` `V-PAGES` `V-PAGENO` `V-ASSET` `V-ROT` `V-RENDER` | verify 的对象层与环境：成品缺对象；叠放顺序≠声明；页数≠plan；声明隐藏的页码仍在；找不到素材原件无法比对内嵌字节；旋转未生效；**`V-RENDER`＝没有 LibreOffice，渲染核对未做（状态 PARTIAL，不是通过）** |
 
 ## 报告字段
@@ -63,7 +68,7 @@
 | 按数据点着色 | 部分 | 仅 `highlight_category`（单系列柱/条，其余退隐灰，不能开原生图例）与饼/环按类别取色；折线、面积、散点不支持，强调单条靠直标或旁注 |
 | 颜色映射与图例一致性 | 完整 | 类别/系列→颜色唯一映射（`color_map`＞图级 `palette`＞整稿 `palette`）；`legend` 元素按同一映射生成并逐块核验 |
 | 演讲者备注、替代文字、页码、页标题 | 完整 | 页标题是原生标题占位符；阅读顺序仍按声明顺序，未做逐页阅读顺序审查 |
-| 既有稿定点编辑 | 完整（限白名单操作） | 不新增页、不改页序、不改系列数、不动母版与版式 |
+| 既有稿定点编辑（`revise.py`） | 完整（限白名单操作） | 不新增页、不改页序、不改系列数、不动母版与版式；页的增删/复制/重排与动画编辑见 `package.py` |
 | 渐变、`duotone` | 有限 | PowerPoint 生效；LibreOffice 只做去饱和或近似 |
 | 路径连线 | 有限 | 直线与折线，锚点是编译期坐标，不是连接符绑定 |
 | 图片裁切 | 有限 | 按 `cover`，不保证主体不被裁到 |
@@ -72,7 +77,9 @@
 | PowerPoint 实机验证 | 外部依赖 | 本包从未做过；结论由人在真实 PowerPoint 中签收，未做即 `NOT VERIFIED` |
 | 字体 | 外部依赖 | 只写字体名，不嵌入；目标机缺失会被静默替换。主题字体（拉丁与东亚）取 `fonts`，新建 run 带 `lang`（含中文为 zh-CN） |
 | 母版与版式 | 有限 | python-pptx 模板遗留的 10 in 母版占位符几何按 16:9 画布宽度横向缩放；**主题色（dk2/lt2/accent1–6、超链接色）取 plan 的数据色与墨色，母版底色取多数页底色，母版标题左对齐、与默认标题同字号**，新增页与图形不会回到 Office 默认外观；`docProps/app.xml` 按成品重写（页数、画布、不声称由 Office 生成）。仍只有一套母版，不做自定义版式库；未使用的 11 个默认版式保留 |
-| 动画、切换、嵌入字体、新建 SmartArt、宏 | 不支持 | `.pptm` 一律拒绝 |
+| 页面切换（20 种标准类型）、对象动画（进入/退出/强调/路径）、On Click / With / After Previous、文本逐段、图表逐系列/类别 | 完整（结构层）| 编译与既有稿写入均走 `motion.py`；详见 `motion.md`。PowerPoint 实机播放 `NOT VERIFIED` |
+| 既有稿结构操作（复制/删除/重排页、删对象、清理孤立部件、模板 POTX 分析、动画定点写入） | 完整（限 `package.py` 子命令）| 不经 python-pptx 重存；输出前过 `officecheck.py`（含原稿基线）；含分节的稿子不移动页；含 `interactiveSeq`/`p:cmd` 的页不改写动画 |
+| 切换音效、按词/按字构建、音视频原生插入与播放、SmartArt 构建动画、嵌入字体、新建 SmartArt、宏 | 不支持 | 契约拒绝（`E-SCHEMA`）或明确 BLOCK；`.pptm` 一律拒绝 |
 
 ## 输入安全
 
@@ -95,7 +102,7 @@ DIRECT = PptxGenJS 直接生成；OOXML = 由 `post.py` 按 spec 受控补齐；
 | group、legend（色块+标签分组） | OOXML | PptxGenJS 无分组；`p:grpSp` 由 post 包裹，支持嵌套与分组旋转 |
 | chart：bar/line/area/pie/donut/scatter，堆叠/百分比，横向，组合图（折线与柱共轴），嵌入工作簿 | DIRECT | |
 | chart：逐系列直标（墨色/衬底/位置）、东亚字体、标题左对齐、饼图内缩、散点仅标记、组合折线标记、系列色 | OOXML | |
-| chart：**散点各系列 X 值不一致** | **BLOCK** | PptxGenJS 散点共用一列 X；改统一 X，或迁移期用 `--engine legacy` |
+| chart：**散点各系列 X 值不一致** | **BLOCK** | PptxGenJS 散点共用一列 X；改统一 X |
 | table | DIRECT + OOXML | 无样式表 ID 由 post 写入 |
 | speaker_notes、页码、背景色、主题色/主题字体 | DIRECT / OOXML | 主题色板与东亚字体由 post 写入 theme1.xml |
 
