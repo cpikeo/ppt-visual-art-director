@@ -112,9 +112,8 @@
   },
 
   "web_verify": {
-    "_readme": "Web 导出核验的渲染差异阈值。由 dev/calibration/calibrate.mjs 在代表性样例上实测后写入；不是通用常数，换了渲染环境或样例集要重新校准。",
-    "pdf_vector": {"share_gt40_max": 0.01, "ssim_min": 0.96, "calibration": "2 decks / 10 pages, dev/calibration/results.json"},
-    "pptx_render": {"share_gt40_max": 0.24, "ssim_min": 0.79, "calibration": "2 decks / 10 pages, dev/calibration/results.json"}
+    "_readme": "Web 导出核验中 PPTX 真实渲染对照的差异阈值。暂定值：换了渲染环境或样例集须重新实测；PDF 像素模式与展示版 PPTX 不使用阈值（差异像素必须为 0）。",
+    "pptx_render": {"share_gt40_max": 0.24, "ssim_min": 0.79, "calibration": "provisional (暂定): 沿用 v23.0 的数值，其校准材料未保留在仓库；v23.1 构建环境无 LibreOffice，未重新实测"}
   },
   "render_check": {
     "_readme": "渲染核对用的容差与下限：span 归属容差、行归属容差、孤字判定所需的最少字数、旋转生效判定。",

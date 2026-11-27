@@ -1,6 +1,6 @@
 # Web Presentation：工程契约与跨格式发行
 
-新建整稿的默认交付是一个 `deck.html`（+ `assets/`）。**HTML 是唯一创作源**；Python 引擎（`plan.json → .pptx`）只作为导出引擎，不提供独立的原生起稿/改稿入口。
+新建整稿的默认交付是一个 `deck.html`（+ `assets/`）。**HTML 是唯一创作源**；Python 引擎（`plan.json → .pptx`）只作为导出引擎，不提供独立的原生起稿/改稿入口。四种交付：Web 演示、PDF（像素）、展示版 PPTX（整页图像，不可编辑）、可编辑 PPTX（原生对象）。
 
 ## 一、流程（每步只回答自己层级的问题）
 
@@ -24,29 +24,32 @@
 - 运行时（只读 `web/deck.js`，勿改）：键盘 ←→/空格/Home/End/数字⏎，O 总览，P 演讲者面板（备注、计时、下一页），F 全屏，B 黑屏，? 帮助；触摸滑动；`#页码` + localStorage 刷新恢复；`inert`/`aria-live`；`Deck.show(i)` 终态（QA 与导出用）。
 - 图表：`<div data-chart='{"kind":"bar|line|table|…","data":…}'>`，**HTML 视图由 `web/chart.js` 用同一份 JSON 画（bar/line/table；其余 kind 由 deck 自画）**，数据、系列色、图例与 PPTX 同源；导出时整块变成原生图表/表格。缺省值（`data_labels` `legend` 色序 `color_map` 单位 轴起点 高亮退隐色）只来自 `limits.json` 的 `chart.contract`（`web/contract.js` 由它生成）；HTML 解析一次（`DeckChart.resolve`），导出把解析结果显式写进 plan，PPTX 不再推导。HTML 支持 bar/line/pie/donut/table；area/scatter 由 deck 自画。字段名见 `plan.schema.json` 的 `chart`。
 
-## 三、命令（需 Node ≥ 18 + `npm i` + `npx playwright install chromium`；Python 依赖见 requirements.txt）
+## 三、命令（Node ≥ 20；`npm ci`；`npx playwright install chromium`（Playwright 精确锁 1.65.1）；`pip install -r requirements.txt`，渲染核对另装 `requirements-render.txt` 与 LibreOffice）
 
 ```bash
-node scripts/web_export.mjs audit deck.html --shots DIR     # 静态审计 + 真实键盘通关 + 375/768/1440 + 帧间隔，输出 PASS/WARN/FAIL
-node scripts/web_export.mjs shots deck.html --shots DIR     # 同一渲染函数的 HTML 基准图（核验用）
-node scripts/web_export.mjs pdf   deck.html out.pdf         # 缺省像素模式：终态无损 PNG（2×/3×）→ 16:9 图像页；--mode vector 为高保真矢量（不承诺一致）
-node scripts/release.mjs deck.html --out dist/NAME          # 构建期发行 + 静态下载页（无 API）
-node scripts/web_export.mjs pptx  deck.html out.pptx --assets DIR   # 终态 DOM → plan.json（+ manifest）→ compile.py --web
-python scripts/web_verify.py --pptx out.pptx --manifest out.plan.manifest.json --pdf out.pdf --shots DIR --out DIR2 [--render-pptx | --pptx-render 渲染后的.pdf] [--json r.json]
+node scripts/web_export.mjs audit deck.html --shots DIR       # 静态审计 + 真实键盘通关 + 375/768/1440 + 帧间隔，输出 PASS/WARN/BLOCK
+node scripts/web_export.mjs shots deck.html --shots DIR       # 终态无损 PNG + baseline.json（逐页 SHA-256）：PDF 与展示版 PPTX 的唯一像素来源
+node scripts/web_export.mjs pdf deck.html out.pdf --from-shots DIR        # 把这批 PNG 原样装成 16:9 图像页；缺省 --from-shots 时先渲染一次
+node scripts/web_export.mjs pptx-image deck.html out.pptx --from-shots DIR # 展示版 PPTX：每页同一张 PNG，不可编辑
+node scripts/web_export.mjs pptx deck.html out.pptx --assets DIR           # 可编辑 PPTX：终态 DOM → plan.json（内部中间契约）→ compile.py --web
+node scripts/release.mjs deck.html --out dist/NAME [--allow-unverified libreoffice] [--powerpoint-evidence FILE]   # 四种交付 + 核验 + 门禁 + SHA256SUMS + 静态下载页
+python scripts/web_verify.py --pptx … --manifest … --pdf … --image-pptx … --image-pptx-report … --shots DIR --render-pptx --out DIR2 --json r.json
 ```
+没有矢量 PDF 开关：PDF 只有像素一致模式；不再提供经 Chromium 打印排版的矢量 PDF。`plan` 子命令只输出内部中间产物（调试用），不是创作入口。
+
 **写出规则**（Web 与 Python 同一口径）：输出不得是符号链接/目录/输入文件、扩展名必须匹配；已存在默认不覆盖，只有用户明确要求才加 `--force`（脚本从不替用户追加）；pptx 先在暂存目录完成 plan→compile，全部成功后才原子放入，失败不改动任何已有文件；退出码 2 = 输入/路径错误。图片只从 deck 目录内读取，远程 URL 不抓取。
-CJK 字体缺失时 audit 报 `WARN`（PDF 会替换；PPTX 取决于目标机）。无头 Linux 缺系统库时先装 Chromium 依赖。
+CJK 字体缺失时 audit 报 `WARN`（PDF/展示版 PPTX 取决于渲染机；可编辑 PPTX 取决于目标机）。无头 Linux 缺系统库时先装 Chromium 依赖（`npx playwright install --with-deps chromium`）。
 
 ## 四、元素级导出策略（唯一口径）
 
 | HTML | PPTX | PDF | 说明 |
 | --- | --- | --- | --- |
-| 文字（含 `<b>` `<em>` `<span>` 逐 run 颜色/字重/字号/字体） | 原生文本框 | 矢量 | `<br>` = 段落；行高换算为倍数；框宽放大 2%（单行 8%）防换行差异 |
-| 背景色 / 边框 / 圆角 / 椭圆 | 原生形状 | 矢量 | 单边边框 → 细矩形；四边同色 → 描边 |
-| 线性渐变（≥3 色取首末色，写 `W-GRADIENT`） | 原生渐变 | 矢量 | |
+| 文字（含 `<b>` `<em>` `<span>` 逐 run 颜色/字重/字号/字体/斜体/透明度/字距；对齐含 justify） | 原生文本框 | 位图 | `<br>` = 段落；行高换算为倍数；框宽放大 2%（单行 8%）防换行差异 |
+| 背景色 / 边框 / 圆角 / 椭圆 | 原生形状 | 位图（同一批 PNG） | 单边边框 → 细矩形；四边同色 → 描边 |
+| 线性渐变（≥3 色取首末色，写 `W-GRADIENT`） | 原生渐变 | 位图（同一批 PNG） | |
 | `<img>` cover + `object-position` / CSS `background-image:url` | 原生图片（cover 裁切） | 位图 | png/jpg/webp 原生；svg/gif/avif/读不到/越出 deck 目录的图 → **该元素栅格并记 `W-RASTER`，不跳过** |
-| `data-chart` | 原生图表/表格 | 矢量 | |
-| `<svg>` `<canvas>` `filter` `backdrop-filter` `mix-blend-mode` `clip-path` `mask` 缩放/斜切变换 圆角图片 复杂渐变 `data-x="raster"` | **仅该元素**栅格（2× PNG，透明底）+ `W-RASTER` | 矢量/位图 | 不可编辑；报告逐项列出 |
+| `data-chart` | 原生图表/表格 | 位图（同一批 PNG） | |
+| `<svg>` `<canvas>` `filter` `backdrop-filter` `mix-blend-mode` `clip-path` `mask` 缩放/斜切/镜像/组合/3D 变换（纯旋转除外：叶子元素原生旋转，旋转的容器与图片栅格） 圆角图片 复杂渐变 `data-x="raster"` | **仅该元素**栅格（2× PNG，透明底）+ `W-RASTER` | 位图 | 不可编辑；报告逐项列出 |
 | `data-x="skip"` | 跳过 | 保留 | 仅 HTML 的装饰 |
 | `box-shadow` `text-shadow` `text-decoration` | 丢弃 + `W-SHADOW`/`W-DECOR` | 保留 | 无原生等价 |
 | 动画、转场、构建步骤、交互 | 终态 | 终态 | 不支持，不假装 |
@@ -58,9 +61,9 @@ CJK 字体缺失时 audit 报 `WARN`（PDF 会替换；PPTX 取决于目标机�
 ## 五、能力边界（必须原样告知用户）
 
 - PPTX 与 HTML 的**换行、字重、行高**可能有像素级差异；未装字体被替换。本包只能做对象级（几何、文本、类型）核验；**渲染还原需 LibreOffice 或 PowerPoint 实机**，否则 `UNVERIFIED`。
-- **PDF 像素模式**（缺省）：每页是 2×/3× 无损 PNG 图像页，**文字不可选中、不可矢量编辑**；换来的是与同环境 HTML 基准逐像素 0 差异（`web_verify.py` 逐页栅格化比对，并抽取嵌入图比对）。**矢量模式**经 Chromium 打印排版，是不同管线，只报告实测差异（样例校准见 `limits.json` 的 `web_verify.pdf_vector`），不得称 100% 一致。
+- **PDF 与展示版 PPTX**：同一批 2×/3× 无损 PNG（`shots` 写出，`--from-shots` 装配，SHA-256 逐页可查）。PDF 文字不可选中、不可矢量编辑；展示版 PPTX 不可编辑。“一致”只对应**同一渲染环境**（同一 Chromium、视口、DPR、字体、图片、动画终态）：`web_verify.py` 逐页栅格化 PDF 与**独立再渲染一次**的基准逐像素比对（目标差异像素 0），并解包展示版 PPTX 核对原始图像 SHA-256、像素尺寸、页数与顺序。不同设备、播放器的显示差异未验证，不得说成已验证。
 - 无：动画/转场导出、嵌入字体、SVG 原生矢量导入、阴影/发光/混合模式原生化。
 
 ## 六、验收口径
 
-PASS｜FAIL｜BLOCKED（环境缺失，写原因）｜UNVERIFIED（没执行或无法判定）。没跑的不写通过：`web_verify.py` 汇总 FAIL > BLOCKED > UNVERIFIED > PASS，退出码 PASS 0、FAIL 1、输入错 2、BLOCKED 3、UNVERIFIED 4；缺 PPTX 真实渲染（`--pptx-render`）时视觉还原恒为 UNVERIFIED。交付回复列：做了什么、`audit` 与 `web_verify` 结果、栅格/降级清单、UNVERIFIED 项。
+检查项只有 PASS｜BLOCK｜UNVERIFIED（没执行、环境缺失或无法判定）。`web_verify.py` 汇总 BLOCK > UNVERIFIED > PASS，退出码 PASS 0、BLOCK 1、输入错 2、UNVERIFIED 4；缺 PPTX 真实渲染时视觉还原恒为 UNVERIFIED，PowerPoint 实机恒为 UNVERIFIED。`release.mjs` 的发行门禁为 PASS｜PASS_WITH_LIMITATIONS｜BLOCKED（规则见 `ops.md`）。交付回复列：做了什么、`audit` 与门禁结果、栅格/降级清单、UNVERIFIED 项。

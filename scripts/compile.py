@@ -102,6 +102,8 @@ def add_text(slide, plan, page, el, top_level=True):
                 str(piece.get("color") or st["color"]).upper(),
                 bool(piece.get("bold", st["bold"])),
                 float(piece.get("letter_spacing_pt", st["spacing"])),
+                bool(piece.get("italic", st["italic"])),
+                float(piece.get("alpha", st["alpha"])),
             )
     return frame
 

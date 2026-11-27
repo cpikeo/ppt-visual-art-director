@@ -179,6 +179,7 @@ def _expected_runs(plan, page, el) -> List[Dict[str, Any]]:
                 "size": float(piece.get("font_size") or st["size"]),
                 "color": str(piece.get("color") or st["color"]).upper(),
                 "bold": bool(piece.get("bold", st["bold"])),
+                "italic": bool(piece.get("italic", st["italic"])),
                 "family": piece.get("font") or st["family"],
                 "spacing": float(piece.get("letter_spacing_pt", st["spacing"])),
             })
@@ -251,6 +252,8 @@ def verify_text(plan, page, el, shape, name, f: M.Report) -> None:
             f.add("HARD", "V-STYLE", tag, f"字号 {size} ≠ {want['size']}")
         if bool(run.font.bold) != want["bold"]:
             f.add("HARD", "V-STYLE", tag, f"字重 bold={bool(run.font.bold)} ≠ {want['bold']}")
+        if bool(run.font.italic) != want["italic"]:
+            f.add("HARD", "V-STYLE", tag, f"斜体 italic={bool(run.font.italic)} ≠ {want['italic']}")
         color = run.font.color
         if color is None or color.type != MSO_COLOR_TYPE.RGB:
             f.add("HARD", "V-STYLE", tag, "墨色不是显式 RGB，目标机可能随主题变化")
@@ -1475,7 +1478,7 @@ def verify_render(plan: Dict[str, Any], pptx: Path, pdf: Path, render_dir: Path,
                     face_seen.add(("unverified", declared and tuple(sorted(declared))))
                     f.add("SOFT", "W-FONT-FACE", pid,
                           f"页面含中文，但声明字族 {sorted(declared)} 或渲染字体 {sorted(fonts_here)} "
-                          f"无法判定地区字面（SC/TC/JP/KR）——字面 NOT VERIFIED，状态不能是 READY；"
+                          f"无法判定地区字面（SC/TC/JP/KR）——字面 NOT VERIFIED，状态不能是 PASS；"
                           f"声明带地区后缀的字族（如 Noto Sans CJK SC），或在目标机人工复核")
 
     spatial.rhythm(spatial_rows, w_in, h_in, M.LIMITS.get("space", {}), lambda lv, code, where, msg: f.add(lv, code, where, msg))
@@ -1586,16 +1589,16 @@ def make_contact_sheet(pngs: List[Path], render_dir: Path) -> List[str]:
 
 # 状态 ↔ 进程退出码：唯一映射。自动化只看退出码即可区分“可交付核验”“需补环境/人工”“有硬问题”。
 # 2 保留给输入/契约错误（找不到文件、plan 不合契约、路径守卫），不是核验结论。
-EXIT_BY_STATUS = {"READY": 0, "BLOCK": 1, "PARTIAL": 4}
+EXIT_BY_STATUS = {"PASS": 0, "BLOCK": 1, "UNVERIFIED": 4}
 
 
 def decide_status(blocked: bool, render_state: str, render_facts: Dict[str, Any]) -> Tuple[str, str]:
-    """BLOCK / PARTIAL / READY 的唯一判定点，返回 (status, fonts_state)。
+    """BLOCK / UNVERIFIED / PASS 的唯一判定点，返回 (status, fonts_state)。
 
     BLOCK：任一层有硬问题。
-    READY：对象一致 + 渲染完成且无硬问题 + 声明字体真实参与 + 字面（SC/TC/JP/KR）已确认或页面无中日韩文字。
-    其余一律 PARTIAL：渲染没跑、字体被替换、字面不一致或无法确认。
-    READY 仍不包含 PowerPoint 实机（NOT VERIFIED）与人工签收（NOT REVIEWED）。
+    PASS：对象一致 + 渲染完成且无硬问题 + 声明字体真实参与 + 字面（SC/TC/JP/KR）已确认或页面无中日韩文字。
+    其余一律 UNVERIFIED：渲染没跑、字体被替换、字面不一致或无法确认。
+    PASS 仍不包含 PowerPoint 实机（NOT VERIFIED）与人工签收（NOT REVIEWED）。
     """
     if render_state != "PASS":
         fonts_state = "NOT CHECKED"
@@ -1606,7 +1609,7 @@ def decide_status(blocked: bool, render_state: str, render_facts: Dict[str, Any]
         fonts_state = {"VERIFIED": "OK", "NOT_APPLICABLE": "OK", "MISMATCH": "FACE MISMATCH"}.get(face, "FACE UNVERIFIED")
     if blocked:
         return "BLOCK", fonts_state
-    return ("READY" if render_state == "PASS" and fonts_state == "OK" else "PARTIAL"), fonts_state
+    return ("PASS" if render_state == "PASS" and fonts_state == "OK" else "UNVERIFIED"), fonts_state
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1675,7 +1678,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     M.show(f.items)
 
-    # READY = 对象一致 + 渲染完成 + 声明字体都真实参与渲染。任一缺失只能是 PARTIAL：
+    # PASS = 对象一致 + 渲染完成 + 声明字体都真实参与渲染。任一缺失只能是 UNVERIFIED：
     # 渲染缺失或字体被替换时，断行与宽度都只代表替代字体，不是目标环境结论。
     objects = "FAIL" if obj_rep.blocked else "PASS"
     render_state = "SKIP" if pdf is None else ("FAIL" if render_rep.blocked else "PASS")
@@ -1683,12 +1686,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     facts["layers"] = {"objects": objects, "render": render_state, "fonts": fonts_state,
                        "powerpoint": "NOT VERIFIED", "human": "NOT REVIEWED"}
     if fonts_state == "SUBSTITUTED":
-        print("字体替换：声明字体未全部参与渲染，断行与宽度只代表替代字体，状态不能是 READY。")
+        print("字体替换：声明字体未全部参与渲染，断行与宽度只代表替代字体，状态不能是 PASS。")
     elif fonts_state.startswith("FACE"):
-        print("字面未确认或不一致：家族匹配不等于地区字面一致，状态不能是 READY。")
+        print("字面未确认或不一致：家族匹配不等于地区字面一致，状态不能是 PASS。")
     print(f"\n对象核对：{objects}（硬 {obj_rep.count('HARD')}）｜渲染核对：{render_state}｜字体：{fonts_state}"
           f"｜提示 {f.count('SOFT')}｜说明 {f.count('INFO')}｜状态：{status}")
-    print("READY 只说明对象与渲染一致，不说明设计成立；PARTIAL 说明视觉判断没有任何机器依据。")
+    print("PASS 只说明对象与渲染一致，不说明设计成立；UNVERIFIED 说明视觉判断没有任何机器依据。")
     st = facts.get("structure") or {}
     print(f"文件结构：slide {st.get('slides')}｜原生图表 {st.get('charts')}｜内嵌工作簿 {st.get('embeddings')}"
           f"｜media {st.get('media')}")
@@ -1708,7 +1711,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("未渲染：视觉相关判断一律没有依据。不要声称「已预览」「版面无溢出」「断行正常」。")
 
     code = EXIT_BY_STATUS[status]
-    print(f"退出码：{code}（READY=0｜BLOCK=1｜PARTIAL=4｜输入或契约错误=2）")
+    print(f"退出码：{code}（PASS=0｜BLOCK=1｜UNVERIFIED=4｜输入或契约错误=2）")
     if args.report:
         M.write_atomic(Path(args.report), json.dumps({"status": status, "exit_code": code, **facts,
                                                       "findings": f.to_dict()}, ensure_ascii=False, indent=2).encode("utf-8"),

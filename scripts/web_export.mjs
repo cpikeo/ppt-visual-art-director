@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Web Presentation → audit / shots / PDF / PPTX.   node scripts/web_export.mjs <audit|shots|pdf|plan|pptx> deck.html [out] [--assets DIR] [--shots DIR] [--mode pixel|vector] [--dpr 2|3]
+/* Web Presentation → audit / shots / PDF / PPTX.   node scripts/web_export.mjs <audit|shots|pdf|pptx-image|pptx|plan> deck.html [out] [--assets DIR] [--shots DIR] [--from-shots DIR] [--dpr 2|3]
    Deterministic: DOM (final state, motion off) → per-element strategy (native text/shape/image/chart | raster | skip) → plan.json → compile.py.
    Never screenshots a whole slide into a PPTX. Everything downgraded is written to the report, not hidden. */
 import { chromium } from 'playwright';
@@ -11,7 +11,7 @@ const argv = process.argv.slice(2), [cmd, deckArg] = argv, rest = argv.slice(2);
 const FORCE = argv.includes('--force');   // 唯一覆盖开关：只由用户显式给出，绝不由脚本自行追加（compile.py 同口径）
 const outArg = rest[0] && !rest[0].startsWith('--') ? rest[0] : undefined;
 const opt = (k, d) => { const i = rest.indexOf(k); return i >= 0 ? rest[i + 1] : d; };
-if (!cmd || !deckArg) { console.error('usage: web_export.mjs <audit|shots|pdf|plan|pptx> deck.html [out] [--assets DIR] [--shots DIR] [--mode pixel|vector] [--dpr 2|3] [--force]'); process.exit(2); }
+if (!cmd || !deckArg) { console.error('usage: web_export.mjs <audit|shots|pdf|pptx-image|pptx|plan> deck.html [out] [--assets DIR] [--shots DIR] [--from-shots DIR] [--dpr 2|3] [--force]'); process.exit(2); }
 const deckPath = path.resolve(deckArg), deckUrl = pathToFileURL(deckPath).href;
 const J = (o) => JSON.stringify(o, null, 2);
 const die = (errs) => { console.error(J({ status: 'ERROR', errors: errs })); process.exit(2); };
@@ -70,21 +70,60 @@ function extractSlide(idx, cfg) {
   const fam = (cs) => cs.fontFamily.split(',')[0].replace(/["']/g, '').trim();
   const INLINE = new Set(['SPAN', 'B', 'STRONG', 'EM', 'I', 'BR', 'A', 'SMALL', 'SUB', 'SUP', 'MARK', 'U', 'S', 'CODE']);
   const hasBox = (cs) => (rgba(cs.backgroundColor)?.a > 0) || cs.backgroundImage !== 'none' || ['Top', 'Right', 'Bottom', 'Left'].some(s => parseFloat(cs['border' + s + 'Width']) > 0 && cs['border' + s + 'Style'] !== 'none');
+  /* 2D 变换：把 transform + 独立属性 translate/rotate/scale 合成一个矩阵，按线性部分分类。
+     只有“纯旋转”能原生表达（PPTX xfrm rot）；缩放、错切、镜像、组合、3D 一律触发局部栅格并写明原因。 */
+  const xform = (cs) => {
+    const none = { rot: 0, why: '' };
+    const tr = cs.translate, ro = cs.rotate, sc = cs.scale, tf = cs.transform;
+    if ((!tf || tf === 'none') && (!tr || tr === 'none') && (!ro || ro === 'none') && (!sc || sc === 'none')) return none;
+    let m = new DOMMatrix();
+    try {
+      if (tr && tr !== 'none') { const p = tr.split(/\s+/).map(parseFloat); m = m.translate(p[0] || 0, p[1] || 0, p[2] || 0); }
+      if (ro && ro !== 'none') { const t = ro.split(/\s+/); if (t.length > 1) return { rot: 0, why: 'transform-3d (rotate axis)' }; m = m.rotate(parseFloat(ro)); }
+      if (sc && sc !== 'none') { const p = sc.split(/\s+/).map(parseFloat); m = m.scale(p[0], p[1] ?? p[0], p[2] ?? 1); }
+      if (tf && tf !== 'none') m = m.multiply(new DOMMatrix(tf));
+    } catch (e) { return { rot: 0, why: 'transform-unparsable' }; }
+    if (!m.is2D) return { rot: 0, why: 'transform-3d' };
+    const { a, b, c, d } = m, sx = Math.hypot(a, b), sy = Math.hypot(c, d), det = a * d - b * c, E = .01, parts = [];
+    const rot = Math.atan2(b, a) * 180 / Math.PI;
+    const skewed = sx * sy > 0 && Math.abs(a * c + b * d) / (sx * sy) > E;
+    if (det < 0) parts.push('flip');
+    if (skewed) { parts.push('skew'); if (Math.abs(Math.sqrt(Math.abs(det)) - 1) > E) parts.push('scale'); }
+    else if (Math.abs(sx - 1) > E || Math.abs(sy - 1) > E) parts.push(Math.abs(sx - sy) > E ? 'scale-nonuniform' : 'scale');
+    if (parts.length) { if (!skewed && Math.abs(rot) > .05) parts.push('rotate'); return { rot: 0, why: 'transform-' + parts.join('+') }; }
+    return { rot: Math.round(rot * 10) / 10, why: '' };
+  };
   const needsRaster = (el, cs) => {
     if (el.dataset.x === 'raster') return 'data-x=raster';
     if (['SVG', 'CANVAS', 'VIDEO'].includes(el.tagName.toUpperCase())) return el.tagName.toLowerCase() + ' → raster';
     if (cs.filter !== 'none') return 'filter'; if ((cs.backdropFilter || 'none') !== 'none') return 'backdrop-filter';
     if (cs.mixBlendMode !== 'normal') return 'mix-blend-mode'; if (cs.clipPath !== 'none') return 'clip-path';
     if ((cs.maskImage || 'none') !== 'none') return 'mask'; if ((cs.webkitBackgroundClip || cs.backgroundClip) === 'text') return 'background-clip:text';
-    if (cs.transform !== 'none') { const m = new DOMMatrix(cs.transform); if (Math.abs(Math.hypot(m.a, m.b) - 1) > .01) return 'transform-scale/skew'; }
+    if ((cs.writingMode || 'horizontal-tb') !== 'horizontal-tb') return 'writing-mode:' + cs.writingMode;
+    if (cs.columnCount !== 'auto' && cs.columnCount !== '1') return 'multi-column text';
+    if ((cs.perspective || 'none') !== 'none' || cs.transformStyle === 'preserve-3d') return 'perspective / preserve-3d';
+    const x = xform(cs); if (x.why) return x.why;
+    if (x.rot) {
+      const kids = [...el.children].some((k) => !INLINE.has(k.tagName));
+      if (kids) return 'rotated container (children cannot inherit rotation natively)';
+      if (el.tagName === 'IMG' || /^url\(/.test(cs.backgroundImage)) return 'rotated image/background';
+    }
     return '';
   };
-  const rotation = (cs) => { if (cs.transform === 'none') return 0; const m = new DOMMatrix(cs.transform); return Math.round(Math.atan2(m.b, m.a) * 1800 / Math.PI) / 10; };
+  const rotation = (cs) => xform(cs).rot;
   const layoutBox = (el, cs) => { // un-rotated layout box, centred on the visual centre
     const r = el.getBoundingClientRect(), rot = rotation(cs);
     if (!rot) return rel(r);
     const w = el.offsetWidth, h = el.offsetHeight, cx = r.left + r.width / 2 - SR.left, cy = r.top + r.height / 2 - SR.top;
     return { x: cx - w / 2, y: cy - h / 2, w, h };
+  };
+  /* 版权：只继承真实来源。元素/祖先/子孙上的 data-rights 全为 cleared 才是 cleared，任一 blocked 即 blocked，其余（含无声明）一律 pending；栅格化本身不构成授权。 */
+  const rightsOf = (el) => {
+    const v = new Set(); const up = el.closest('[data-rights]'); if (up) v.add(up.dataset.rights);
+    el.querySelectorAll('[data-rights]').forEach((k) => v.add(k.dataset.rights));
+    const imgs = [el, ...el.querySelectorAll('*')].filter((k) => k.tagName === 'IMG' || /^url\(/.test(getComputedStyle(k).backgroundImage));
+    if (imgs.some((k) => !(k.dataset.rights || k.closest('[data-rights]')))) v.add('pending');
+    if (v.has('blocked')) return 'blocked'; if (!v.size || [...v].some((x) => x !== 'cleared')) return 'pending'; return 'cleared';
   };
   const marks = {};
   const mark = (el) => { const id = 'r' + idx + '_' + (++n); el.setAttribute('data-dk-eid', id); marks[id] = el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''); return id; };   // marks: 源元素选择器，写进 manifest 便于逐元素追溯
@@ -103,10 +142,10 @@ function extractSlide(idx, cfg) {
   };
   const textFrom = (root) => { // → runs [{t,style}] with CSS whitespace collapsed
     const out = [];
-    const walk = (node, cs) => {
+    const walk = (node, cs, o = 1) => {
       if (node.nodeType === 3) { let t = node.textContent; const ws = cs.whiteSpace; if (!/^pre/.test(ws)) t = t.replace(/\s+/g, ' ');
-        const tt = cs.textTransform; if (tt === 'uppercase') t = t.toUpperCase(); else if (tt === 'lowercase') t = t.toLowerCase(); if (t) out.push({ t, cs }); }
-      else if (node.nodeType === 1) { if (node.tagName === 'BR') { out.push({ t: '\n', cs }); return; } const c = getComputedStyle(node); if (c.display === 'none') return; node.childNodes.forEach(k => walk(k, c)); }
+        const tt = cs.textTransform; if (tt === 'uppercase') t = t.toUpperCase(); else if (tt === 'lowercase') t = t.toLowerCase(); if (t) out.push({ t, cs, o }); }
+      else if (node.nodeType === 1) { if (node.tagName === 'BR') { out.push({ t: '\n', cs, o }); return; } const c = getComputedStyle(node); if (c.display === 'none') return; node.childNodes.forEach(k => walk(k, c, o * +c.opacity)); }
     };
     root.childNodes.forEach(k => walk(k, getComputedStyle(root)));
     return out;
@@ -118,12 +157,15 @@ function extractSlide(idx, cfg) {
     runs[0].t = runs[0].t.replace(/^\s+/, ''); runs[runs.length - 1].t = runs[runs.length - 1].t.replace(/\s+$/, '');
     all = runs.map(r => r.t).join('').replace(/ *\n */g, '\n');
     const op = effOpacity(el), bgc = (() => { for (let e = el; e; e = e.parentElement) { const c = rgba(getComputedStyle(e).backgroundColor); if (c && c.a > .5) return c; } return { r: 255, g: 255, b: 255 }; })();
-    const colorOf = (c) => { const k = rgba(c.color); const a = k.a * op; return hex(a < 1 ? { r: k.r * a + bgc.r * (1 - a), g: k.g * a + bgc.g * (1 - a), b: k.b * a + bgc.b * (1 - a) } : k); };
+    const colorOf = (c) => { const k = rgba(c.color); return hex(k); };   // 墨色本身；透明度走原生 alpha（元素 opacity × 颜色 alpha），不再与背景色预混合
+    const alphaOf = (c, o = 1) => { const k = rgba(c.color); const a = +(k.a * op * o).toFixed(3); return a < 1 ? Math.max(.01, a) : 1; };
+    const italicOf = (c) => c.fontStyle === 'italic' || c.fontStyle.startsWith('oblique');
     const px2pt = (v) => +(parseFloat(v) * .75).toFixed(2);
-    const base = { fs: px2pt(cs.fontSize), col: colorOf(cs), bold: +cs.fontWeight >= 600, font: fam(cs), ls: cs.letterSpacing === 'normal' ? 0 : +(parseFloat(cs.letterSpacing) * .75).toFixed(2) };
+    const base = { fs: px2pt(cs.fontSize), col: colorOf(cs), alpha: alphaOf(cs), italic: italicOf(cs), bold: +cs.fontWeight >= 600, font: fam(cs), ls: cs.letterSpacing === 'normal' ? 0 : +(parseFloat(cs.letterSpacing) * .75).toFixed(2) };
     const rr = runs.filter(r => r.t).map(r => { const c = r.cs; const o = { text: r.t.replace(/ *\n */g, '\n') };
-      const f = px2pt(c.fontSize), col = colorOf(c), b = +c.fontWeight >= 600, fm = fam(c);
-      if (f !== base.fs) o.font_size = f; if (col !== base.col) o.color = col; if (b !== base.bold) o.bold = b; if (fm !== base.font) o.font = fm; return o; });
+      const f = px2pt(c.fontSize), col = colorOf(c), b = +c.fontWeight >= 600, fm = fam(c), al = alphaOf(c, r.o), it = italicOf(c), ls2 = c.letterSpacing === 'normal' ? 0 : +(parseFloat(c.letterSpacing) * .75).toFixed(2);
+      if (f !== base.fs) o.font_size = f; if (col !== base.col) o.color = col; if (b !== base.bold) o.bold = b; if (fm !== base.font) o.font = fm;
+      if (it !== base.italic) o.italic = it; if (al !== base.alpha) o.alpha = al; if (ls2 !== base.ls) o.letter_spacing_pt = Math.max(-40, Math.min(40, ls2)); return o; });
     const merged = []; rr.forEach(r => { const p = merged[merged.length - 1]; if (p && JSON.stringify({ ...p, text: 0 }) === JSON.stringify({ ...r, text: 0 })) p.text += r.text; else merged.push({ ...r }); });
     const rng = document.createRange(); rng.selectNodeContents(el);
     const rects = [...rng.getClientRects()].filter(r => r.width > 0 && r.height > 0);
@@ -134,16 +176,30 @@ function extractSlide(idx, cfg) {
     if (!rectOverride && cs.display.startsWith('inline')) bx = { x: ur.l - SR.left, y: ur.t - SR.top, w: ur.r - ur.l, h: ur.b - ur.t };
     const lhpx = cs.lineHeight === 'normal' ? parseFloat(cs.fontSize) * natural(base.font) : parseFloat(cs.lineHeight);
     const lines = Math.max(1, Math.round(bx.h / lhpx)), grow = lines === 1 ? .08 : .02;
-    const align = ({ start: 'left', left: 'left', center: 'center', right: 'right', end: 'right', justify: 'left' })[cs.textAlign] || 'left';
-    const dw = bx.w * grow; if (align === 'left') bx.w += dw; else if (align === 'right') { bx.x -= dw; bx.w += dw; } else { bx.x -= dw / 2; bx.w += dw; }
+    const rtl = cs.direction === 'rtl', align = ({ start: rtl ? 'right' : 'left', left: 'left', center: 'center', right: 'right', end: rtl ? 'left' : 'right', justify: 'justify', 'justify-all': 'justify', 'match-parent': 'left' })[cs.textAlign] || 'left';
+    const dw = bx.w * grow; if (align === 'left' || align === 'justify') bx.w += dw; else if (align === 'right') { bx.x -= dw; bx.w += dw; } else { bx.x -= dw / 2; bx.w += dw; }
     const tag = el.tagName, type = el.dataset.xType || (/^H[12]$/.test(tag) ? 'title' : 'text');
     const id = el.id || el.dataset.id || 'e' + (++n);
     const ls = lhpx / (parseFloat(cs.fontSize) * natural(base.font));
     const it = { id: 't' + idx + '_' + id.replace(/[^\w-]/g, ''), type, ...inch(bx), content: all, font_size: base.fs, font: base.font, color: base.col, bold: base.bold, align, pad_in: 0,
       line_spacing: +Math.min(3, Math.max(.8, ls)).toFixed(3), valign: 'top' };
     if (base.ls) it.letter_spacing_pt = Math.max(-40, Math.min(40, base.ls));
+    if (base.italic) it.italic = true;
+    if (base.alpha < 1) it.alpha = base.alpha;
     if (merged.length > 1 || merged.some(m => Object.keys(m).length > 1)) it.runs = merged;
     const rot = rotation(cs); if (rot) it.rotation = rot;
+    /* 文字转换覆盖面：能原生表达的写进 plan（italic / justify / alpha / 字体 / 字重 / 字距 / 行距 / 对齐），表达不了的显式告警，不静默丢失 */
+    const wts = new Set(runs.map((r) => +r.cs.fontWeight)); wts.add(+cs.fontWeight);
+    const oddW = [...wts].filter((w) => ![400, 700].includes(w));
+    if (oddW.length) flag(it.id, 'W-WEIGHT', `font-weight ${oddW.join('/')} has no native equivalent: ≥600 → bold, else regular`);
+    const fams = new Set([base.font, ...runs.map((r) => fam(r.cs))]);
+    [...fams].filter((f) => /^(sans-serif|serif|monospace|system-ui|ui-[\w-]+|cursive|fantasy|-apple-system|emoji|math)$/i.test(f)).forEach((f) => flag(it.id, 'W-FONT-GENERIC', `first font-family "${f}" is generic: PowerPoint substitutes by machine`));
+    if (cs.textTransform === 'capitalize' || cs.textTransform === 'full-width') flag(it.id, 'W-TEXT-TRANSFORM', `text-transform:${cs.textTransform} not applied to PPTX text`);
+    if (parseFloat(cs.textIndent) !== 0) flag(it.id, 'W-TEXT-INDENT', 'text-indent not converted');
+    if (cs.fontVariantCaps !== 'normal') flag(it.id, 'W-FONT-VARIANT', `font-variant-caps:${cs.fontVariantCaps} not converted`);
+    if (parseFloat(cs.webkitTextStrokeWidth) > 0) flag(it.id, 'W-TEXT-STROKE', '-webkit-text-stroke dropped');
+    if (cs.textOverflow === 'ellipsis' || (cs.webkitLineClamp && cs.webkitLineClamp !== 'none')) flag(it.id, 'W-TEXT-CLAMP', 'ellipsis / line-clamp truncation not reproduced: full text kept in PPTX');
+    if (rtl) flag(it.id, 'W-RTL', 'direction:rtl: start/end alignment mirrored; bidi layout not verified');
     if (cs.textShadow !== 'none') flag(it.id, 'W-SHADOW', 'text-shadow dropped (no native equivalent)');
     if (cs.textDecorationLine !== 'none') flag(it.id, 'W-DECOR', 'text-decoration dropped');
     items.push({ item: it, strategy: 'native-text', src: el.tagName.toLowerCase() + (el.className ? '.' + String(el.className).split(' ')[0] : '') });
@@ -160,12 +216,12 @@ function extractSlide(idx, cfg) {
     let emitted = false;
     if (/^url\(/.test(bgImg)) {
       const url = /url\(["']?([^"')]+)["']?\)/.exec(bgImg)[1];
-      items.push({ item: { id: pid + '_bg', type: 'image', ...inch(b), overlap_allowed: true, image_role: el.dataset.xRole || 'background', info_duty: el.dataset.duty || 'atmosphere', alpha: op < 1 ? +op.toFixed(3) : undefined, _src: url, _eid: mark(el), _emode: 'self', _pos: cs.backgroundPosition, alt: el.dataset.alt, asset_reason: el.dataset.reason || 'CSS background image' }, strategy: 'native-image', src: 'css-background' });
+      items.push({ item: { id: pid + '_bg', type: 'image', ...inch(b), overlap_allowed: true, image_role: el.dataset.xRole || 'background', info_duty: el.dataset.duty || 'atmosphere', alpha: op < 1 ? +op.toFixed(3) : undefined, _src: url, _rights: rightsOf(el), _eid: mark(el), _emode: 'self', _pos: cs.backgroundPosition, alt: el.dataset.alt, asset_reason: el.dataset.reason || 'CSS background image' }, strategy: 'native-image', src: 'css-background' });
       emitted = true;
     } else if (bgImg !== 'none') {
       const g = gradient(bgImg, pid);
       if (g) { items.push({ item: { ...base, id: pid, gradient: g }, strategy: 'native-shape(gradient)', src: 'css-gradient' }); emitted = true; }
-      else { const rid = mark(el); flag(pid, 'W-RASTER', 'complex background-image rasterized (self only)'); items.push({ item: { id: pid, type: 'image', ...inch(b), overlap_allowed: true, image_role: 'texture', info_duty: 'atmosphere', _raster: rid, _mode: 'self', alt: '' }, strategy: 'raster', src: 'complex-bg' }); emitted = true; }
+      else { const rid = mark(el); flag(pid, 'W-RASTER', 'complex background-image rasterized (self only)'); items.push({ item: { id: pid, type: 'image', ...inch(b), overlap_allowed: true, image_role: 'texture', info_duty: 'atmosphere', _raster: rid, _rights: rightsOf(el), _mode: 'self', alt: '' }, strategy: 'raster', src: 'complex-bg' }); emitted = true; }
     }
     if (!emitted && bg && bg.a > 0) {
       const a = +(bg.a * op).toFixed(3);
@@ -200,12 +256,12 @@ function extractSlide(idx, cfg) {
     if (why) {
       const rid = mark(el), b = rel(el.getBoundingClientRect());
       flag(rid, 'W-RASTER', `${el.tagName.toLowerCase()}#${el.id || ''} rasterized (${why}); not editable`);
-      items.push({ item: { id: 'x' + rid, type: 'image', ...inch(b), overlap_allowed: true, image_role: 'illustration', info_duty: el.dataset.duty || 'structure', alt: el.dataset.alt || el.getAttribute('aria-label') || '', asset_reason: `rasterized ${why}`, _raster: rid, _mode: 'tree' }, strategy: 'raster', src: why }); return;
+      items.push({ item: { id: 'x' + rid, type: 'image', ...inch(b), overlap_allowed: true, image_role: 'illustration', info_duty: el.dataset.duty || 'structure', alt: el.dataset.alt || el.getAttribute('aria-label') || '', asset_reason: `rasterized ${why}`, _raster: rid, _rights: rightsOf(el), _mode: 'tree' }, strategy: 'raster', src: why }); return;
     }
     if (el.tagName === 'IMG') {
       const b = layoutBox(el, cs), fit = cs.objectFit, ar = el.naturalWidth / el.naturalHeight, br = b.w / b.h, rad = parseFloat(cs.borderTopLeftRadius) || 0;
-      if (rad > 0 || (fit !== 'cover' && Math.abs(ar - br) > .02)) { const rid = mark(el); flag(rid, 'W-RASTER', `img rasterized (${rad > 0 ? 'border-radius' : 'object-fit:' + fit + ' ≠ cover'})`); items.push({ item: { id: 'x' + rid, type: 'image', ...inch(b), overlap_allowed: true, image_role: el.dataset.xRole || 'illustration', info_duty: el.dataset.duty || 'atmosphere', alt: el.alt, asset_reason: 'rasterized img', _raster: rid, _mode: 'tree' }, strategy: 'raster', src: 'img' }); return; }
-      items.push({ item: { id: 'i' + idx + '_' + (el.id || ++n), type: 'image', ...inch(b), overlap_allowed: true, image_role: el.dataset.xRole || 'illustration', info_duty: el.dataset.duty || 'atmosphere', alpha: op < 1 ? +op.toFixed(3) : undefined, _src: el.currentSrc || el.src, _eid: mark(el), _emode: 'tree', _pos: cs.objectPosition, alt: el.alt || undefined, asset_reason: el.dataset.reason || el.alt || 'image' }, strategy: 'native-image', src: 'img' }); return;
+      if (rad > 0 || (fit !== 'cover' && Math.abs(ar - br) > .02)) { const rid = mark(el); flag(rid, 'W-RASTER', `img rasterized (${rad > 0 ? 'border-radius' : 'object-fit:' + fit + ' ≠ cover'})`); items.push({ item: { id: 'x' + rid, type: 'image', ...inch(b), overlap_allowed: true, image_role: el.dataset.xRole || 'illustration', info_duty: el.dataset.duty || 'atmosphere', alt: el.alt, asset_reason: 'rasterized img', _raster: rid, _rights: rightsOf(el), _mode: 'tree' }, strategy: 'raster', src: 'img' }); return; }
+      items.push({ item: { id: 'i' + idx + '_' + (el.id || ++n), type: 'image', ...inch(b), overlap_allowed: true, image_role: el.dataset.xRole || 'illustration', info_duty: el.dataset.duty || 'atmosphere', alpha: op < 1 ? +op.toFixed(3) : undefined, _src: el.currentSrc || el.src, _rights: rightsOf(el), _eid: mark(el), _emode: 'tree', _pos: cs.objectPosition, alt: el.alt || undefined, asset_reason: el.dataset.reason || el.alt || 'image' }, strategy: 'native-image', src: 'img' }); return;
     }
     if (hasBox(cs) && (!top || cs.backgroundImage !== 'none')) emitBox(el, cs, op, top);
     const kids = [...el.childNodes], textual = kids.some(k => k.nodeType === 3 && k.textContent.trim());
@@ -252,7 +308,7 @@ async function buildPlan(browser, assetsDir) {
         else {
           const id = 'img' + (++aid); ext = ext === 'jpeg' ? 'jpg' : ext;
           fs.writeFileSync(path.join(assetsDir, `${id}.${ext}`), buf);
-          assets[id] = { source: `web deck asset ${path.basename(String(it._src).slice(0, 80))}`, rights: 'pending', reference: String(it._src).slice(0, 60) }; it.image_id = id;
+          assets[id] = { source: `web deck asset ${path.basename(String(it._src).slice(0, 80))}`, rights: it._rights || 'pending', reference: String(it._src).slice(0, 60) }; it.image_id = id;
           const pos = (it._pos || '50% 50%').split(' ').map(v => v.endsWith('%') ? parseFloat(v) / 100 : v === 'left' || v === 'top' ? 0 : v === 'right' || v === 'bottom' ? 1 : .5);
           it.crop_focus = { x: pos[0] ?? .5, y: pos[1] ?? .5 };
         }
@@ -264,7 +320,7 @@ async function buildPlan(browser, assetsDir) {
         const rf = ex.flags.find(f => f.id === it._raster);
         it._rinfo = { dpr: 2, px_w: Math.round(clip.width * 2), px_h: Math.round(clip.height * 2), scope: it._mode === 'tree' ? 'element + descendants' : 'element only', why: rf ? rf.msg : undefined };
         await page.evaluate(() => { document.documentElement.classList.remove('dk-iso'); document.querySelectorAll('[data-dk-iso]').forEach(e => e.removeAttribute('data-dk-iso')); });
-        const id = it.id; assets[id] = { source: 'rasterized from web deck (element-level)', rights: 'cleared', generated: false, reference: it._raster }; it.image_id = id;
+        const id = it.id; assets[id] = { source: 'rasterized from web deck (element-level)', rights: it._rights || 'pending', generated: false, reference: it._raster }; it.image_id = id;
         it.x = +(clip.x / 96).toFixed(4); it.y = +(clip.y / 96).toFixed(4); it.w = +(clip.width / 96).toFixed(4); it.h = +(clip.height / 96).toFixed(4);
         fs.renameSync(path.join(assetsDir, file), path.join(assetsDir, id + '.png'));
       }
@@ -274,7 +330,7 @@ async function buildPlan(browser, assetsDir) {
       els.push(it); manifest.push({ page: i + 1, page_id: ex.id, id: it.id, type: it.type, strategy: e.strategy, result, src: e.src, ...(sel ? { sel } : {}), ...(reason || rinfo?.why ? { reason: reason || rinfo.why } : {}), ...(rinfo ? { raster: { dpr: rinfo.dpr, px_w: rinfo.px_w, px_h: rinfo.px_h, scope: rinfo.scope } } : {}), ...(textLen ? { text_len: textLen, text: it.content } : {}), ...(it.type === 'chart' ? { chart: chartSummary(it.chart) } : {}), x: it.x, y: it.y, w: it.w, h: it.h });
     }
     // 保留了原生对象但丢了属性（阴影/装饰/渐变降级）的元素：结果记为 downgraded，进入验收的降级清单
-    ex.flags.filter(f => /^W-(SHADOW|DECOR|GRADIENT)/.test(f.code)).forEach(f => { const m = manifest.find(x => x.page === i + 1 && x.id === f.id && x.result === 'native'); if (m) { m.result = 'downgraded'; m.reason = f.code + ' ' + f.msg; } });
+    ex.flags.filter(f => /^W-(SHADOW|DECOR|GRADIENT|WEIGHT|TEXT-|FONT-|RTL)/.test(f.code)).forEach(f => { const m = manifest.find(x => x.page === i + 1 && x.id === f.id && x.result === 'native'); if (m) { m.result = 'downgraded'; m.reason = f.code + ' ' + f.msg; } });
     ex.flags.forEach(f => report.flags.push({ page: i + 1, ...f }));
     pageInfo.push({ page: i + 1, page_id: ex.id, title: ex.title, notes_declared: !!ex.notes, notes_len: ex.notes.length });
     pages.push({ id: ex.id, role: ex.role, focus: ex.focus || `【待判断】${ex.title}`, composition_rationale: ex.rationale || undefined, concept: ex.concept || undefined, background: ex.bg, speaker_notes: ex.notes || undefined, design_state: ex.focus ? 'judged' : 'draft', composition: { strategy: 'free', source: 'author' }, elements: els });
@@ -309,9 +365,29 @@ async function renderStatic(browser, dpr, onPage) {
     return { count, env: { ...env, browser: browser.version() }, logs };
   } finally { await ctx.close(); }
 }
+async function deckTitle() { try { return JSON.parse(/<script[^>]*id="deck-meta"[^>]*>([\s\S]*?)<\/script>/.exec(fs.readFileSync(deckPath, 'utf8'))?.[1] || '{}').title; } catch { return ''; } }
 const sha = (b) => crypto.createHash('sha256').update(b).digest('hex');
-const DPR = Number(opt('--dpr', '2')), MODE = opt('--mode', 'pixel');
-if (![1, 2, 3].includes(DPR) || !['pixel', 'vector'].includes(MODE)) die(['--dpr 只能是 1|2|3，--mode 只能是 pixel|vector']);
+const DPR = Number(opt('--dpr', '2'));
+if (![1, 2, 3].includes(DPR)) die(['--dpr 只能是 1|2|3']);
+if (rest.includes('--mode')) die(['--mode 已移除：PDF 只有像素一致模式（与展示版 PPTX 同一批 PNG）；不再提供独立打印排版的矢量 PDF']);
+
+/* 同一批 PNG：shots 写出基准图（含逐页 SHA-256），pdf 与 pptx-image 用 --from-shots 直接装配这批字节，绝不重新排版/缩放/重绘 */
+function loadShots(dir) {
+  const bj = path.join(path.resolve(dir), 'baseline.json');
+  if (!fs.existsSync(bj)) die([`--from-shots 目录没有 baseline.json: ${dir}`]);
+  const meta = JSON.parse(fs.readFileSync(bj, 'utf8')), pages = [];
+  for (const p of meta.pages) {
+    const f = path.join(path.resolve(dir), p.file); if (!fs.existsSync(f)) die([`缺少基准图 ${p.file}`]);
+    const buf = fs.readFileSync(f); if (sha(buf) !== p.sha256) die([`基准图被改动（SHA-256 不符）: ${p.file}`]);
+    pages.push({ name: p.file, buf, sha256: p.sha256 });
+  }
+  return { dpr: meta.dpr, pages, env: { ua: meta.ua, dpr: meta.dpr, vw: meta.vw, vh: meta.vh, fonts: meta.fonts, browser: meta.browser } };
+}
+async function pagePngs(browser, dpr) {   // → { dpr, pages:[{name,buf,sha256}], env, logs }
+  const from = opt('--from-shots'); if (from) return { ...loadShots(from), logs: [] };
+  const pages = [], r = await renderStatic(browser, dpr, async (i, png) => { pages.push({ name: `slide-${String(i + 1).padStart(2, '0')}.png`, buf: png, sha256: sha(png) }); });
+  return { dpr, pages, env: r.env, logs: r.logs };
+}
 
 const browser = await chromium.launch();
 try {
@@ -322,36 +398,38 @@ try {
     if (exist.length && !FORCE) die([`${dir} 已有基准图，未覆盖；换目录或加 --force`]);
     const pages = [];
     const r = await renderStatic(browser, DPR, async (i, png) => { const name = `slide-${String(i + 1).padStart(2, '0')}.png`; const t = tmpBeside(path.join(dir, name), '.png'); fs.writeFileSync(t, png, { flag: 'wx' }); placeAtomic(t, path.join(dir, name)); pages.push({ page: i + 1, file: name, sha256: sha(png) }); });
-    writeAtomicForce(path.join(dir, 'baseline.json'), J({ dpr: DPR, ...r.env, pages }));
+    writeAtomicForce(path.join(dir, 'baseline.json'), J({ dpr: DPR, ...r.env, canvas: { w: 1280, h: 720 }, pages }));
     console.log(J({ status: 'DONE', shots: dir, pages: r.count, dpr: DPR, console: r.logs }));
-  } else if (cmd === 'pdf') {
-    if (!outArg) die(['pdf 需要输出路径: web_export.mjs pdf deck.html out.pdf [--mode pixel|vector] [--dpr 2|3]']);
-    const reportPath = path.resolve(outArg).replace(/\.pdf$/i, '.pdf-report.json');
-    const errs = [...guardOut('PDF', outArg, '.pdf', [deckPath]), ...guardOut('PDF report', reportPath, '.json', [deckPath])]; if (errs.length) die(errs);
-    const dest = path.resolve(outArg), tmp = tmpBeside(dest), tmpRep = tmpBeside(reportPath), work = fs.mkdtempSync(path.join(path.dirname(dest), '.pdf-'));
+  } else if (cmd === 'pdf' || cmd === 'pptx-image') {
+    const isPdf = cmd === 'pdf', suffix = isPdf ? '.pdf' : '.pptx';
+    if (!outArg) die([`${cmd} 需要输出路径: web_export.mjs ${cmd} deck.html out${suffix} [--from-shots DIR] [--dpr 2|3]`]);
+    const reportPath = path.resolve(outArg).replace(/\.(pdf|pptx)$/i, isPdf ? '.pdf-report.json' : '.image-pptx-report.json');
+    const errs = [...guardOut(isPdf ? 'PDF' : 'Image PPTX', outArg, suffix, [deckPath]), ...guardOut('report', reportPath, '.json', [deckPath])]; if (errs.length) die(errs);
+    const dest = path.resolve(outArg), tmp = tmpBeside(dest, suffix), tmpRep = tmpBeside(reportPath), work = fs.mkdtempSync(path.join(path.dirname(dest), '.img-'));
     try {
+      const shotsSet = await pagePngs(browser, DPR);
+      const names = shotsSet.pages.map((p) => { fs.writeFileSync(path.join(work, p.name), p.buf); return p.name; });
+      const pages = shotsSet.pages.map((p, i) => ({ page: i + 1, png_sha256: p.sha256, px_w: 1280 * shotsSet.dpr, px_h: 720 * shotsSet.dpr }));
       let report;
-      if (MODE === 'pixel') {
-        /* 像素一致 PDF：逐页终态无损 PNG → 16:9 图像页。PDF 是高分辨率图像页：文字不可选中、不可矢量编辑。 */
-        const pages = [], names = [];
-        const r = await renderStatic(browser, DPR, async (i, png) => { const n = `p${String(i + 1).padStart(3, '0')}.png`; fs.writeFileSync(path.join(work, n), png); names.push(n); pages.push({ page: i + 1, png_sha256: sha(png), px_w: 1280 * DPR, px_h: 720 * DPR }); });
+      if (isPdf) {
+        /* 像素一致 PDF：这批 PNG 原样装进 16:9 图像页。文字不可选中、不可矢量编辑。 */
         fs.writeFileSync(path.join(work, 'index.html'), `<!doctype html><meta charset=utf-8><style>@page{size:1280px 720px;margin:0}html,body{margin:0;background:#fff}img{display:block;width:1280px;height:720px;break-after:page;image-rendering:pixelated}img:last-child{break-after:auto}</style>${names.map(n => `<img src="${n}">`).join('')}`);
         const ctx = await browser.newContext(); const pg = await ctx.newPage();
         await pg.goto(pathToFileURL(path.join(work, 'index.html')).href, { waitUntil: 'load' });
         await pg.evaluate(() => Promise.all([...document.images].map(im => im.decode())));
         await pg.pdf({ path: tmp, width: '1280px', height: '720px', printBackground: true, preferCSSPageSize: true }); await ctx.close();
-        report = { mode: 'pixel', dpr: DPR, claim: 'raster-identical image pages (lossless PNG at DPR×); text is NOT selectable and NOT vector-editable', pages, ...r.env, console: r.logs };
+        if (fs.readFileSync(tmp).subarray(0, 5).toString() !== '%PDF-') throw new Error('生成物不是有效 PDF');
+        report = { mode: 'pixel', dpr: shotsSet.dpr, claim: 'raster-identical image pages (lossless PNG at DPR×) for the same render environment; text is NOT selectable and NOT vector-editable', pages, ...shotsSet.env, console: shotsSet.logs };
       } else {
-        const { page, logs } = await open(browser, { q: 'export' });
-        await page.emulateMedia({ media: 'print' });
-        await page.pdf({ path: tmp, width: '1280px', height: '720px', printBackground: true, preferCSSPageSize: true });
-        report = { mode: 'vector', claim: 'high-fidelity vector (selectable text). NOT guaranteed pixel-identical to the screen: print layout is a different pipeline; see web_verify.py for the measured difference', console: logs, browser: browser.version() };
+        /* 展示版 PPTX：每页一张整页 PNG（同一批字节），不可编辑，不伪装为可编辑文件。python-pptx 只做打包，不重采样。 */
+        const r = spawnSync(process.env.PYTHON || 'python3', [path.join(HERE, 'image_pptx.py'), work, tmp, '--title', (await deckTitle()) || 'Deck'], { encoding: 'utf8' });
+        if (r.status !== 0) throw new Error('image_pptx.py 失败: ' + (r.stderr || r.stdout).slice(-600));
+        report = { mode: 'image', dpr: shotsSet.dpr, claim: 'one full-slide lossless PNG per slide (same bytes as the PDF pages); NOT editable', pages, ...shotsSet.env, console: shotsSet.logs };
       }
-      if (fs.readFileSync(tmp).subarray(0, 5).toString() !== '%PDF-') throw new Error('生成物不是有效 PDF');
-      report.pdf_sha256 = sha(fs.readFileSync(tmp)); report.pdf_bytes = fs.statSync(tmp).size;
+      report.file_sha256 = sha(fs.readFileSync(tmp)); report.pdf_sha256 = isPdf ? report.file_sha256 : undefined; report.file_bytes = fs.statSync(tmp).size;
       fs.writeFileSync(tmpRep, J(report));
       placeAtomic(tmp, dest); placeAtomic(tmpRep, reportPath);
-      console.log(J({ status: 'DONE', pdf: outArg, report: reportPath, mode: MODE, dpr: MODE === 'pixel' ? DPR : undefined, pdf_sha256: report.pdf_sha256 }));
+      console.log(J({ status: 'DONE', file: outArg, report: reportPath, mode: report.mode, dpr: shotsSet.dpr, sha256: report.file_sha256 }));
     } finally { for (const f of [tmp, tmpRep]) if (fs.existsSync(f)) fs.unlinkSync(f); fs.rmSync(work, { recursive: true, force: true }); }
   } else if (cmd === 'plan' || cmd === 'pptx') {
     if (!outArg) die([`${cmd} 需要输出路径`]);
@@ -385,7 +463,7 @@ try {
         if (cmd === 'pptx') { copyAtomic(sOut, out); published.push(out); }
         copyAtomic(sPlan, planPath); copyAtomic(sMan, manPath); published.push(planPath, manPath);
       }
-      console.log(J({ status: !ok ? 'FAIL' : blockers.length ? 'FAIL' : 'DONE', plan: ok ? planPath : undefined, manifest: ok ? manPath : undefined, pptx: ok && cmd === 'pptx' ? out : undefined, assets: ok ? assetsDir : undefined,
+      console.log(J({ status: !ok ? 'BLOCK' : blockers.length ? 'BLOCK' : 'DONE', plan: ok ? planPath : undefined, manifest: ok ? manPath : undefined, pptx: ok && cmd === 'pptx' ? out : undefined, assets: ok ? assetsDir : undefined,
         elements: manifest.length, by_strategy: by, by_result: res, flags: report.flags.length, blocking_flags: blockers, compile, note: ok ? undefined : '编译失败：未写出任何文件（暂存已清理）' }));
       if (!ok || blockers.length) process.exitCode = 1;
     } finally { fs.rmSync(stage, { recursive: true, force: true }); }
@@ -441,17 +519,17 @@ try {
       R.slides.push({ page: i + 1, ...s });
     }
     const all = (k) => R.slides.flatMap(s => s[k].map(x => `p${s.page} ${x}`));
-    add('Web', 'deck loads, slides found', count > 0 ? 'PASS' : 'FAIL', `${count} slides`);
-    add('Web', 'no console errors / failed requests', logs.length ? 'FAIL' : 'PASS', logs.slice(0, 5).join(' | ') || 'clean');
-    add('设计', 'text overflow / outside stage', all('overflow').length ? 'FAIL' : 'PASS', all('overflow').slice(0, 6).join('; ') || 'none');
+    add('Web', 'deck loads, slides found', count > 0 ? 'PASS' : 'BLOCK', `${count} slides`);
+    add('Web', 'no console errors / failed requests', logs.length ? 'BLOCK' : 'PASS', logs.slice(0, 5).join(' | ') || 'clean');
+    add('设计', 'text overflow / outside stage', all('overflow').length ? 'BLOCK' : 'PASS', all('overflow').slice(0, 6).join('; ') || 'none');
     add('设计', 'min text size ≥ 16px / image resolution', all('small').length ? 'WARN' : 'PASS', all('small').slice(0, 6).join('; ') || 'none');
-    add('设计', 'broken images', all('broken').length ? 'FAIL' : 'PASS', all('broken').join('; ') || 'none');
-    add('设计', 'text contrast on flat backgrounds (WCAG AA; image/gradient bg = UNVERIFIED)', all('contrast').length ? 'FAIL' : 'PASS', all('contrast').slice(0, 6).join('; ') || 'none');
+    add('设计', 'broken images', all('broken').length ? 'BLOCK' : 'PASS', all('broken').join('; ') || 'none');
+    add('设计', 'text contrast on flat backgrounds (WCAG AA; image/gradient bg = UNVERIFIED)', all('contrast').length ? 'BLOCK' : 'PASS', all('contrast').slice(0, 6).join('; ') || 'none');
     const fonts = [...new Set(R.slides.flatMap(s => s.fonts))];
     add('PDF/PPTX', 'declared fonts installed on this machine', fonts.length ? 'WARN' : 'PASS', fonts.length ? `missing: ${fonts.join(', ')} → substituted in PDF; PPTX depends on the target machine` : 'all resolved');
-    add('设计', 'every slide has a title (h1/h2) for outline + a11y', R.slides.every(s => s.hasTitle) ? 'PASS' : 'FAIL', R.slides.filter(s => !s.hasTitle).map(s => 'p' + s.page).join(',') || 'ok');
+    add('设计', 'every slide has a title (h1/h2) for outline + a11y', R.slides.every(s => s.hasTitle) ? 'PASS' : 'BLOCK', R.slides.filter(s => !s.hasTitle).map(s => 'p' + s.page).join(',') || 'ok');
     const badm = R.slides.flatMap(s => s.motion.bad.map(x => `p${s.page} ${x}`));
-    add('动态', 'motion tokens valid', badm.length ? 'FAIL' : 'PASS', badm.join('; ') || 'ok');
+    add('动态', 'motion tokens valid', badm.length ? 'BLOCK' : 'PASS', badm.join('; ') || 'ok');
     const slow = R.slides.filter(s => s.motion.ends > 3.2).map(s => `p${s.page} ${s.motion.ends.toFixed(1)}s`);
     add('动态', 'entrance choreography ≤ 3.2 s per slide (audience must not wait)', slow.length ? 'WARN' : 'PASS', slow.join('; ') || `max ${Math.max(...R.slides.map(s => s.motion.ends)).toFixed(2)}s`);
     add('动态', 'every slide declares role + notes (narrative intent / presenter)', R.slides.every(s => s.role && s.hasNotes) ? 'PASS' : 'WARN', R.slides.filter(s => !s.role || !s.hasNotes).map(s => 'p' + s.page).join(',') || 'ok');
@@ -473,11 +551,11 @@ try {
       const jt = Math.min(3, total); await p2.keyboard.type(String(jt)); await p2.keyboard.press('Enter'); await p2.waitForTimeout(900); const jump = await p2.evaluate(() => window.Deck.index);
       await p2.reload({ waitUntil: 'load' }); await p2.waitForSelector('html[data-dk-ready="1"]', { state: 'attached' }); const rec = await p2.evaluate(() => window.Deck.index);
       const errs = await p2.evaluate(() => window.Deck.errors);
-      add('Web', 'keyboard playthrough start→end with motion on', reachedEnd ? 'PASS' : 'FAIL', `${seq.length} presses, ${Date.now() - t0} ms`);
-      add('Web', 'Home/End/←/jump(n⏎)', home === 0 && end === total - 1 && back === total - 2 && jump === jt - 1 ? 'PASS' : 'FAIL', `home=${home} end=${end} back=${back} jump=${jump}`);
-      add('Web', 'overview (O) + presenter panel (P)', ov === total && pn ? 'PASS' : 'FAIL', `thumbs=${ov}/${total}, panel=${pn}`);
-      add('Web', 'refresh recovery (hash/localStorage)', rec === jt - 1 ? 'PASS' : 'FAIL', `restored index ${rec}`);
-      add('动态', 'runtime motion errors / console during playthrough', errs || l2.length ? 'FAIL' : 'PASS', l2.slice(0, 4).join(' | ') || `Deck.errors=${errs}`);
+      add('Web', 'keyboard playthrough start→end with motion on', reachedEnd ? 'PASS' : 'BLOCK', `${seq.length} presses, ${Date.now() - t0} ms`);
+      add('Web', 'Home/End/←/jump(n⏎)', home === 0 && end === total - 1 && back === total - 2 && jump === jt - 1 ? 'PASS' : 'BLOCK', `home=${home} end=${end} back=${back} jump=${jump}`);
+      add('Web', 'overview (O) + presenter panel (P)', ov === total && pn ? 'PASS' : 'BLOCK', `thumbs=${ov}/${total}, panel=${pn}`);
+      add('Web', 'refresh recovery (hash/localStorage)', rec === jt - 1 ? 'PASS' : 'BLOCK', `restored index ${rec}`);
+      add('动态', 'runtime motion errors / console during playthrough', errs || l2.length ? 'BLOCK' : 'PASS', l2.slice(0, 4).join(' | ') || `Deck.errors=${errs}`);
       // frame pacing probe during a push transition
       const fp = await p2.evaluate(async () => { window.Deck.go(0, { instant: true, force: true }); await new Promise(r => setTimeout(r, 200)); const ts = []; let on = true; const loop = (t) => { ts.push(t); if (on) requestAnimationFrame(loop); }; requestAnimationFrame(loop); window.Deck.go(1); await new Promise(r => setTimeout(r, 1800)); on = false; const d = ts.slice(1).map((t, i) => t - ts[i]); return { frames: ts.length, avg: d.reduce((a, b) => a + b, 0) / d.length, p95: d.sort((a, b) => a - b)[Math.floor(d.length * .95)] }; });
       add('性能', 'frame pacing during transition (headless software GL; indicative only)', fp.p95 < 50 ? 'PASS' : 'WARN', `avg ${fp.avg.toFixed(1)} ms, p95 ${fp.p95.toFixed(1)} ms over ${fp.frames} frames`);
@@ -493,12 +571,12 @@ try {
       await p3.screenshot({ path: path.join(shotsDir, `resp-${w}.png`) });
       const fits = m.sw <= m.iw && m.stage[2] >= -1 && m.stage[2] + m.stage[0] <= w + 1 && m.stageBottom <= m.barTop + 1;
       R.responsive.push({ w, h, name, ...m, fits });
-      add('响应式', `${w}px: stage fits, no horizontal scroll, controls clear of stage, buttons ≥ 32px`, fits && m.minBtn >= 32 ? 'PASS' : 'FAIL', `stage ${m.stage[0]}×${m.stage[1]} scale ${m.scale.toFixed(3)}; minBtn ${m.minBtn}px; scrollW ${m.sw}/${m.iw}${m.scale < .4 ? ' · text <40% scale: preview-grade legibility' : ''}`);
+      add('响应式', `${w}px: stage fits, no horizontal scroll, controls clear of stage, buttons ≥ 32px`, fits && m.minBtn >= 32 ? 'PASS' : 'BLOCK', `stage ${m.stage[0]}×${m.stage[1]} scale ${m.scale.toFixed(3)}; minBtn ${m.minBtn}px; scrollW ${m.sw}/${m.iw}${m.scale < .4 ? ' · text <40% scale: preview-grade legibility' : ''}`);
       await ctx.close();
     }
     writeAtomic(path.join(shotsDir, 'audit.json'), J(R));
-    const bad = R.checks.filter(c => c.status === 'FAIL').length;
-    console.log(J({ status: bad ? 'FAIL' : 'PASS', checks: R.checks, shots: shotsDir }));
+    const bad = R.checks.filter(c => c.status === 'BLOCK').length;
+    console.log(J({ status: bad ? 'BLOCK' : 'PASS', checks: R.checks, shots: shotsDir }));
     if (bad) process.exitCode = 1;
   } else { console.error('unknown command ' + cmd); process.exitCode = 2; }
 } finally { await browser.close(); }

@@ -1,5 +1,5 @@
 # 可选：渲染核验（PDF → 页尺寸、词框、字体读取与 PNG 导出）。需另装 LibreOffice（soffice 在 PATH，或设 SOFFICE）。
-# 不装也能 compile / revise / verify：verify.py 会跳过渲染并给出 PARTIAL。
+# 不装也能 compile / verify：渲染核对会被标为 UNVERIFIED（不是通过）。
 #
 # 许可提醒：PyMuPDF 为 AGPL-3.0（或 Artifex 商业许可）。本仓库不分发它，只在本机以可选工具调用；
 # 若你的合规要求不接受 AGPL，请不要安装。

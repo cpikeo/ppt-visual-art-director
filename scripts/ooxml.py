@@ -133,11 +133,12 @@ def ensure_family(font, family: str) -> None:
 
 def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = None,
                   size: Optional[float] = None, color: Optional[str] = None,
-                  bold: Optional[bool] = None, spacing: Optional[float] = None) -> None:
+                  bold: Optional[bool] = None, spacing: Optional[float] = None,
+                  italic: Optional[bool] = None, alpha: Optional[float] = None) -> None:
     """只写已知属性；None 表示"不知道"，留空让目标文件继续继承。
 
     改稿通路的全部意义是"只改被点名的东西"。把继承值写成显式值，会把 44pt 的标题
-    压成 18pt、把主题粗体改成常规，而保留核对仍然报 READY——这是最坏的一种失败。
+    压成 18pt、把主题粗体改成常规，而保留核对仍然报 PASS——这是最坏的一种失败。
     """
     from pptx.util import Pt
     from pptx.dml.color import RGBColor
@@ -147,6 +148,8 @@ def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = N
         font_obj.size = Pt(float(size))
     if bold is not None:
         font_obj.bold = bool(bold)
+    if italic is not None:
+        font_obj.italic = bool(italic)
     if font is not None:
         font_obj.name = font
     # 东亚/复杂文字字族只在**明确给出**时写。原稿 run 上本来没有 a:ea 时凭空补一个，
@@ -160,6 +163,11 @@ def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = N
             node.set("typeface", font_ea)
     if color is not None:
         font_obj.color.rgb = RGBColor.from_string(color.lstrip("#").upper())
+    if alpha is not None and float(alpha) < 1 and color is not None:
+        clr = run._r.get_or_add_rPr().find(qn("a:solidFill")).find(qn("a:srgbClr"))
+        for old in clr.findall(qn("a:alpha")):
+            clr.remove(old)
+        etree.SubElement(clr, qn("a:alpha")).set("val", str(int(round(float(alpha) * 100000))))
     if spacing is not None:
         rPr = run._r.get_or_add_rPr()
         if spacing:
@@ -167,10 +175,12 @@ def set_run_attrs(run, *, font: Optional[str] = None, font_ea: Optional[str] = N
         else:
             rPr.attrib.pop("spc", None)
 
-def set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0) -> None:
+def set_run_font(run, family: str, size: float, color: str, bold: bool, spacing: float = 0.0,
+                 italic: bool = False, alpha: float = 1.0) -> None:
     """新建对象一律连东亚字族一起写：只写 latin 时中文会被渲染器换掉，整稿字族就断了。
     同时写 lang：缺省时中文在 PowerPoint 里被当成未标注语言，拼写检查满屏红线，断行规则也不稳。"""
-    set_run_attrs(run, font=family, font_ea=family, size=size, color=color, bold=bold, spacing=spacing)
+    set_run_attrs(run, font=family, font_ea=family, size=size, color=color, bold=bold, spacing=spacing,
+                  italic=italic, alpha=alpha)
     has_cjk = any("\u3400" <= ch <= "\u9fff" for ch in (run.text or ""))
     run._r.get_or_add_rPr().set("lang", "zh-CN" if has_cjk else "en-US")
 

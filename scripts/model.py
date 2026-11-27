@@ -919,6 +919,8 @@ def text_style(plan: Dict[str, Any], page: Dict[str, Any], el: Dict[str, Any]) -
         "color": (color or LIMITS["defaults"]["ink"]).upper(),
         "bold": bool(el.get("bold", LIMITS["type"]["bold"].get(kind, False))),
         "line_spacing": float(el.get("line_spacing") or LIMITS["type"]["line_spacing"].get(kind, 1.25)),
+        "italic": bool(el.get("italic", False)),
+        "alpha": float(el.get("alpha") or 1.0),
         "align": el.get("align", "left"),
         "valign": el.get("valign", "top"),
         "spacing": float(el.get("letter_spacing_pt") or 0),
