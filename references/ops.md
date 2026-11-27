@@ -7,7 +7,7 @@
 - 输出只能是 `.pptx`（`E-FORMAT` 阻断）；成品包不合格（内容类型、宏）退出 3。
 - `out`、`--report`、`--json` 已存在即阻断（`E-EXIST`），`--force` 才替换；先写临时件再原子替换。路径守卫只有一处（`model.guard_paths`）：输出/报告不得与任何输入同文件（符号链接与硬链接按真实文件比），不得经符号链接写出，报告只能是 `.json`，渲染目录不得是输入所在目录。`revise.py inspect` 解析前先做包检查（宏、越界部件名、解压体积、压缩比）。
 - `--assets` 缺省取 plan 同级 `assets/`，否则取 plan 所在目录。`verify.py` 的渲染目录缺省为 `render/<pptx 名>/`。
-- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
+- 退出码：`compile.py` 0 成功、2 硬错误未写文件、3 运行期失败（`.error.pptx` 不是交付物；它与交付物、plan、报告走同一套 `guard_paths`：符号链接、目录、已存在且无 `--force` 一律不写，写入同样先临时文件再原子替换）；`verify.py` 与状态一一对应：`READY` 0、`BLOCK` 1（含包格式不合格）、`PARTIAL` 4、输入或契约错误 2（映射只在 `verify.EXIT_BY_STATUS` 一处，报告里的 `exit_code` 同值）；`web_verify.py` PASS 0、FAIL 1、输入/路径错误 2、BLOCKED 3、UNVERIFIED 4（`web_verify.EXIT_BY_STATUS` 一处定义）；`web_export.mjs` 0 成功、1 转换/编译失败或存在 `E-*`、2 输入/路径守卫拒绝；`revise.py` 0 写成功且保留核对通过、1 保留核对未通过（交付路径未写）、2 硬错误、3 运行期失败。
 
 ## 诊断码
 
