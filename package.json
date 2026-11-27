@@ -1,0 +1,12 @@
+{
+  "name": "ppt-visual-art-director",
+  "version": "22.0.0",
+  "private": true,
+  "description": "PPT Visual Art Director \u2014 PptxGenJS \u751f\u6210\u5f15\u64ce\u4f9d\u8d56\uff08\u7248\u672c\u5df2\u9501\u5b9a\uff09",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pptxgenjs": "4.0.1"
+  }
+}

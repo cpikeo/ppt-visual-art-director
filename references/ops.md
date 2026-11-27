@@ -77,3 +77,29 @@
 ## 输入安全
 
 plan、edit.json、素材与 PPTX 都视为不可信输入：素材路径限制在素材根内；外部 PPTX 的 XML 不展开实体、不联网，含 DTD/实体声明（含 UTF-16 编码）一律 `E-FORMAT`；包内越界部件名（含反斜杠写法）、解压后超过 `package.max_unpacked_mb` 的包、单个大部件压缩比超过 `package.max_part_ratio` 的包。已知限制：ZIP 头里的声明体积可被伪造，守卫以头部为准，不是流式计量。脚本不联网、不执行包内内容。
+
+## 生成引擎能力矩阵（V22，PptxGenJS 4.0.1）
+
+DIRECT = PptxGenJS 直接生成；OOXML = 由 `post.py` 按 spec 受控补齐；BLOCK = 不能可靠实现，`compile.py` 退出码 2 并报 `E-ENGINE`，不静默降级。
+
+| 能力 | 类别 | 说明 |
+| --- | --- | --- |
+| 标题占位符、文本框、runs、段落、行距、字距、内边距、垂直对齐 | DIRECT + OOXML | 占位符几何/锚点、`a:ea`/`a:cs`、`lang`（zh-CN/en-US）、`noAutofit`、重复 `a:pPr` 由 post 校正 |
+| 原生列表（符号/破折号/自动编号） | DIRECT + OOXML | 符号色 `a:buClr` 由 post 写入 |
+| shape（8 种）、divider、填充透明度、描边、虚线、旋转 | DIRECT | |
+| 渐变（含两端透明度）、圆角半径 `adj`、线帽、箭头 | OOXML | |
+| path：多点折线/闭合多边形 | DIRECT（`custGeom`） | 点可引用其他元素的锚点（由 spec.py 解析） |
+| path：两点 | OOXML | 改写为原生直线连接符 `p:cxnSp` |
+| image：放置、透明度、旋转、替代文字 | DIRECT | |
+| image：`crop_focus`/`crop_zoom`、预设与多边形蒙版、双色调、软边 | OOXML | `srcRect`/`prstGeom`/`custGeom`/`duotone`/`softEdge` |
+| group、legend（色块+标签分组） | OOXML | PptxGenJS 无分组；`p:grpSp` 由 post 包裹，支持嵌套与分组旋转 |
+| chart：bar/line/area/pie/donut/scatter，堆叠/百分比，横向，组合图（折线与柱共轴），嵌入工作簿 | DIRECT | |
+| chart：逐系列直标（墨色/衬底/位置）、东亚字体、标题左对齐、饼图内缩、散点仅标记、组合折线标记、系列色 | OOXML | |
+| chart：**散点各系列 X 值不一致** | **BLOCK** | PptxGenJS 散点共用一列 X；改统一 X，或迁移期用 `--engine legacy` |
+| table | DIRECT + OOXML | 无样式表 ID 由 post 写入 |
+| speaker_notes、页码、背景色、主题色/主题字体 | DIRECT / OOXML | 主题色板与东亚字体由 post 写入 theme1.xml |
+
+`post.py` 同时修正 PptxGenJS 的已知结构问题：图表 `c:ser` 子元素次序（`dLbls` 误排在 `dPt` 之前）、2D 绘图层多出的 `axId`、非柱图混入 `invertIfNegative`、`[Content_Types].xml` 指向不存在的母版、重复媒体。图表 XML 自检（轴引用、series 序号、次序、`dLblPos`、数值有效性、线型）不通过即 `E-FORMAT` 阻断。
+
+**验证状态矩阵（不打分）：** 对象核对 PASS（`verify.py`，本仓库夹具）｜XML 不变量 PASS｜可复现（同输入同字节）PASS｜LibreOffice 渲染 UNVERIFIED（运行环境无 soffice）｜Microsoft PowerPoint 兼容 UNVERIFIED（从未做过实机验证）。
+
